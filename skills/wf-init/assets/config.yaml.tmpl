@@ -1,0 +1,20 @@
+# .wf/config.yaml — wf2 project configuration (committed).
+#
+# Canonical schema source, owned by wf-init. Every field here is read by a skill
+# or script — nothing speculative. The config grows one field at a time, as a new
+# skill needs it; it never carries a knob no code honors (the governor).
+#
+# Placeholder values (PROJECT_NAME, TARGET) are substituted by scaffold.sh at init time.
+
+version: 1
+
+project:
+  name: "{{PROJECT_NAME}}"
+  target: "{{TARGET}}"        # Agent harness(es) this project runs under:
+                              # claude | pi | opencode — a single value, or a list
+                              # when several are installed. Records which targets
+                              # install.sh rendered, for re-install.
+
+paths:
+  transient: ".wf/transient"  # Derived, machine-owned, disposable output (read-views,
+                              # models, plans, handovers). Gitignored. Never hand-edited.
