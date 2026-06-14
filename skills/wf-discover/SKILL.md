@@ -76,6 +76,8 @@ Point the human at `$VIEW` (interactive map) and `$BRIEF` (compact agent digest)
 ## Final — record telemetry (REQUIRED)
 
 Your last action, always — do not exit before it. Run the `wf-basics` §2
-`record_session.py` command now with `--agent wf-discover` and this run's
-`--outcome` (`completed`, or `halted`/`escalated` if you stopped early). If the
-command itself errors, continue — telemetry never blocks.
+`record_session.py` command now with `--agent wf-discover`, this run's `--outcome`
+(`completed`, or `halted`/`escalated` if you stopped early), and the two session
+feedback answers (`--wf-friction`, `--repo-observation` — "none" is fine; omit a
+flag when there is nothing concrete). If the command itself errors, continue —
+telemetry never blocks.

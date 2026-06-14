@@ -26,7 +26,8 @@ SINK="$WORK/tel/sessions.jsonl"   # parent dir does NOT exist yet
 
 echo "== first record (auto-creates parent dir) =="
 if python3 "$REC" --agent wf-discover --started-at 2026-01-01T00:00:00Z \
-        --ended-at 2026-01-01T00:00:05Z --outcome completed --notes "ran" \
+        --ended-at 2026-01-01T00:00:05Z --outcome completed \
+        --wf-friction "step 3 verb ambiguous" --repo-observation "" \
         --sink "$SINK" > "$WORK/o1" 2>&1; then
     pass "exit zero"
 else
@@ -34,16 +35,21 @@ else
 fi
 [ -f "$SINK" ] && pass "sink + parent dir created" || fail "sink not created"
 [ "$(wc -l < "$SINK")" -eq 1 ] && pass "one line written" || fail "expected 1 line"
-if python3 -c "import json;d=json.loads(open('$SINK').readline());assert d['agent']=='wf-discover';assert d['outcome']=='completed';assert d['duration_seconds']==5" 2>/dev/null; then
-    pass "json fields + computed duration (5s)"
+if python3 -c "import json;d=json.loads(open('$SINK').readline());assert d['agent']=='wf-discover';assert d['outcome']=='completed';assert d['duration_seconds']==5;assert d['feedback']['wf_friction']=='step 3 verb ambiguous';assert d['feedback']['repo_observation']=='';assert 'notes' not in d" 2>/dev/null; then
+    pass "json fields + duration + structured feedback (notes gone)"
 else
-    fail "json fields / duration"
+    fail "json fields / duration / feedback"
 fi
 
-echo "== append accumulates =="
+echo "== append + feedback defaults empty when omitted =="
 python3 "$REC" --agent wf-review --started-at 2026-01-01T00:00:00Z \
     --ended-at 2026-01-01T00:00:01Z --outcome halted --sink "$SINK" > /dev/null 2>&1
 [ "$(wc -l < "$SINK")" -eq 2 ] && pass "appended (2 lines)" || fail "append failed"
+if python3 -c "import json;d=json.loads(open('$SINK').readlines()[1]);assert d['feedback']['wf_friction']=='';assert d['feedback']['repo_observation']==''" 2>/dev/null; then
+    pass "feedback defaults empty when omitted"
+else
+    fail "feedback default"
+fi
 
 echo "== invalid outcome rejected =="
 if python3 "$REC" --agent x --started-at 2026-01-01T00:00:00Z --ended-at 2026-01-01T00:00:01Z \

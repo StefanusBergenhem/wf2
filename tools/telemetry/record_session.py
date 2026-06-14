@@ -5,9 +5,15 @@ Telemetry is observability, not correctness: one JSON line per wf session. The
 caller (a skill, per wf-basics) resolves the sink from config `paths.telemetry`
 and passes it as --sink. Stdlib only; runs on the target's system python3.
 
+The session record carries a structured `feedback` block (the two
+continuous-improvement questions, see wf-basics) that the retrospective later
+distils into durable lessons. Both feedback fields are optional — empty is the
+expected value for a clean session.
+
 Usage:
   record_session.py --agent <name> --started-at <iso> --ended-at <iso> \
-                    --outcome <completed|halted|escalated> [--notes <text>] \
+                    --outcome <completed|halted|escalated> \
+                    [--wf-friction <text>] [--repo-observation <text>] \
                     --sink <path>
 """
 import argparse
@@ -32,7 +38,10 @@ def main(argv=None):
     p.add_argument("--ended-at", required=True, dest="ended_at")
     p.add_argument("--outcome", required=True,
                    choices=["completed", "halted", "escalated"])
-    p.add_argument("--notes", default="")
+    p.add_argument("--wf-friction", dest="wf_friction", default="",
+                   help="concrete wf-instruction friction, or empty (-> CANDIDATES)")
+    p.add_argument("--repo-observation", dest="repo_observation", default="",
+                   help="concrete codebase observation, or empty (-> backlog)")
     p.add_argument("--sink", required=True)
     args = p.parse_args(argv)
 
@@ -45,7 +54,10 @@ def main(argv=None):
         "ended_at": args.ended_at,
         "duration_seconds": duration,
         "outcome": args.outcome,
-        "notes": args.notes,
+        "feedback": {
+            "wf_friction": args.wf_friction,
+            "repo_observation": args.repo_observation,
+        },
     }
 
     parent = os.path.dirname(args.sink)
