@@ -48,6 +48,28 @@ check "telemetry sink not clobbered" "grep -q 'prior' '$PROJ/.wf/telemetry/sessi
 gi_count="$(grep -cF '.wf/transient/' "$PROJ/.gitignore")"
 check "gitignore line not duplicated" "[ '$gi_count' -eq 1 ]"
 
+echo "== config is the source of truth for paths =="
+# A pre-existing config with non-default paths: scaffold must honor IT, not
+# restate defaults. Proves there is one source of truth.
+CUSTOM="$WORK/custom"; mkdir -p "$CUSTOM/.wf"
+cat > "$CUSTOM/.wf/config.yaml" <<'YAML'
+version: 1
+project:
+  name: "c"
+  target: "claude"
+paths:
+  tools: ".wf/tools"
+  transient: ".wf/t2"
+  telemetry: ".wf/tel2/log.jsonl"
+telemetry:
+  enabled: true
+YAML
+bash "$SCAFFOLD" --dir "$CUSTOM" --target claude > /dev/null 2>&1
+check "custom telemetry sink honored" "[ -f '$CUSTOM/.wf/tel2/log.jsonl' ]"
+check "custom transient dir honored"  "[ -d '$CUSTOM/.wf/t2' ]"
+check "custom transient gitignored"   "grep -qxF '.wf/t2/' '$CUSTOM/.gitignore'"
+check "default sink NOT created"      "! [ -f '$CUSTOM/.wf/telemetry/sessions.jsonl' ]"
+
 echo "== bad target rejected =="
 if bash "$SCAFFOLD" --dir "$WORK/proj2" --target frobnicate --name x > /dev/null 2>&1; then
     fail "unknown target should exit non-zero"

@@ -5,18 +5,15 @@ description: Derives a transient subsystem read-view of a repo — a mechanical 
 
 # wf-discover
 
-Read `wf-basics` first for the `.wf/` layout and config rules. Resolve every path
+**Read `wf-basics` first for the `.wf/` layout and config rules**. Resolve every path
 below from `.wf/config.yaml`:
 
-- `TOOLS` = `paths.tools`/discover (default `.wf/tools/discover`)
-- `OUT`   = `paths.discover` (default `.wf/transient/discover`)
+- `TOOLS` = `paths.tools`/discover 
+- `OUT`   = `paths.discover` 
 - `NAME`  = `project.name`
 
 Pipeline: `extract → spine merge → cluster` (mechanical) → scout (LLM) → `render`.
 Tool docs: `$TOOLS/README.md`; new-language extractors: `$TOOLS/EXTRACTORS.md`.
-
-Reading `wf-basics` first captures `TS_START`; the **Final** step below records the
-session. Both are mandatory.
 
 ## Step 1 — Clear previous output
 

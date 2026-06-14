@@ -13,12 +13,14 @@ Everything wf keeps in a project lives under `.wf/`. **Always resolve a path or
 setting through `.wf/config.yaml`** — never hard-code a location a config key
 already defines.
 
-| config key | default | holds | tracked |
-|---|---|---|---|
-| — | `.wf/config.yaml` | project configuration (source of truth) | committed |
-| `paths.tools` | `.wf/tools/` | installed toolkit machinery (extractors, scripts) | committed |
-| `paths.transient` | `.wf/transient/` | derived, disposable output; regenerated on demand, never hand-edited | gitignored |
-| `paths.telemetry` | `.wf/telemetry/sessions.jsonl` | append-only session log | committed |
+| config key | holds | tracked |
+|---|---|---|
+| (`.wf/config.yaml` itself) | project configuration — the source of truth for every path and setting | committed |
+| `paths.tools` | installed toolkit machinery (extractors, scripts) | committed |
+| `paths.transient` | derived, disposable output; regenerated on demand, never hand-edited | gitignored |
+| `paths.telemetry` | append-only session log | committed |
+
+Resolve each from config; the defaults live only in the config template.
 
 ## 2 — Session telemetry
 

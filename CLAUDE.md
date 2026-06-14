@@ -80,6 +80,13 @@ real run proves its absence hurt).
 - **Every config field must be read by something that exists.** Start the config
   near-empty and add a field only when a skill or script consumes it. No
   speculative knobs.
+- **One source of truth for paths & commands.** Skills and scripts never restate a
+  default path or command — they resolve it from `.wf/config.yaml`. Defaults live
+  in exactly one place: the config template (`wf-init`'s
+  `assets/config.yaml.tmpl`), rendered into the project's config at init. A skill
+  writes `paths.discover`, never "`paths.discover` (default `.wf/transient/discover`)".
+  The only path anything may hard-code is `.wf/config.yaml` itself — the bootstrap
+  anchor you need in order to read everything else.
 
 ### Install & rendering
 
