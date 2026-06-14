@@ -1,0 +1,29 @@
+# CAPABILITIES — the durable *why* (committed).
+#
+# Path is set by `paths.capabilities` in .wf/config.yaml; this filename is only the
+# default. Authored solely by wf-po: user-voice statements of what the product lets
+# a user, operator, or external system do. Never reference components, libraries, or
+# implementation patterns here — that is the SA's job, not this file's.
+#
+# This scaffold ships EMPTY (every example below is a comment). wf-po keys
+# greenfield-vs-amendment mode on CONTENT (a non-empty `capabilities:` array), so a
+# fresh adopter must never inherit fictional capabilities. wf-po sets last_updated
+# at its first commit.
+#
+# ID namespaces — each monotonic over the file's lifetime; never renumber on removal:
+#   CAP-NNN   capabilities (what a user/operator/external system can do)
+
+version: 1
+last_updated: ""
+updated_by: ""
+
+# Capabilities — user-voice statements. Never reference components or technology.
+#
+# - id: "CAP-001"
+#   statement: "Field engineers can search past inspections by date and asset id."
+#   value: "Saves ~10 min per site visit; current workaround is paper logs."
+#   priority: high            # high | medium | low
+#   status: planned           # planned | in_progress | done | deferred
+#   depends_on: []            # other CAP-NNN this one needs
+#   notes: ""                 # context from the conversation
+capabilities: []
