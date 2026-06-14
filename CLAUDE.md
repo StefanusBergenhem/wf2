@@ -70,7 +70,15 @@ real run proves its absence hurt).
   to do the task — *not* build-philosophy, rationale, or notes on how wf itself is
   built. That reasoning lives here in CLAUDE.md; skills stay focused and to the
   point, with config-derived paths and no editorializing.
-- **Authoring.** Load the `/skill-builder` skill before writing any skill.
+- **Authoring.** Loading `/skill-builder` is a precondition for writing or editing
+  any skill — not a suggestion. Skip it and the skill ships wrong frontmatter, soft
+  redirections, or instructions repeated across phases; fix-on-review costs more
+  than the load.
+- **Gate-word mandatory preconditions.** State a required step as a gate at the
+  point of action — imperative plus the consequence of skipping it — never as a
+  declarative item in a preamble. A soft pointer gets read past even when it was
+  read. Where a precondition can be enforced by a mechanism, prefer the mechanism
+  over wording (mechanical-over-LLM applies to compliance too).
 
 ### Config & layout
 
