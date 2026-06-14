@@ -1,12 +1,13 @@
 # discover — mechanical scripts (agent reference)
 
-This is the **mechanical half of discovery**: deterministic, LLM-free Python that turns
-any repo into a structured component graph + candidate subsystem clusterings. An agent
-(or the `discover` skill) runs these, then adds the one LLM step (the scout) and renders.
+The **mechanical half of discovery**: deterministic, LLM-free Python that turns any
+repo into a structured component graph + candidate subsystem clusterings. The
+`wf-discover` skill drives these scripts (with config-derived paths) and adds the one
+LLM step (the scout); this doc covers the scripts themselves and how to point them at
+an unfamiliar repo.
 
 Everything written here is **derived and disposable** — it lives in a transient output
-dir, is regenerated on demand, and is never committed. Do not treat any of it as durable
-truth; when in doubt, re-run.
+dir, is regenerated on demand, and is never committed.
 
 ## Data flow
 
@@ -18,13 +19,13 @@ per-language extractor (own toolchain)  ─┐
                                           ┘                      │
                                        cluster.py → clusters.json (3 candidate clusterings)
                                                                   │
-                            ── LLM step (scout, see ../../skills/discover/SKILL.md) ──
+                            ── LLM step (scout, see the `wf-discover` skill) ──
                                        scout reconciles → subsystems.json
                                                                   │
                           render.py → view.html (human)   brief.py → brief.md (agent)
 ```
 
-Scripts (all stdlib-only Python; run with the shared venv `tools/.venv/bin/python`):
+Scripts (all stdlib-only Python; run with `python3`):
 
 | script | role | input → output |
 |---|---|---|
@@ -40,20 +41,27 @@ a target toolchain — only Python.
 
 ## One-time setup (per checkout)
 
+Run from this directory. The Python scripts are stdlib-only (no venv, no pip). Build the
+extractor for each language the repo uses, and fetch the graph lib once for offline views:
+
 ```sh
-cd tools && python3 -m venv .venv                    # stdlib only — no pip install
-mkdir -p discover/vendor && curl -fsSL \
+mkdir -p vendor && curl -fsSL \
   https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js \
-  -o discover/vendor/vis-network.min.js              # graph lib → inlined → offline HTML
-cd discover/readview-go && go build -o readview .    # if the repo has Go
-cd ../readview-ts && npm install && npm run build    # if the repo has TS/JS
+  -o vendor/vis-network.min.js              # graph lib → inlined → offline HTML
+cd readview-go && go build -o readview .     # if the repo has Go
+cd ../readview-ts && npm install && npm run build   # if the repo has TS/JS
 ```
+
+If `vendor/vis-network.min.js` is absent, `render.py` falls back to a CDN `<script>`
+(needs internet) — fetch it once for fully-offline views.
 
 ## Run the mechanical half
 
+The `wf-discover` skill supplies `<DIR>`/`<NAME>` from config and orchestrates the run.
+The script CLI, run from this directory:
+
 ```sh
-OUT=.tmp/<name>
-tools/.venv/bin/python tools/discover/discover.py --repo <REPO> --out $OUT --name <name> \
+python3 discover.py --repo <REPO> --out <DIR> --name <NAME> \
   [--go-roots cmd,internal --go-mod go.mod] \
   [--ts-roots src --ts-tsconfig tsconfig.json --ts-exclude 'src/generated/**']
 ```
@@ -74,14 +82,13 @@ tools/.venv/bin/python tools/discover/discover.py --repo <REPO> --out $OUT --nam
 
 ## After the mechanical half
 
-1. Dispatch the **scout** (the one LLM step) per `../../skills/discover/SKILL.md`:
-   reconcile `clusters.json` into `subsystems.json` (named subsystems + a 1–2 sentence
-   description for every component + cross-signal disagreements). Full partition required.
-2. Render:
-   ```sh
-   tools/.venv/bin/python tools/discover/render.py --model $OUT/model.json --subsystems $OUT/subsystems.json --out $OUT/view.html --title "<name>"
-   tools/.venv/bin/python tools/discover/brief.py  --model $OUT/model.json --subsystems $OUT/subsystems.json --out $OUT/brief.md  --title "<name>"
-   ```
+The `wf-discover` skill dispatches the scout (the one LLM step) to reconcile
+`clusters.json` into `subsystems.json`, then renders:
+
+```sh
+python3 render.py --model <MODEL> --subsystems <SUBSYSTEMS> --out <VIEW>  --title "<NAME>"
+python3 brief.py  --model <MODEL> --subsystems <SUBSYSTEMS> --out <BRIEF> --title "<NAME>"
+```
 
 ## Artifacts
 
