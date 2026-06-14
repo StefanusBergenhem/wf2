@@ -41,11 +41,18 @@ DIR="$(cd "$DIR" && pwd)"
 WF_DIR="$DIR/.wf"
 CONFIG="$WF_DIR/config.yaml"
 TRANSIENT="$WF_DIR/transient"
+TELEMETRY="$WF_DIR/telemetry/sessions.jsonl"   # default; matches paths.telemetry in the template
 GITIGNORE="$DIR/.gitignore"
 
 mkdir -p "$TRANSIENT"
 # .gitkeep so the empty transient dir survives a fresh clone before any run.
 : > "$TRANSIENT/.gitkeep"
+
+# Telemetry sink: a tracked, append-only log. Create it empty once; never clobber
+# an existing log (the recorder also creates it lazily, but a fresh init should
+# leave a committed, present sink).
+mkdir -p "$(dirname "$TELEMETRY")"
+[ -f "$TELEMETRY" ] || : > "$TELEMETRY"
 
 # Config: write once. An existing config is the user's — never overwrite it.
 if [ -f "$CONFIG" ]; then

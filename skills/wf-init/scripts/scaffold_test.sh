@@ -34,14 +34,17 @@ check "name token resolved"        "grep -q 'name: \"demo\"' '$PROJ/.wf/config.y
 check "target token resolved"      "grep -q 'target: \"claude\"' '$PROJ/.wf/config.yaml'"
 check "no unresolved {{ tokens"    "! grep -q '{{' '$PROJ/.wf/config.yaml'"
 check "gitignore ignores transient" "grep -qF '.wf/transient/' '$PROJ/.gitignore'"
+check "telemetry sink created"     "[ -f '$PROJ/.wf/telemetry/sessions.jsonl' ]"
 
 echo "== idempotency =="
-# Mark the config as user-edited, then re-run.
+# Mark the config as user-edited and append a telemetry line, then re-run.
 echo "# user edit" >> "$PROJ/.wf/config.yaml"
+echo '{"agent":"prior"}' >> "$PROJ/.wf/telemetry/sessions.jsonl"
 bash "$SCAFFOLD" --dir "$PROJ" --target claude --name demo > "$WORK/run2.log" 2>&1 \
     || fail "second scaffold exited non-zero (see $WORK/run2.log)"
 
 check "existing config not clobbered" "grep -q '# user edit' '$PROJ/.wf/config.yaml'"
+check "telemetry sink not clobbered" "grep -q 'prior' '$PROJ/.wf/telemetry/sessions.jsonl'"
 gi_count="$(grep -cF '.wf/transient/' "$PROJ/.gitignore")"
 check "gitignore line not duplicated" "[ '$gi_count' -eq 1 ]"
 

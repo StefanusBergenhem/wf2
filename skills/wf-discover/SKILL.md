@@ -15,7 +15,8 @@ below from `.wf/config.yaml`:
 Pipeline: `extract → spine merge → cluster` (mechanical) → scout (LLM) → `render`.
 Tool docs: `$TOOLS/README.md`; new-language extractors: `$TOOLS/EXTRACTORS.md`.
 
-Record telemetry per `wf-basics` (capture `TS_START` now; record on exit).
+Reading `wf-basics` first captures `TS_START`; the **Final** step below records the
+session. Both are mandatory.
 
 ## Step 1 — Clear previous output
 
@@ -69,4 +70,11 @@ python3 "$TOOLS/brief.py"  --model "$OUT/model.json" --subsystems "$OUT/subsyste
 ```
 
 Point the human at `$OUT/view.html` (interactive map) and `$OUT/brief.md` (compact
-agent digest). Then record telemetry and exit.
+agent digest).
+
+## Final — record telemetry (REQUIRED)
+
+Your last action, always — do not exit before it. Run the `wf-basics` §2
+`record_session.py` command now with `--agent wf-discover` and this run's
+`--outcome` (`completed`, or `halted`/`escalated` if you stopped early). If the
+command itself errors, continue — telemetry never blocks.

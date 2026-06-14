@@ -22,19 +22,22 @@ already defines.
 
 ## 2 — Session telemetry
 
-Each skill records one telemetry line per session. The write soft-fails — if it
-errors, continue the main flow. Skip the whole step when `telemetry.enabled:
-false` in config.
+One telemetry line per session. Invoking it is **mandatory** — but if the
+recorder command itself errors, continue anyway (telemetry is observability, not
+correctness). Skip the step entirely only when `telemetry.enabled: false` in
+config.
 
-At the **start** of the session, capture the start stamp:
+**START — run this NOW**, before any other work (skip only if `TS_START` is
+already set this session):
 
 ```sh
 TS_START="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 ```
 
-Before **exit** — whether the session completed, halted, or escalated — append the
-record. Resolve the recorder from `paths.tools` and the sink from
-`paths.telemetry`:
+**END — every role skill runs this as its REQUIRED final action**, whether it
+completed, halted, or escalated. This is the canonical command; a role skill
+triggers it at its end with its own `--agent` and `--outcome`. Resolve the
+recorder from `paths.tools` and the sink from `paths.telemetry`:
 
 ```sh
 python3 <paths.tools>/telemetry/record_session.py \
@@ -45,3 +48,5 @@ python3 <paths.tools>/telemetry/record_session.py \
   --notes      "<one-liner>" \
   --sink       <paths.telemetry>
 ```
+
+The sink file is created by `wf-init` at install, so this only ever appends.
