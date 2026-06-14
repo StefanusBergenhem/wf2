@@ -8,9 +8,14 @@ description: Derives a transient subsystem read-view of a repo — a mechanical 
 **Read `wf-basics` first for the `.wf/` layout and config rules**. Resolve every path
 below from `.wf/config.yaml`:
 
-- `TOOLS` = `paths.tools`/discover 
-- `OUT`   = `paths.discover` 
-- `NAME`  = `project.name`
+- `TOOLS`       = `paths.tools`/discover  (the tool dir)
+- `DIR`         = `paths.discover`        (working dir, cleared each run)
+- `MODEL`       = `paths.discover_model`
+- `CLUSTERS`    = `paths.discover_clusters`
+- `SUBSYSTEMS`  = `paths.discover_subsystems`
+- `VIEW`        = `paths.discover_view`
+- `BRIEF`       = `paths.discover_brief`
+- `NAME`        = `project.name`
 
 Pipeline: `extract → spine merge → cluster` (mechanical) → scout (LLM) → `render`.
 Tool docs: `$TOOLS/README.md`; new-language extractors: `$TOOLS/EXTRACTORS.md`.
@@ -18,7 +23,7 @@ Tool docs: `$TOOLS/README.md`; new-language extractors: `$TOOLS/EXTRACTORS.md`.
 ## Step 1 — Clear previous output
 
 ```sh
-rm -rf "$OUT" && mkdir -p "$OUT"
+rm -rf "$DIR" && mkdir -p "$DIR"
 ```
 
 ## Step 2 — Verify extractors
@@ -37,17 +42,17 @@ build it (build steps in `$TOOLS/EXTRACTORS.md`). Do not continue without it.
 Pass one flag-group per present language. Roots are repo-relative.
 
 ```sh
-python3 "$TOOLS/discover.py" --repo . --out "$OUT" --name "$NAME" \
+python3 "$TOOLS/discover.py" --repo . --out "$DIR" --name "$NAME" \
   [--go-roots cmd,internal --go-mod go.mod] \
   [--ts-roots src --ts-tsconfig tsconfig.json --ts-exclude 'src/generated/**']
 ```
 
-Writes `$OUT/model.json` (component graph) and `$OUT/clusters.json` (three candidate
-clusterings: folder · depgraph · git-cochange).
+Writes `$MODEL` (component graph) and `$CLUSTERS` (three candidate clusterings:
+folder · depgraph · git-cochange) into `$DIR`.
 
 ## Step 4 — Scout augmentation (subagent)
 
-Dispatch ONE subagent with `$OUT/model.json` + `$OUT/clusters.json`:
+Dispatch ONE subagent with `$MODEL` + `$CLUSTERS`:
 
 - **Reconcile, don't pick a winner.** Synthesize the three clusterings into ONE
   partition (~6–10 subsystems; every uid in exactly one subsystem; a "Shared /
@@ -55,19 +60,18 @@ Dispatch ONE subagent with `$OUT/model.json` + `$OUT/clusters.json`:
 - **Describe every component** in 1–2 grounded sentences — prefer its existing
   `synopsis`, else its `types`/`functions` signatures; read source only when
   signatures are insufficient.
-- **Write `$OUT/subsystems.json`**: `system_summary`, `subsystems[]` (`name`,
-  `summary`, `members`, `basis`), `component_descriptions{uid}` for EVERY uid,
+- **Write `$SUBSYSTEMS`**: `system_summary`, `subsystems[]` (`name`, `summary`,
+  `members`, `basis`), `component_descriptions{uid}` for EVERY uid,
   `disagreements[]`. Verify the partition and full coverage before writing.
 
 ## Step 5 — Render and report
 
 ```sh
-python3 "$TOOLS/render.py" --model "$OUT/model.json" --subsystems "$OUT/subsystems.json" --out "$OUT/view.html" --title "$NAME"
-python3 "$TOOLS/brief.py"  --model "$OUT/model.json" --subsystems "$OUT/subsystems.json" --out "$OUT/brief.md"  --title "$NAME"
+python3 "$TOOLS/render.py" --model "$MODEL" --subsystems "$SUBSYSTEMS" --out "$VIEW"  --title "$NAME"
+python3 "$TOOLS/brief.py"  --model "$MODEL" --subsystems "$SUBSYSTEMS" --out "$BRIEF" --title "$NAME"
 ```
 
-Point the human at `$OUT/view.html` (interactive map) and `$OUT/brief.md` (compact
-agent digest).
+Point the human at `$VIEW` (interactive map) and `$BRIEF` (compact agent digest).
 
 ## Final — record telemetry (REQUIRED)
 

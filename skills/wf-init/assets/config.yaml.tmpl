@@ -19,7 +19,14 @@ paths:
   tools: ".wf/tools"          # Installed toolkit machinery (extractors, scripts). Committed.
   transient: ".wf/transient"  # Derived, disposable output root (read-views, plans, handovers).
                               # Gitignored. Never hand-edited.
-  discover: ".wf/transient/discover"          # wf-discover output (under transient).
+  discover: ".wf/transient/discover"          # wf-discover working dir (extractor --out; cleared each run).
+  # wf-discover output files — each a whole path, so a downstream skill that reads
+  # one (e.g. brief) follows a single config edit if it moves.
+  discover_model: ".wf/transient/discover/model.json"            # spine output (basename owned by discover.py)
+  discover_clusters: ".wf/transient/discover/clusters.json"      # cluster output (basename owned by discover.py)
+  discover_subsystems: ".wf/transient/discover/subsystems.json"  # scout output (semantic cache)
+  discover_view: ".wf/transient/discover/view.html"              # human interactive map
+  discover_brief: ".wf/transient/discover/brief.md"              # agent digest (consumed by planning skills)
   telemetry: ".wf/telemetry/sessions.jsonl"   # Append-only session log. Committed.
 
 telemetry:

@@ -87,6 +87,12 @@ real run proves its absence hurt).
   writes `paths.discover`, never "`paths.discover` (default `.wf/transient/discover`)".
   The only path anything may hard-code is `.wf/config.yaml` itself — the bootstrap
   anchor you need in order to read everything else.
+- **Config keys are whole file paths, not directories to join onto.** A specific
+  file a skill reads or writes gets its own complete-path key
+  (`paths.discover_brief: ".wf/transient/discover/brief.md"`) — never a directory
+  the skill appends a filename to. Then moving the file (or having several skills
+  share it) is one config edit, and every reference follows. A directory gets a key
+  only when a tool needs the dir itself (e.g. an extractor's `--out` working dir).
 
 ### Install & rendering
 
