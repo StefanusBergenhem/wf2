@@ -12,3 +12,10 @@ tools/discover/vendor/
 tools/discover/readview-go/readview
 tools/discover/readview-ts/node_modules/
 tools/discover/readview-ts/dist/
+
+# validation-repo: generated install output — not tracked (regenerate via the
+# refresh command in validation-repo/README.md). Only the fixture source is kept.
+validation-repo/.claude/
+validation-repo/.pi/
+validation-repo/.opencode/
+validation-repo/.wf/
