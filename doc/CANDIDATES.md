@@ -51,3 +51,46 @@ demote the text map to a debug / no-scout fallback.
 consumes `brief.md`. If it reaches for adjacency the brief doesn't carry, fold it
 in; if it never misses it, leave the split. Do not pre-decide before that run —
 this is exactly what dogfooding the brief→planner contract is meant to settle.
+
+---
+
+## C3 — Telemetry: capture tokens + tool counts via per-harness hooks
+
+**Date:** 2026-06-14
+**Context:** Telemetry records time + outcome + structured feedback (skill-written,
+harness-agnostic). It does **not** capture token cost or tool-call counts, which
+was the originally-intended "main purpose." Three harnesses were researched
+(Claude Code, pi, opencode) to find how.
+
+**Finding — capture is irreducibly harness-specific.** Every harness keeps
+token/tool data in a per-session transcript/store, **none exposes that store to an
+in-session bash command** (so the skill-invoked recorder structurally cannot read
+it), and there is no cumulative total anywhere (always aggregate). The native
+capture point differs per harness:
+
+- **Claude Code** — `Stop` / `SubagentStop` hook receives `transcript_path` on
+  stdin; parse the JSONL, sum `usage.{input,output,cache_read}` tokens, count
+  `tool_use` blocks. Subagents get their own `agent_transcript_path`.
+- **pi** (earendil-works) — `session_shutdown` extension aggregates in-process
+  (`ctx.sessionManager.getEntries()`), **or** post-run parse of the session JSONL
+  under `~/.pi/agent/sessions/` (`usage.totalTokens`, `toolCall` blocks) with the
+  session pinned via `--session` / `PI_CODING_AGENT_SESSION_DIR`. No in-session env
+  var. (Confirm pi identity: earendil Pi vs oh-my-pi — they differ.)
+- **opencode** — read the on-disk store (`~/.local/share/opencode`; JSON tree
+  pre-1.2, SQLite `opencode.db` 1.2+) keyed by a session id pinned via
+  `opencode run --session <id>`; sum `tokens.{input,output,reasoning,cache.*}`,
+  count `type:"tool"` parts. `OPENCODE_SESSION_ID` in tool env is unmerged — do not
+  rely on it.
+
+Even wf1 never solved this from the skill: its telemetry left token columns
+`(hook)` / null, "fill via an optional host Stop hook."
+
+**Recommended shape when built — two layers:** (1) the skill writes the
+agnostic record it already does (agent/time/outcome/feedback); (2) a small
+**per-harness adapter** (Claude Stop hook · pi `session_shutdown` · opencode
+store-reader), installed per target, enriches with tokens+tools. This is the one
+genuinely harness-coupled piece of wf2 — keep it isolated in the adapters.
+
+**Trigger to act:** when token cost actually needs measuring (e.g. a dogfood run
+where context budget or per-agent cost is the question being asked). Until then its
+absence does not hurt — defer. Build the Claude adapter first (the dogfood harness).
