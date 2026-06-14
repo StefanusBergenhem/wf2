@@ -66,6 +66,10 @@ real run proves its absence hurt).
   description, because it is how wf knowledge leaks into any LLM working in a
   wf-equipped repo. Keep it to **1–2 sentences, max** — context is the budget.
 - **Naming.** Every skill and agent is prefixed `wf-`.
+- **Operational only.** A skill body is operational instructions an agent follows
+  to do the task — *not* build-philosophy, rationale, or notes on how wf itself is
+  built. That reasoning lives here in CLAUDE.md; skills stay focused and to the
+  point, with config-derived paths and no editorializing.
 - **Authoring.** Load the `/skill-builder` skill before writing any skill.
 
 ### Config & layout

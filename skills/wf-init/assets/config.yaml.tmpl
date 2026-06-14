@@ -16,5 +16,11 @@ project:
                               # install.sh rendered, for re-install.
 
 paths:
-  transient: ".wf/transient"  # Derived, machine-owned, disposable output (read-views,
-                              # models, plans, handovers). Gitignored. Never hand-edited.
+  tools: ".wf/tools"          # Installed toolkit machinery (extractors, scripts). Committed.
+  transient: ".wf/transient"  # Derived, disposable output root (read-views, plans, handovers).
+                              # Gitignored. Never hand-edited.
+  discover: ".wf/transient/discover"          # wf-discover output (under transient).
+  telemetry: ".wf/telemetry/sessions.jsonl"   # Append-only session log. Committed.
+
+telemetry:
+  enabled: true               # When false, skills skip the end-of-session record step.
