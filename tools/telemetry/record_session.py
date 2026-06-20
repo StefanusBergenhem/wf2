@@ -39,9 +39,9 @@ def main(argv=None):
     p.add_argument("--outcome", required=True,
                    choices=["completed", "halted", "escalated"])
     p.add_argument("--wf-friction", dest="wf_friction", default="",
-                   help="concrete wf-instruction friction, or empty (-> CANDIDATES)")
+                   help="concrete wf-instruction friction, or empty (-> wf_learnings)")
     p.add_argument("--repo-observation", dest="repo_observation", default="",
-                   help="concrete codebase observation, or empty (-> backlog)")
+                   help="concrete codebase observation, or empty (-> learnings)")
     p.add_argument("--sink", required=True)
     args = p.parse_args(argv)
 
