@@ -30,5 +30,19 @@ paths:
   telemetry: ".wf/telemetry/sessions.jsonl"   # Append-only session log. Committed.
   capabilities: ".wf/CAPABILITIES.yaml"       # Durable user-voice capabilities (wf-po). Committed.
 
+  # Learnings — distilled from telemetry by wf-retrospective. First-class design
+  # inputs (peer of capabilities); each entry is one actionable observation.
+  learnings: ".wf/LEARNINGS.yaml"             # Project-code learnings (wf-sa reads as drivers, flips to handled). Committed.
+  wf_learnings: ".wf/wf-learnings.yaml"       # wf-toolkit friction, for the wf maintainer. Committed.
+
+  # Planning layer (wf-sa, wf-swa). ADRs are the only durable planning artifact;
+  # the design-slice, drill-cache, and sprint are transient — regenerated per
+  # change, consumed by the next role, never hand-maintained.
+  adrs: ".wf/adrs"                             # Durable architecture decision records (wf-sa). Committed dir, one .md per ADR.
+  design_slice: ".wf/transient/design-slice.md"   # wf-sa → wf-swa handover for one change. Transient.
+  design_view: ".wf/transient/design-view.html"   # wf-sa interactive design diagram (render_design.py). Transient.
+  drill_cache: ".wf/transient/drill-cache"        # Shared scout digests (wf-po/sa/swa append; all read). Transient dir.
+  sprint: ".wf/transient/sprint.yaml"             # wf-swa task DAG the orchestrator executes. Transient.
+
 telemetry:
   enabled: true               # When false, skills skip the end-of-session record step.
