@@ -1,0 +1,36 @@
+# SPRINT — the task DAG the build pipeline executes. TRANSIENT.
+#
+# Written by wf-swa from the design-slice; gitignored; consumed directly by the
+# build pipeline. Not hand-maintained, not committed, not read across changes.
+# One inline contract per task; see references/task-contract.md for the field rules.
+
+sprint:
+  summary: "<one line: what this change delivers>"
+  serves: []            # CAP-NNN / L-NNN this sprint advances
+  from_slice: ".wf/transient/design-slice.md"   # the SA handover this derives from
+
+tasks:
+  - id: T1
+    title: "<imperative, one line>"
+    component: "<brief-named component>"
+    depends_on: []
+    covers: [REQ-1]
+    serves: CAP-NNN
+    files_to_touch:
+      - "<path>"
+    acceptance_criteria:
+      - id: REQ-1.AC-1
+        check: "<testable statement with named inputs and expected outputs>"
+    testing_mandate:
+      unit_tests:
+        - target: "<file>:<function>"
+          tests:
+            - description: "<input> → <expected output> [positive]"
+              covers: REQ-1.AC-1
+            - description: "<error input> → <expected error> [negative]"
+              covers: REQ-1.AC-1
+      integration_tests: []     # required if files_to_touch crosses an external boundary
+    out_of_scope:
+      - "<boundary the developer might cross>"
+    implementation_notes:
+      - "<code pattern from source; ADR-NNN to respect>"
