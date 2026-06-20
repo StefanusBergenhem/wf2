@@ -1,0 +1,41 @@
+<!--
+  DESIGN-SLICE — wf-sa → wf-swa handover for ONE change. TRANSIENT.
+  Regenerated per change, gitignored, never hand-maintained, never read across
+  changes. Reference the brief and drill-cache by path — do NOT restate structure
+  here; point at the brief/drill-cache instead.
+-->
+
+# Design-slice — <change summary in one line>
+
+**Serves:** CAP-NNN, L-NNN          <!-- the capabilities and/or learnings this change drives -->
+**System view:** see `<paths.discover_brief>`; depth in `<paths.drill_cache>/<digests consulted>`
+**Design diagram:** `<paths.design_view>` (transient — regenerate to view)
+**Date:** YYYY-MM-DD
+
+## Component requirements
+
+<!-- EARS-light, each owned by ONE component, tracing to a capability or learning.
+     Number slice-locally (REQ-1, REQ-2…); these ids do not survive the change.
+     No acceptance criteria here — the Software Architect writes those. -->
+
+- **REQ-1** — <EARS statement>  *(owner: <component> · CAP-NNN)*
+- **REQ-2** — <EARS statement>  *(owner: <component> · L-NNN)*
+- **REQ-3** — <EARS statement>  *(owner: <component> · CAP-NNN)*
+
+## Architecture moves
+
+<!-- Only if this change reshapes structure: split / merge / new component / changed
+     dependency. Each move is a decision (an ADR below) AND a reason to re-run
+     discover after the change lands. Omit the section if structure is unchanged. -->
+
+- <move> — recorded in ADR-NNN; re-run discover after merge.
+
+## Decisions binding this change
+
+- **New:** ADR-NNN — <title>
+- **Standing:** ADR-NNN — <title> (already governs <component>)
+
+## Risks for the Software Architect
+
+- <anything to watch when decomposing — a fragile seam, an ordering constraint,
+  an external dependency. Omit if none.>
