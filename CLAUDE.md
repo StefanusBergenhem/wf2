@@ -70,6 +70,26 @@ real run proves its absence hurt).
   to do the task — *not* build-philosophy, rationale, or notes on how wf itself is
   built. That reasoning lives here in CLAUDE.md; skills stay focused and to the
   point, with config-derived paths and no editorializing.
+- **The behavior test (the rule behind the two below).** Every line in a rendered
+  skill or agent must change what the executing agent *does*. The agent reads only
+  that file — so a line it cannot act on is pure context cost. Cut: architecture
+  facts ("component X depends on Y"), rationale ("this keeps context lean"), and
+  caller/consumer framing ("a planning role dispatched you", "the SwA consumes
+  this"). The test: *would the agent behave differently if this line were absent?*
+  No → it is authoring-context that belongs here or in the design docs, not in the
+  file. The recurring leak is writing with the whole system in mind and letting that
+  frame bleed into the file.
+- **Direct address.** Skill bodies and references are read *by* the executing agent
+  — write them in the imperative / second person ("Load X", "you decide"). Refer to
+  a role in the third person only when it is a genuinely *different* agent (the
+  downstream build phase, the Software Architect). `/skill-builder`'s "third person"
+  rule governs the **description only** — do not apply it to the body.
+- **Loading a shared skill.** A wf skill or agent that needs another skill's content
+  (e.g. `wf-basics`) instructs a direct file-`Read` of its `SKILL.md` — *not* the
+  subagent `skills:` preload field, *not* the `Skill` tool. Both of those are
+  model-triggered or Claude-only; a file-`Read` is deterministic (the content is
+  loaded, not discovered) and harness-portable, which is what our deterministic-dispatch
+  rule requires. Do not "fix" a `SKILL.md` file-`Read` into a `Skill`-tool call.
 - **Authoring.** Loading `/skill-builder` is a precondition for writing or editing
   any skill — not a suggestion. Skip it and the skill ships wrong frontmatter, soft
   redirections, or instructions repeated across phases; fix-on-review costs more
