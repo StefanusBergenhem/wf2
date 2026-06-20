@@ -79,7 +79,7 @@ echo ""
 # [1/2] Render skills for the chosen harness.
 SKILLS_DIR="$HARNESS_DIR/skills"
 mkdir -p "$SKILLS_DIR"
-echo "[1/2] Rendering skills ($TARGET)..."
+echo "[1/3] Rendering skills ($TARGET)..."
 for skill_dir in "$WF_DIR"/skills/*/; do
     skill_name="$(basename "$skill_dir")"
     dest="$SKILLS_DIR/$skill_name"
@@ -92,11 +92,30 @@ for skill_dir in "$WF_DIR"/skills/*/; do
     echo "  rendered: $skill_name"
 done
 
-# [2/2] Copy user-facing toolkit machinery into .wf/tools/ (git-tracked).
+# [2/3] Render agents for the chosen harness. Agents are single .md files
+# (frontmatter + system prompt), token-substituted like skills — no test stripping
+# (agents carry no scripts). Dispatched by name from the planning skills.
+if [ -d "$WF_DIR/agents" ]; then
+    AGENTS_DIR="$HARNESS_DIR/agents"
+    mkdir -p "$AGENTS_DIR"
+    echo ""
+    echo "[2/3] Rendering agents ($TARGET)..."
+    for agent_file in "$WF_DIR"/agents/*.md; do
+        [ -e "$agent_file" ] || continue
+        dest="$AGENTS_DIR/$(basename "$agent_file")"
+        cp "$agent_file" "$dest"
+        wf_subst_file "$TARGET" "$dest"
+        echo "  rendered: $(basename "$agent_file" .md)"
+    done
+fi
+
+# [3/3] Copy user-facing toolkit machinery into .wf/tools/ (git-tracked).
 # Excludes the install-time render/ lib and dev cruft (venv, caches, build
-# artifacts, vendored libs, node_modules) — those are regenerated per checkout.
+# artifacts, node_modules) — those are regenerated per checkout. Deliberately-
+# vendored offline libs (the self-contained-view graph lib) are KEPT — they must
+# ship for the rendered HTML views to work without internet.
 echo ""
-echo "[2/2] Installing toolkit machinery into .wf/tools/..."
+echo "[3/3] Installing toolkit machinery into .wf/tools/..."
 WF_TOOLS_DEST="$TARGET_DIR/.wf/tools"
 rm -rf "$WF_TOOLS_DEST"
 mkdir -p "$WF_TOOLS_DEST"
@@ -106,9 +125,11 @@ for tool_dir in "$WF_DIR"/tools/*/; do
     cp -R "$tool_dir" "$WF_TOOLS_DEST/$name"
 done
 strip_tests "$WF_TOOLS_DEST"
-# Prune dev cruft that may exist in the source tree.
+# Prune dev cruft that may exist in the source tree. NOTE: 'vendor' is deliberately
+# NOT pruned — the only vendor/ dirs hold the committed offline graph lib, which must
+# ship. Add a narrower guard here only if a regenerable vendor/ dir ever appears.
 find "$WF_TOOLS_DEST" -type d \( -name '.venv' -o -name '__pycache__' -o -name 'node_modules' \
-    -o -name 'vendor' -o -name 'dist' \) -prune -exec rm -rf {} + 2>/dev/null || true
+    -o -name 'dist' \) -prune -exec rm -rf {} + 2>/dev/null || true
 echo "  installed: .wf/tools/ (toolkit machinery)"
 
 echo ""
