@@ -88,9 +88,12 @@ EARS from memory is how smuggled design and untestable statements get in.
 
 For the architecture you shaped, write the **component requirements**: each an
 EARS-light statement that **one named component owns**, tracing to the capability or
-learning that drove it. Number them slice-locally (`REQ-1`, `REQ-2`); they organize
-this change, then evaporate. **Self-check each against the INCOSE checklist** in the
-reference.
+learning that drove it. Where a capability names a concept your components call
+something else, the requirement is where you **map** user-voice to structure — keep the
+capability's words in the trace, name your component in the requirement; do not reconcile
+the mismatch by renaming the capability. Number them slice-locally (`REQ-1`, `REQ-2`);
+they organize this change, then evaporate. **Self-check each against the INCOSE
+checklist** in the reference.
 
 Deriving requirements often exposes a missing owner or a mis-scoped boundary — when it
 does, return to Phase 2 and reshape. Architecture and requirements settle together.
