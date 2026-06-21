@@ -51,7 +51,8 @@ folder · depgraph · git-cochange) into `$DIR`.
 
 ## Step 4 — Scout augmentation (subagent)
 
-Dispatch ONE subagent with `$MODEL` + `$CLUSTERS`:
+Dispatch ONE subagent with `$MODEL` + `$CLUSTERS` — `$MODEL`'s `nodes` is a dict keyed
+by uid; full artifact shapes are in `<paths.tools>/discover/README.md`:
 
 - **Reconcile, don't pick a winner.** Synthesize the three clusterings into ONE
   partition (~6–10 subsystems; every uid in exactly one subsystem; a "Shared /
@@ -59,9 +60,10 @@ Dispatch ONE subagent with `$MODEL` + `$CLUSTERS`:
 - **Describe every component** in 1–2 grounded sentences — prefer its existing
   `synopsis`, else its `types`/`functions` signatures; read source only when
   signatures are insufficient.
-- **Write `$SUBSYSTEMS`**: `system_summary`, `subsystems[]` (`name`, `summary`,
-  `members`, `basis`), `component_descriptions{uid}` for EVERY uid,
-  `disagreements[]`. Verify the partition and full coverage before writing.
+- **Write `$SUBSYSTEMS`** to the shape in `<paths.tools>/discover/subsystems.example.json`:
+  `system_summary`, `subsystems[]` (`name`, `summary`, `members`, `basis`),
+  `component_descriptions{uid}` for EVERY uid, and `disagreements[]` (each entry
+  `{finding, components}`). Verify the partition and full coverage before writing.
 
 ## Step 5 — Render and report
 

@@ -1,0 +1,29 @@
+{
+  "system_summary": "A two-tier service: an HTTP API over a domain core, with a small web client. One paragraph an agent reads first to orient — what the system is and how its parts relate.",
+  "subsystems": [
+    {
+      "name": "API",
+      "summary": "HTTP entry points and request orchestration over the domain core.",
+      "basis": "All three clusterings agree these share an import cluster and co-change together.",
+      "members": ["go:internal/handlers", "go:cmd/server"]
+    },
+    {
+      "name": "Domain core",
+      "summary": "Business rules and persistence, independent of transport.",
+      "basis": "folder + depgraph clusterings; the engine and repository are the stable hub.",
+      "members": ["go:internal/engine", "go:internal/repository"]
+    }
+  ],
+  "component_descriptions": {
+    "go:internal/handlers": "Maps HTTP requests to domain calls and shapes responses.",
+    "go:cmd/server": "Wires routes and dependencies and starts the listener (composition root).",
+    "go:internal/engine": "Evaluates the business rules over a loaded entity.",
+    "go:internal/repository": "Reads and writes entities; the only component that touches the database."
+  },
+  "disagreements": [
+    {
+      "finding": "handlers and repository co-change in git history but have no static import between them — a hidden contract the import graph cannot show.",
+      "components": ["go:internal/handlers", "go:internal/repository"]
+    }
+  ]
+}

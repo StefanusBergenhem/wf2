@@ -18,6 +18,8 @@ Usage:  render.py --model model.json --subsystems subsystems.json --out view.htm
 import argparse, json, html, os
 from collections import defaultdict
 
+from _contract import validate_subsystems
+
 
 def main():
     ap = argparse.ArgumentParser()
@@ -30,6 +32,7 @@ def main():
     model = json.load(open(a.model))
     nodes = model["nodes"]
     sub = json.load(open(a.subsystems))
+    validate_subsystems(sub)
     subsystems = sub["subsystems"]
     desc = sub.get("component_descriptions", {})
 

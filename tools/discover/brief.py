@@ -16,6 +16,8 @@ Usage:  brief.py --model model.json --subsystems subsystems.json --out brief.md 
 import argparse, json
 from collections import defaultdict
 
+from _contract import validate_subsystems
+
 
 def main():
     ap = argparse.ArgumentParser()
@@ -27,6 +29,7 @@ def main():
 
     nodes = json.load(open(a.model))["nodes"]
     sub = json.load(open(a.subsystems))
+    validate_subsystems(sub)
     subsystems = sub["subsystems"]
     cd = sub.get("component_descriptions", {})
 

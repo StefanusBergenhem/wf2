@@ -39,6 +39,35 @@ Per-language extractors live in their own language (a Go dev has Go; a TS dev ha
 see `EXTRACTORS.md` to add one. `spine.py`/`cluster.py`/`render.py`/`brief.py` never need
 a target toolchain — only Python.
 
+## Artifact shapes
+
+The mechanical half emits two JSON artifacts; the scout reads both and emits a third.
+The field names below are what `render.py` / `brief.py` actually consume — produce
+exactly these.
+
+**`model.json`** (spine output) — `{languages, title, order, nodes}`. **`nodes` is a
+dict keyed by uid** (not a list): `nodes["<uid>"] -> {uid, id, name, path, module, kind,
+lang, loc, has_doc, has_tests, deps: [uid], synopsis, types: [...], functions: [{name,
+signature, doc}]}`. A uid is `<lang>:<path>` (e.g. `go:internal/auth`). Ground a
+component description in `synopsis` first, then the `types` / `functions` signatures.
+
+**`clusters.json`** (cluster output) — `{candidates, depgraph_hubs, git_stats}`.
+`candidates` holds the three mechanical clusterings as `{folder, depgraph, gitcochange}`,
+each a dict of `cluster-label -> [uid]`. They are candidate groupings for the scout to
+reconcile, never a winner to pick.
+
+**`subsystems.json`** (scout output — the contract `render.py` / `brief.py` consume).
+The full, copy-pasteable instance is `subsystems.example.json` in this directory;
+`_contract.py` validates it at load and fails with a precise message if a required field
+is missing. Required vs optional:
+
+| field | shape | required |
+|---|---|---|
+| `subsystems[]` | `{name, members: [uid], summary?, basis?}` | **yes** — `name` and `members` required per entry |
+| `component_descriptions` | `{uid: description}`, one per component | recommended (a blank renders as "no description") |
+| `disagreements[]` | `{finding: string, components: [uid]}` | optional list, but `finding` is **required in each entry** |
+| `system_summary` | string | optional |
+
 ## One-time setup (per checkout)
 
 Run from this directory. The Python scripts are stdlib-only (no venv, no pip). Build the
