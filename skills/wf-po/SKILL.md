@@ -120,11 +120,17 @@ unresolved blocker that should gate downstream work.
 
 ### Phase 6 — Write & commit
 
-On explicit approval, write `$CAPABILITIES` (create it from
-`assets/capabilities.yaml.tmpl` if absent), then **`git add` + `git commit`** it
-(one commit, e.g. `capabilities: <short summary>`). The capability tier is the
-contract every downstream layer traces to — leaving it untracked is one
-`git clean` from gone; the write and the commit are one step.
+On explicit approval, write `$CAPABILITIES` (init scaffolds it; create it from
+`assets/capabilities.yaml.tmpl` if somehow absent). Then **offer to commit** it (one
+commit, e.g. `capabilities: <short summary>`) — the open work-set is durable, and
+leaving it uncommitted is one `git clean` from gone:
+
+- If the human approves, `git add` + `git commit` it.
+- If the human declines, or the environment forbids committing (a sandbox, CI, a
+  detached-HEAD or read-only worktree), **leave it written-but-uncommitted, report
+  exactly what is unstaged, and stop** — a clean outcome, not a failure. Never
+  `--no-verify`; if a commit you were told to make then fails (hook, identity), report
+  the exact error and halt.
 
 **ID allocation & graduation.** `CAP-NNN` ids increase monotonically over the file's
 lifetime; never renumber, never reuse a retired number. Park a capability the user

@@ -154,7 +154,11 @@ The judgement already happened; this is capture.
    addresses, flip `status` to `handled` and stamp `handled_at` + `resolved_by` (the
    ADR id or the commit). Leave the rest `open`.
 4. **Confirm before commit.** Present a brief summary of the decisions and ADRs the
-   alignment settled, reopen `$DESIGN_VIEW`, and get the human's go-ahead to commit.
+   alignment settled, reopen `$DESIGN_VIEW`, and ask for the go-ahead to commit. If the
+   human declines, or the environment forbids committing (sandbox, CI, detached-HEAD or
+   read-only worktree), the durable files are already written (ADRs in step 1, learnings
+   in step 3) — **report exactly what is left uncommitted and stop. A clean outcome, not
+   a failure.**
 5. On approval, commit the **durable** files only — the new/changed ADRs and the
    `$LEARNINGS` update. The design-slice is transient (gitignored); there is nothing to
    commit for it. Stage explicit paths — never `git add .`:
@@ -164,8 +168,8 @@ The judgement already happened; this is capture.
    ```
 6. Glance at recent commit style (`git log --oneline -5`) and commit with a subject like
    `adr: <short scope>`, the body listing the decisions and any learnings closed. Pass
-   the message via HEREDOC. If the commit fails (hook, identity, detached HEAD), do
-   **not** bypass — never `--no-verify`, never `--amend`. Report the exact error and
+   the message via HEREDOC. If a commit you were told to make then fails (hook, identity),
+   do **not** bypass — never `--no-verify`, never `--amend`. Report the exact error and
    halt.
 7. Report: the commit hash, the design-slice path for the Software Architect to
    consume, and the suggested next step (`wf-swa`).

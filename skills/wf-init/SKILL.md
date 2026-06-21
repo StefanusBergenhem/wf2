@@ -5,10 +5,12 @@ description: Bootstraps a project's .wf/ workspace from the config template afte
 
 # wf-init — bootstrap the .wf/ workspace
 
-Run after `install.sh` has rendered the skills. It writes `.wf/config.yaml` from
-the template, then creates the directories and telemetry sink that config defines
-and adds a gitignore entry. Idempotent — it never overwrites an edited config nor
-duplicates the gitignore line.
+Run after `install.sh` has rendered the skills. It writes `.wf/config.yaml` from the
+template, then creates everything the roles assume exists at the paths config defines —
+the transient dir, the telemetry sink, the durable ADR dir, and the capabilities and
+learnings homes (each copied from its owning skill's template) — and adds a gitignore
+entry. After init, no role should hit a missing file. Idempotent — it never overwrites
+an edited config or an existing home, nor duplicates the gitignore line.
 
 From the project root, run:
 

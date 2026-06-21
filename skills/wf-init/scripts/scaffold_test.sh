@@ -2,9 +2,10 @@
 #
 # scaffold_test.sh — TDD spec for scaffold.sh.
 #
-# Verifies: config written from template with tokens resolved, .wf/transient/
-# created, gitignore updated, and full idempotency (re-run does not clobber an
-# edited config nor duplicate the gitignore line).
+# Verifies: config written from template with tokens resolved; the transient dir,
+# telemetry sink, ADR dir, and capabilities/learnings homes created; gitignore updated;
+# full idempotency (re-run clobbers no edited config nor existing home, and does not
+# duplicate the gitignore line); and homes skipped when their config key is absent.
 # wf2-source-only — never rendered into an install target.
 #
 # Run:  bash skills/wf-init/scripts/scaffold_test.sh   (exit 0 = all green)
@@ -35,16 +36,27 @@ check "target token resolved"      "grep -q 'target: \"claude\"' '$PROJ/.wf/conf
 check "no unresolved {{ tokens"    "! grep -q '{{' '$PROJ/.wf/config.yaml'"
 check "gitignore ignores transient" "grep -qF '.wf/transient/' '$PROJ/.gitignore'"
 check "telemetry sink created"     "[ -f '$PROJ/.wf/telemetry/sessions.jsonl' ]"
+check "adrs dir created"           "[ -d '$PROJ/.wf/adrs' ]"
+check "adrs gitkeep created"       "[ -f '$PROJ/.wf/adrs/.gitkeep' ]"
+check "capabilities home created"  "[ -f '$PROJ/.wf/CAPABILITIES.yaml' ]"
+check "capabilities has structure" "grep -q 'capabilities:' '$PROJ/.wf/CAPABILITIES.yaml'"
+check "learnings home created"     "[ -f '$PROJ/.wf/LEARNINGS.yaml' ]"
+check "learnings has structure"    "grep -q 'learnings:' '$PROJ/.wf/LEARNINGS.yaml'"
+check "wf-learnings home created"  "[ -f '$PROJ/.wf/wf-learnings.yaml' ]"
 
 echo "== idempotency =="
-# Mark the config as user-edited and append a telemetry line, then re-run.
+# Mark the config as user-edited and append content to durable homes, then re-run.
 echo "# user edit" >> "$PROJ/.wf/config.yaml"
 echo '{"agent":"prior"}' >> "$PROJ/.wf/telemetry/sessions.jsonl"
+echo "  - id: CAP-001" >> "$PROJ/.wf/CAPABILITIES.yaml"
+echo "  - id: L-001" >> "$PROJ/.wf/LEARNINGS.yaml"
 bash "$SCAFFOLD" --dir "$PROJ" --target claude --name demo > "$WORK/run2.log" 2>&1 \
     || fail "second scaffold exited non-zero (see $WORK/run2.log)"
 
 check "existing config not clobbered" "grep -q '# user edit' '$PROJ/.wf/config.yaml'"
 check "telemetry sink not clobbered" "grep -q 'prior' '$PROJ/.wf/telemetry/sessions.jsonl'"
+check "capabilities home not clobbered" "grep -q 'CAP-001' '$PROJ/.wf/CAPABILITIES.yaml'"
+check "learnings home not clobbered" "grep -q 'L-001' '$PROJ/.wf/LEARNINGS.yaml'"
 gi_count="$(grep -cF '.wf/transient/' "$PROJ/.gitignore")"
 check "gitignore line not duplicated" "[ '$gi_count' -eq 1 ]"
 
@@ -69,6 +81,7 @@ check "custom telemetry sink honored" "[ -f '$CUSTOM/.wf/tel2/log.jsonl' ]"
 check "custom transient dir honored"  "[ -d '$CUSTOM/.wf/t2' ]"
 check "custom transient gitignored"   "grep -qxF '.wf/t2/' '$CUSTOM/.gitignore'"
 check "default sink NOT created"      "! [ -f '$CUSTOM/.wf/telemetry/sessions.jsonl' ]"
+check "no home when key absent"       "! [ -f '$CUSTOM/.wf/CAPABILITIES.yaml' ]"
 
 echo "== bad target rejected =="
 if bash "$SCAFFOLD" --dir "$WORK/proj2" --target frobnicate --name x > /dev/null 2>&1; then
