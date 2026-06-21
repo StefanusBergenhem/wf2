@@ -26,9 +26,7 @@ pipeline**).
 
 You work at the **component altitude** — which component owns what, how they depend on
 each other, and what each must do. You do **not** write system-level requirements:
-that altitude is the capability, and a system requirement only restates it. The
-Software Architect adds the acceptance criteria and the task breakdown below you; the
-Product Owner owns the capability *why* above you.
+that altitude is the capability, and a system requirement only restates it.
 
 ## Scouting & the drill-cache
 
@@ -59,10 +57,8 @@ committed) is your output — your designed-but-unbuilt work. You:
   whole backlog if it fits one slice). The slice is transient — wf-swa clears it after cutting
   the sprint — while the backlog persists until its work ships.
 
-Requirement ids are **repo-unique** (`REQ-<n>`, monotonic over the whole repo, never reused)
-so a tag never collides with a retired design's. When the backlog empties, all designed work
-has shipped — its structure is now the codebase's (re-derived by discover); only the ADRs
-remain.
+When the backlog empties, all designed work has shipped — its structure is now the
+codebase's (re-derived by discover); only the ADRs remain.
 
 ## Process
 
@@ -133,9 +129,8 @@ a feature ships half-built: a `nil`-wired dependency that compiles and silently 
 nothing. The Software Architect orders the resulting per-component requirements with task
 `depends_on`.
 
-Give each requirement a **repo-unique id**. Do not number them by hand — run the allocator
-for the whole set you derived; it returns ids that never collide with a retired design's
-lingering tag:
+Give each requirement a **repo-unique id** (per `references/requirement-syntax.md`). Do not
+number them by hand — run the allocator for the whole set you derived:
 
 ```sh
 python3 <paths.tools>/reconcile/next_id.py --count <how many you are minting> \
@@ -144,9 +139,8 @@ python3 <paths.tools>/reconcile/next_id.py --count <how many you are minting> \
 
 Assign the printed ids in order. If alignment (Phase 4) adds a requirement, continue numbering
 from the highest you have already assigned this session — re-running the allocator before you
-commit hands back the same base, so two requirements would take the same id. The id is what a
-proving test tags — `[REQ:REQ-<n>]` — and what reconcile matches to confirm the requirement is
-built. **Self-check each against the INCOSE checklist** in the reference.
+commit hands back the same base, so two requirements would take the same id.
+**Self-check each against the INCOSE checklist** in the reference.
 
 Deriving requirements often exposes a missing owner or a mis-scoped boundary — when it
 does, return to Phase 2 and reshape. Architecture and requirements settle together.
@@ -205,9 +199,8 @@ The judgement already happened; this is capture.
    repo-unique id and owner), the architecture moves, and the ADRs that bind it. Reference
    the brief and drill-cache by path — do **not** restate structure.
 3. **Drain the inputs you designed in.** Remove from `$CAPABILITIES` each capability now
-   covered by a backlog design, and from `$LEARNINGS` each learning likewise — a design that
-   fully covers an input *is* its refinement, and leaving it in its input log would
-   re-surface it as undone. (Cover it fully first, per **The drain pipeline**.)
+   covered by a backlog design, and from `$LEARNINGS` each learning likewise — cover it
+   fully first, per **The drain pipeline**.
 4. **Cut the design-slice.** Fill `$DESIGN_SLICE` from `assets/design-slice.md.tmpl` with a
    **buildable increment** of the backlog — the whole backlog if it fits one slice, else a
    coherent subset along the dependency spine: its requirements (with owners), the moves, the

@@ -5,8 +5,6 @@ description: The basics every wf skill assumes — where config and workspace li
 
 # wf basics
 
-Shared reference. Other skills cite this instead of restating it.
-
 ## 1 — The `.wf/` workspace
 
 Everything wf keeps in a project lives under `.wf/`. **Always resolve a path or

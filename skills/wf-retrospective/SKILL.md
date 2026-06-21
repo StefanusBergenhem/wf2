@@ -28,8 +28,7 @@ Both files hold the same shape:
   sources: ["<session ended_at>"]   # the session(s) this was distilled from
 ```
 
-You only ever **create and reinforce** entries. A learning is **drained by its
-consumer**.
+You only ever **create and reinforce** entries — never remove one.
 
 ## Process
 
@@ -89,6 +88,7 @@ Your last action, always. Run the `wf-basics` §2 `record_session.py` command wi
 - **A run that distils nothing is a valid run.** When every observation is already
   compiled or judged noise, report "nothing new" and commit nothing — never invent
   a learning to look productive.
+
 ## Halt conditions
 
 - `$TELEMETRY` is absent or empty — nothing to distil. Report and exit.

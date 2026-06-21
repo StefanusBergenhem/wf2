@@ -20,8 +20,8 @@ set of **per-task contracts** organized as a **dependency graph**, written to `$
 
 You work at the **file and task altitude** — what proves each requirement, which files
 change, what each task must demonstrate, what order they run in. The requirements and
-component boundaries are the SA's altitude above you; you consume them, you do not
-change them. The acceptance criteria and the task breakdown are yours.
+component boundaries are fixed: you consume them, you do not change them; the acceptance
+criteria and the task breakdown are yours.
 
 ## Hard constraints
 
@@ -69,11 +69,6 @@ able to write a failing test from the criterion alone.
 A requirement whose failure or boundary behavior the criteria don't cover is an
 incomplete set — add the missing criterion. A requirement you cannot make testable
 from the source is a flag to the SA, not a guess.
-
-Each requirement's proving test carries its **`[REQ:<id>]` tag** — the build phase stamps
-it from the task's `covers`, and `reconcile` reads it to confirm the requirement is built.
-Author criteria knowing that tag is what marks the requirement done; one criterion's test
-is where its tag lands.
 
 ### Phase 3 — Decompose into tasks
 

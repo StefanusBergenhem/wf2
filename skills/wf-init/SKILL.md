@@ -21,5 +21,4 @@ bash {{WF_SKILLS_DIR}}/wf-init/scripts/scaffold.sh --target {{WF_TARGET}}
 The project name defaults to the directory name; pass `--name <name>` to override.
 
 After it runs, open `.wf/config.yaml` and confirm `project.name` and
-`project.target`. The config grows as you add skills; see the `wf-basics` skill for
-what each field governs.
+`project.target`. See the `wf-basics` skill for what each config field governs.

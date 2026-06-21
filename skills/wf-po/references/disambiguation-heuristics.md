@@ -2,6 +2,15 @@
 
 Bucket every user-input item into exactly one of five categories: **real need / veiled design / goal / unrealistic / out-of-scope**. Hold the bucket call internally while taking input; surface it during the readback phase so the user can affirm or reframe.
 
+Contents:
+- Bucket 1 — Real need
+- Bucket 2 — Veiled design (incl. binding mandates)
+- Bucket 3 — Goal
+- Bucket 4 — Unrealistic as stated
+- Bucket 5 — Out of scope
+- Edge case: "AI" / "ML"
+- Internal working notation
+
 ## Bucket 1 — Real need
 
 A real need is an underlying problem or capability statement that does NOT pre-commit to an implementation approach.

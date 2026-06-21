@@ -8,7 +8,6 @@ description: Derives a transient subsystem read-view of a repo — a mechanical 
 **Read `wf-basics` first for the `.wf/` layout and config rules**. Resolve every path
 below from `.wf/config.yaml`:
 
-- `TOOLS`       = `paths.tools`/discover  (the tool dir)
 - `DIR`         = `paths.discover`        (working dir, cleared each run)
 - `MODEL`       = `paths.discover_model`
 - `CLUSTERS`    = `paths.discover_clusters`
@@ -17,8 +16,8 @@ below from `.wf/config.yaml`:
 - `BRIEF`       = `paths.discover_brief`
 - `NAME`        = `project.name`
 
-Pipeline: `extract → spine merge → cluster` (mechanical) → scout (LLM) → `render`.
-Tool docs: `$TOOLS/README.md`; new-language extractors: `$TOOLS/EXTRACTORS.md`.
+The discover tools live under `<paths.tools>/discover/`. Pipeline:
+`extract → spine merge → cluster` (mechanical) → scout (LLM) → `render`.
 
 ## Step 1 — Clear previous output
 
@@ -31,18 +30,18 @@ rm -rf "$DIR" && mkdir -p "$DIR"
 Determine the repo's languages (Go → `go.mod`; TS/JS → `package.json`/`tsconfig.json`).
 For each present language, confirm its extractor is built:
 
-- Go: `$TOOLS/readview-go/readview` exists
-- TS/JS: `$TOOLS/readview-ts/dist/` exists
+- Go: `<paths.tools>/discover/readview-go/readview` exists
+- TS/JS: `<paths.tools>/discover/readview-ts/dist/` exists
 
 If a present language's extractor is missing, **halt and ask the human** whether to
-build it (build steps in `$TOOLS/EXTRACTORS.md`). Do not continue without it.
+build it (build steps in `<paths.tools>/discover/EXTRACTORS.md`). Do not continue without it.
 
 ## Step 3 — Run the mechanical spine
 
 Pass one flag-group per present language. Roots are repo-relative.
 
 ```sh
-python3 "$TOOLS/discover.py" --repo . --out "$DIR" --name "$NAME" \
+python3 <paths.tools>/discover/discover.py --repo . --out "$DIR" --name "$NAME" \
   [--go-roots cmd,internal --go-mod go.mod] \
   [--ts-roots src --ts-tsconfig tsconfig.json --ts-exclude 'src/generated/**']
 ```
@@ -67,8 +66,8 @@ Dispatch ONE subagent with `$MODEL` + `$CLUSTERS`:
 ## Step 5 — Render and report
 
 ```sh
-python3 "$TOOLS/render.py" --model "$MODEL" --subsystems "$SUBSYSTEMS" --out "$VIEW"  --title "$NAME"
-python3 "$TOOLS/brief.py"  --model "$MODEL" --subsystems "$SUBSYSTEMS" --out "$BRIEF" --title "$NAME"
+python3 <paths.tools>/discover/render.py --model "$MODEL" --subsystems "$SUBSYSTEMS" --out "$VIEW"  --title "$NAME"
+python3 <paths.tools>/discover/brief.py  --model "$MODEL" --subsystems "$SUBSYSTEMS" --out "$BRIEF" --title "$NAME"
 ```
 
 Point the human at `$VIEW` (interactive map) and `$BRIEF` (compact agent digest).
