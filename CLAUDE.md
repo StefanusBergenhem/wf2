@@ -33,8 +33,10 @@ over time.
 
 Most documents are transient handovers between roles. The durable set is small:
 
-- **Capabilities** — the *why*: the user-voice needs that every feature
-  implemented since wf2 was introduced traces back to.
+- **Capabilities** — the *why*, kept as an **open work-set**: user-voice needs not yet
+  built. A capability graduates out once its proving tests land — its residue living on
+  in those tests' requirement tags and any ADR it motivated — so the set records *open
+  intent* and never becomes an accumulating catalog of shipped features.
 - **ADRs** — deliberate architecture decisions: the choice made, the
   alternatives rejected, and why. The durable record of *how* the system is
   shaped, separate from the *why* (capabilities) and the local *how-to*

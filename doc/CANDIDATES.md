@@ -167,7 +167,10 @@ options were floated: (1) a per-capability status (`new | designed | implemented
    is the unit of work."
 3. **Prune PO's status values to `planned | deferred`** (drop `in_progress` =
    transient, `done` = derivable) — `capabilities.yaml.tmpl` + the two PO status
-   references.
+   references. **DONE 2026-06-21** as part of the capabilities-as-open-work-set reframe
+   (completed capabilities graduate OUT rather than carry a `done` status). Points 1–2
+   (SA scope = session input; backlog = derived gap) remain open pending the coverage
+   harvester.
 
 **Trigger to act:** when build/review land the `[REQ]` coverage harvester (so the
 derived gap is actually computable), or when a multi-driver / orchestrated model
@@ -222,3 +225,67 @@ deferred for capability "done" in C6.
 **Trigger to act:** when the orchestration + review layer lands (so `pipeline_state`,
 rejections, and design-issues exist to analyse), grow `wf-retrospective` to consume them;
 and when the coverage harvester lands, switch `handled` to derived.
+
+---
+
+## C10 — Compliance / audit trace (capability → requirement → test walk)
+
+**Date:** 2026-06-21
+**Context:** the **capabilities-as-open-work-set** reframe (2026-06-21 — completed
+capabilities graduate OUT rather than accumulate as a durable catalog) was adopted
+after establishing that nothing reads a *completed* capability. The one honest
+exception identified: a **walked compliance/audit trace** (test → requirement →
+capability → user-need), which regulated industries genuinely require.
+
+**Analysis:** the *requirement-level* trace already survives — every requirement's
+EARS text lives in its `[REQ]` test tag, harvestable on demand, so test → requirement
+is intact without retaining capabilities. What a compliance trace adds on top is the
+**capability → user-need** apex, which the graduation model drops. Retaining it is a
+**project-specific** need (the adopter's regulatory regime), not something the general
+toolkit should hoard by default — baking "keep every capability forever for audit"
+into wf2 over-fits to one class of repo.
+
+**Likely shape when built:** don't graduate completed capabilities into oblivion but
+into a **trace store** (an archived capability ledger keyed to the requirement tags
+that realize it), or reconstruct the chain on demand from preserved `[REQ]` tags + an
+append-only graduation log. Pairs with **C11 (product description)** as its likely
+host layer — both are the durable *external/record* tier sitting above the open
+work-set.
+
+**Trigger to act:** when a project with a real audit/traceability mandate adopts wf2
+(the user works in such industries and expects to need it — but no current run does).
+
+---
+
+## C11 — Product description (external, customer-voice durable artifact)
+
+**Date:** 2026-06-21
+**Context:** a sellable / proprietary product (SaaS or otherwise) needs an external
+description — you cannot tell customers "read the code." None of wf2's existing
+durable artifacts fills this: a **capability** is open *future* intent in internal
+voice that graduates out; the **discover brief** is a code-derived *technical*
+component map; an **ADR** is an internal decision. A product description is what the
+product *does today*, in *customer* voice, kept durably.
+
+**Analysis (governor lens):** legitimate to store. Positioning, narrative, audience
+framing, naming, and what-to-emphasize are **pure human intent — non-derivable from
+code**; the derivable half (the raw feature inventory) is the cheap part. It is a
+*marketing* artifact, so its feature-drift maintenance is inherent and accepted — NOT
+the technical-structure rot wf2 exists to kill (you *want* editorial control over how
+the product is described).
+
+It also **completes the graduation model.** A graduating capability deposits residue
+into test-tags (component why) + ADRs (decisions) — but neither carries the
+*customer-voice "what a user can now do"* essence, which otherwise evaporates on
+graduation. The product description is exactly that essence's durable home:
+**capability graduates → its customer-facing essence updates the product description →
+the capability drops.** Not a bolt-on; it closes a gap the open-work-set model leaves.
+
+**Shape when built — keep minimal (resist the wf1 trap):** a single human-owned
+`PRODUCT.md`-style doc with a tight schema, updated at capability-graduation, NOT
+auto-generated and NOT a marketing CMS (no pricing / persona / competitive-positioning
+sprawl). The moment it grows sections nobody downstream consumes, it has become wf1.
+
+**Trigger to act:** the first time a real product built on wf2 needs an external /
+sellable description (a dogfood where someone reaches for "what do we tell
+customers"). **C10 (compliance trace)** is its natural second-step extension.
