@@ -25,20 +25,27 @@ The discover tools live under `<paths.tools>/discover/`. Pipeline:
 rm -rf "$DIR" && mkdir -p "$DIR"
 ```
 
-## Step 2 — Verify extractors
+## Step 2 — Ensure every language has a built extractor
 
-Determine the repo's languages (Go → `go.mod`; TS/JS → `package.json`/`tsconfig.json`).
-For each present language, confirm its extractor is built:
+Identify the repo's primary language(s). wf packs one extractor per supported language as a
+`readview-<lang>/` directory under `<paths.tools>/discover/` — list that directory to see
+which languages are packed. For each language the repo uses:
 
-- Go: `<paths.tools>/discover/readview-go/readview` exists
-- TS/JS: `<paths.tools>/discover/readview-ts/dist/` exists
+- **Packed** (a `readview-<lang>/` directory exists) — if its build output is not already
+  present, build it with the language's own toolchain per that extractor's `README.md`
+  ("Build" section).
+- **Not packed** — author and wire an extractor for the language following
+  `<paths.tools>/discover/EXTRACTORS.md`, then build it.
 
-If a present language's extractor is missing, **halt and ask the human** whether to
-build it (build steps in `<paths.tools>/discover/EXTRACTORS.md`). Do not continue without it.
+If a build fails, or the language's toolchain is not installed, **halt and report the exact
+error** — each extractor is compiled with its own language's toolchain, and the spine cannot
+run without one for every language in scope.
 
 ## Step 3 — Run the mechanical spine
 
-Pass one flag-group per present language. Roots are repo-relative.
+Pass `discover.py` one flag-group per language whose extractor you built — run
+`python3 <paths.tools>/discover/discover.py --help` for the flags each packed extractor
+takes. Roots are repo-relative:
 
 ```sh
 python3 <paths.tools>/discover/discover.py --repo . --out "$DIR" --name "$NAME" \

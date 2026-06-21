@@ -3,7 +3,8 @@
 An extractor turns one language's source into the **common IR** (a plain JSON shape).
 The spine (`spine.py`) merges N IRs into one model regardless of which language each
 extractor was written in, so adding a language is a self-contained job: write the
-adapter, emit the IR, done. The renderers, clustering, and scout never change.
+adapter, emit the IR, and wire it into the orchestrator (`discover.py`). The spine,
+clustering, renderers, and scout never change.
 
 Two worked references ship in this folder — read them before starting:
 
@@ -113,6 +114,38 @@ for unit in program.components():
       functions=[reshape(f) for f in unit.exportedFuncs()])
 ```
 
+## Wire it into `discover.py`
+
+Emitting the IR is half the job — the orchestrator (`discover.py`) is what invokes the
+extractor and feeds the spine. It dispatches one **explicit branch per packed extractor**;
+add yours alongside the `readview-go` / `readview-ts` branches (they are the template — Go
+shows the compiled case, TS the interpreted one):
+
+1. **Add the extractor's flags** to the argparse — at least `--<lang>-roots`, plus any
+   config flag your extractor needs (e.g. a `--<lang>-config` for a build manifest). Layout
+   is configuration, never a constant.
+2. **Add an invocation branch**, guarded by that roots flag, mirroring the existing two:
+   resolve the built artifact under `<tools>/readview-<lang>/` and **exit with the build
+   command** if it is absent (a missing build is then a clear message, not a crash); run the
+   extractor in `-mode ir`, capturing stdout to `<out>/<name>-<lang>.ir.json`; append that
+   path to `irs`.
+
+```python
+if a.<lang>_roots:
+    art = os.path.join(TOOLS, "readview-<lang>", "<built artifact>")   # binary, or e.g. dist/extract.js
+    if not os.path.exists(art):
+        sys.exit(f"<lang> extractor not built: run `cd {TOOLS}/readview-<lang> && <build cmd>`")
+    ir = os.path.join(a.out, f"{a.name}-<lang>.ir.json")
+    # compiled -> [art, ...] ; interpreted -> [interpreter, art, ...]  (cf. the go vs ts branches)
+    run([<run art>, "-repo", a.repo, "-roots", a.<lang>_roots, "-mode", "ir"], out_path=ir)
+    irs.append(ir)
+```
+
+3. **Update the module `Usage` docstring** to list the new flag-group.
+
+Nothing downstream of the merge changes — the spine, clustering, scout, and renderers
+consume the merged IR, which is language-blind by construction.
+
 ## Non-negotiables (do / don't)
 
 - ✅ Call the native toolchain.  ❌ Never hand-roll a parser/regex over source for structure.
@@ -146,6 +179,8 @@ swap the toolchain calls, keep the IR emission identical.
 - [ ] Uses the native toolchain (no hand-rolled parser).
 - [ ] Emits the IR exactly (field names + shape above); validated by feeding it to
       `spine.py merge` and getting a clean `model.json`.
+- [ ] Wired into `discover.py` — flag-group + invocation branch + `Usage` docstring
+      updated; a `discover.py --<lang>-roots …` run produces `model.json` + `clusters.json`.
 - [ ] Component unit is consistent; `id`s are stable and unique.
 - [ ] `depends_on` is intra-repo only and resolves (no dangling edges after merge).
 - [ ] `synopsis` is verbatim-or-empty; no invented prose.
