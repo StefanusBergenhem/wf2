@@ -360,3 +360,27 @@ human-driven flow has no race.
 **Trigger to act:** when the flow stops being strictly sequential — a real run with parallel
 increments, or the orchestrator dispatching more than one slice's work at once. Then add
 in-flight tracking to the backlog and an "skip in-flight" rule to wf-sa's cut step.
+
+---
+
+## C15 — The "test tree" is a path with ≥2 callers but no config key
+
+**Date:** 2026-06-21
+**Context:** wf-sa now invokes two tools that need the project's test tree as a `--scan` /
+`--tests` root — `reconcile.py` (drain the built, SKILL.md Phase 1) and `next_id.py`
+(allocate ids, Phase 3). Neither resolves the root from config; both say "the test tree" and
+rely on SA judgement to fill the path.
+
+**Observation:** this is the C1 threshold (a thing read by ≥2 callers belongs in one source of
+truth) applied to a **path** rather than a config *reader*. The "one source of truth for paths"
+ground rule says skills resolve paths from `.wf/config.yaml`; "the test tree" is the one path in
+wf-sa resolved by judgement instead. A `paths.tests` key would fix it — **but a single root does
+not fit polyglot / co-located layouts** (Go's `_test.go` lives beside source, so the "test tree"
+is effectively the source root; a TS repo may scatter `__tests__`). So the key may need to be a
+*list* of roots, or the convention may be "the source root" for grep-only consumers. Needs a
+decision, not a reflex `paths.tests: ".wf/..."`.
+
+**Trigger to act:** a third consumer needs the test root, or a dogfood run shows the SA
+resolving it inconsistently between the reconcile call and the next_id call. Then add a config
+key (likely a list) and point both invocations at it. Until then the judgement-filled path is
+harmless and consistent across the two callers.

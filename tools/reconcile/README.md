@@ -37,6 +37,22 @@ When a test proves a requirement, stamp the requirement's id in that test:
 - After a design retires, its tag remains in the test as a historical breadcrumb (and the
   seed of a future compliance trace); reconcile reports it as an orphan, never an error.
 
+## Allocating ids — `next_id.py` (the writer side)
+
+reconcile is the *reader* ("is this id built?"); `next_id.py` is the *writer* ("what id is
+free?"). The SA mints ids with it rather than by hand:
+
+```sh
+python3 next_id.py --scan <test-tree> --scan <design-backlog> --scan <adrs> [--count N]
+```
+
+It greps every `--scan` path for `REQ-<n>` mentions and prints `max+1 .. max+N`. The scan is
+**broad on purpose** — any mention, not only `[REQ:...]` tags — because over-counting only
+skips a number (free) while under-counting reuses an id and collides with a retired design's
+lingering tag (the one failure). Nothing is stored: the next id is *derived* from what
+exists, so there is no high-water-mark counter to maintain. Missing paths are skipped (a
+greenfield first call returns `REQ-1`); a `\b` boundary keeps lookalikes like `PREQ-9` out.
+
 ## Coverage is not correctness
 
 A tag proves a proving test **exists and is committed** — nothing more. Two gates

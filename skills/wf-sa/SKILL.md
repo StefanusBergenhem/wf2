@@ -133,11 +133,20 @@ a feature ships half-built: a `nil`-wired dependency that compiles and silently 
 nothing. The Software Architect orders the resulting per-component requirements with task
 `depends_on`.
 
-Give each requirement a **repo-unique id** (`REQ-<n>`, monotonic over the whole repo, never
-reused — start above the highest `REQ-<n>` already in the repo). The id is what a proving
-test tags — `[REQ:REQ-<n>]` — and what reconcile matches to confirm the requirement is built;
-a design-local id would collide with a retired design's lingering tag and read as built from
-birth. **Self-check each against the INCOSE checklist** in the reference.
+Give each requirement a **repo-unique id**. Do not number them by hand — run the allocator
+for the whole set you derived; it returns ids that never collide with a retired design's
+lingering tag:
+
+```sh
+python3 <paths.tools>/reconcile/next_id.py --count <how many you are minting> \
+  --scan <the test tree you reconcile against> --scan $DESIGN_BACKLOG --scan $ADRS
+```
+
+Assign the printed ids in order. If alignment (Phase 4) adds a requirement, continue numbering
+from the highest you have already assigned this session — re-running the allocator before you
+commit hands back the same base, so two requirements would take the same id. The id is what a
+proving test tags — `[REQ:REQ-<n>]` — and what reconcile matches to confirm the requirement is
+built. **Self-check each against the INCOSE checklist** in the reference.
 
 Deriving requirements often exposes a missing owner or a mis-scoped boundary — when it
 does, return to Phase 2 and reshape. Architecture and requirements settle together.
