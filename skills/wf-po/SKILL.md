@@ -132,14 +132,15 @@ leaving it uncommitted is one `git clean` from gone:
   `--no-verify`; if a commit you were told to make then fails (hook, identity), report
   the exact error and halt.
 
-**ID allocation & graduation.** `CAP-NNN` ids increase monotonically over the file's
-lifetime; never renumber, never reuse a retired number. Park a capability the user
-isn't ready to pursue with `status: deferred` (it stays in the array). A capability
-**graduates out of the file** once it ships — its durable residue then lives in the
-`[REQ]` tags of its proving tests and any ADR it motivated, so the open work-set never
-becomes a catalog. (Until the coverage harvester lands, graduation is manual: drop an
-entry when the user confirms it has shipped.) A capability the user abandons is removed.
-Bump `last_updated`.
+**ID allocation — you add, the SA drains.** `CAP-NNN` ids increase monotonically over the
+file's lifetime; never renumber, never reuse a retired number. Park a capability the user
+isn't ready to pursue with `status: deferred` (it stays in the array). You **add**
+capabilities (and may revise an un-designed one with the user's assent, per *Preserve
+existing intent*), but you never **remove** one for being built: a capability leaves this
+file when the **SA removes it**, once the SA has designed a solution for it — its essence
+then lives in the design backlog, and after build in the `[REQ]` tags + any ADR it
+motivated. So this file is the **un-designed** demand, never a catalog of what's shipped.
+A capability the user explicitly abandons is removed. Bump `last_updated`.
 
 ## Halt conditions
 

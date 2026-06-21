@@ -1,0 +1,27 @@
+<!--
+  DESIGN BACKLOG — wf-sa's designed-but-unbuilt work. COMMITTED, and DRAINING.
+  wf-sa appends a design when it shapes a solution for a capability or learning, and
+  removes a requirement (then the whole design once its last requirement goes) when
+  reconcile reports it built. When the backlog is empty, every designed thing has
+  shipped. This is NOT a durable spec — it drains to empty. Load-bearing decisions live
+  in the ADRs (durable); the structure of BUILT work is discover's (re-derived). Reference
+  the brief and drill-cache by path — do NOT restate structure here.
+-->
+
+# Design backlog
+
+<!-- One block per shaped change. A design's requirements carry REPO-UNIQUE ids
+     (REQ-<n>, monotonic over the whole repo, never reused) — a proving test tags
+     `[REQ:REQ-<n>]` and reconcile matches the tag to confirm it is built. Remove a
+     requirement when reconcile reports it built; remove the design when its last
+     requirement goes. -->
+
+## <design title> — serves CAP-NNN / L-NNN
+
+**Decisions:** ADR-NNN (new) · ADR-NNN (standing, already governs <component>)
+**Moves:** <split / merge / new component / changed edge> — recorded in ADR-NNN; re-run discover after build.
+
+- **REQ-12** — <EARS statement>  *(owner: <component>)*
+- **REQ-13** — <EARS statement>  *(owner: <component>)*
+
+<!-- repeat one ## block per shaped change; delete this scaffold's example block -->

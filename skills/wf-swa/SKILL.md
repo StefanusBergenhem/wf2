@@ -28,10 +28,13 @@ change them. The acceptance criteria and the task breakdown are yours.
 - **Read the source.** Read the actual code of every component you write tasks for
   before authoring criteria or contracts. The slice and the brief tell you intent;
   only the source tells you the real interfaces. Never write against a summary alone.
-- **Every task traces to a requirement.** Each task satisfies one or more of the
-  slice's requirements (`covers`), and every acceptance criterion you write traces to
-  one of them. If you cannot trace a task back to a slice requirement, you are
-  inventing scope — stop and flag it to the SA.
+- **Every task traces to a requirement — never invent scope.** Each task satisfies one or
+  more of the slice's requirements (`covers`), and every acceptance criterion traces to one
+  of them. If you cannot trace a task to a requirement, stop and flag it to the SA. In
+  particular, when delivering a requirement needs work in a component that owns **no**
+  requirement — a wiring/composition-root or orchestration gap — that is an SA **allocation
+  gap**: flag it so the SA allocates the missing requirement (its job, per the
+  full-delivery-path rule). **Never mint an unowned "glue" task to cover it.**
 - **Author criteria, never requirements.** You write the acceptance criteria
   (`REQ-N.AC-M`) that operationalize the slice's requirements. You never mint a new
   requirement, and never change a requirement or a boundary — that is the SA's
@@ -45,9 +48,10 @@ change them. The acceptance criteria and the task breakdown are yours.
 
 ### Phase 1 — Ground
 
-1. Read `$DESIGN_SLICE` — the component requirements (each with its owner and driver),
-   the architecture moves, and the governing ADRs. **HALT if it is absent** — ask the
-   user to run `wf-sa` first.
+1. Read `$DESIGN_SLICE` — one **buildable increment** wf-sa cut from the design backlog:
+   the component requirements (each with its owner and driver), the architecture moves, and
+   the governing ADRs. Its requirements are your whole scope. **HALT if it is absent** — ask
+   the user to run `wf-sa` first.
 2. Read `$BRIEF` for system shape, and the relevant `$ADRS` for the rationale you must
    respect when writing `implementation_notes`.
 3. Read the **source** of every component the slice's requirements name. The slice has
@@ -65,6 +69,11 @@ able to write a failing test from the criterion alone.
 A requirement whose failure or boundary behavior the criteria don't cover is an
 incomplete set — add the missing criterion. A requirement you cannot make testable
 from the source is a flag to the SA, not a guess.
+
+Each requirement's proving test carries its **`[REQ:<id>]` tag** — the build phase stamps
+it from the task's `covers`, and `reconcile` reads it to confirm the requirement is built.
+Author criteria knowing that tag is what marks the requirement done; one criterion's test
+is where its tag lands.
 
 ### Phase 3 — Decompose into tasks
 
@@ -93,7 +102,9 @@ it by splitting a task or merging two.
 2. Write `$SPRINT` from `assets/sprint.yaml.tmpl`. It is transient and gitignored —
    there is nothing to commit; the build pipeline consumes the working-tree file
    directly.
-3. Report: the task count, the dependency shape, and the suggested next step.
+3. **Clear `$DESIGN_SLICE`.** You have refined it into the sprint, so drain your input —
+   delete the slice (it is transient and gitignored; the backlog it was cut from persists).
+4. Report: the task count, the dependency shape, and the suggested next step.
 
 ### Phase 6 — Telemetry (REQUIRED)
 

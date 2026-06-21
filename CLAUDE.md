@@ -33,10 +33,15 @@ over time.
 
 Most documents are transient handovers between roles. The durable set is small:
 
-- **Capabilities** — the *why*, kept as an **open work-set**: user-voice needs not yet
-  built. A capability graduates out once its proving tests land — its residue living on
-  in those tests' requirement tags and any ADR it motivated — so the set records *open
-  intent* and never becomes an accumulating catalog of shipped features.
+- **Capabilities** — the *why*, kept as an **open work-set** of *un-designed* demand:
+  user-voice needs the PO has raised but the SA has not yet designed. The SA drains a
+  capability once it designs a solution for it — its essence moves to the design backlog,
+  then (after build) to the code's `[REQ]` tags + any ADR — so the set never becomes an
+  accumulating catalog of shipped features.
+- **Design backlog** — the SA's *committed but draining* record of designed-but-unbuilt
+  work. The SA appends a design and removes it as `reconcile` shows it shipped; it empties
+  to nothing, so it is working state, not a durable spec (its load-bearing decisions live
+  in the ADRs).
 - **ADRs** — deliberate architecture decisions: the choice made, the
   alternatives rejected, and why. The durable record of *how* the system is
   shaped, separate from the *why* (capabilities) and the local *how-to*

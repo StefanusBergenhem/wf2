@@ -10,10 +10,11 @@ Contents:
 - What not to write
 
 Each requirement is a **component requirement**: an EARS statement that one named
-component owns, tracing to the capability or learning that drove it. Number them
-slice-locally (`REQ-1`, `REQ-2`); the ids organize this change and then evaporate.
-You write the requirement; the acceptance criteria that operationalize it are the
-Software Architect's.
+component owns, tracing to the capability or learning that drove it. Give each a
+**repo-unique id** (`REQ-<n>`, monotonic over the whole repo, never reused) — a proving
+test tags it `[REQ:REQ-<n>]` and reconcile matches the tag to confirm it is built, so a
+design-local id would collide with a retired design's lingering tag. You write the
+requirement; the acceptance criteria that operationalize it are the Software Architect's.
 
 ## The five EARS forms
 

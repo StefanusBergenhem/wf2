@@ -1,21 +1,22 @@
 # CAPABILITIES — the durable *why* (committed).
 #
 # Path is set by `paths.capabilities` in .wf/config.yaml; this filename is only the
-# default. Authored solely by wf-po: user-voice statements of what the product lets
-# a user, operator, or external system do. Never reference components, libraries, or
-# implementation patterns here — that is the SA's job, not this file's.
+# default. wf-po appends user-voice statements of what the product lets a user, operator,
+# or external system do; wf-sa drains them (removes one once it has designed a solution).
+# Never reference components, libraries, or implementation patterns here — that is the SA's
+# job, not this file's.
 #
-# This file is the OPEN WORK-SET, not a catalog of everything the product does: it
-# holds user-voice intent NOT YET BUILT. A capability GRADUATES OUT once it ships — its
-# durable residue then lives in the `[REQ]` tags of its proving tests and any ADR it
-# motivated — so this set never accumulates shipped features.
+# This file is the UN-DESIGNED demand, not a catalog of everything the product does: it
+# holds user-voice intent not yet designed. wf-sa removes a capability once it has designed
+# it (its essence moves to the design backlog, and after build lives in the `[REQ]` tags +
+# any ADR it motivated), so this set never accumulates shipped features.
 #
 # This scaffold ships EMPTY (every example below is a comment), so a fresh adopter
 # never inherits fictional capabilities. wf-po sets
 # last_updated at its first commit.
 #
 # ID namespace — monotonic over the file's lifetime; never renumber, never reuse a
-# retired number (entries leave on graduation, but their ids are not recycled):
+# retired number (entries leave when the SA drains them, but their ids are not recycled):
 #   CAP-NNN   capabilities (what a user/operator/external system can do)
 
 version: 1

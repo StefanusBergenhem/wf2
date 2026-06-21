@@ -26,11 +26,10 @@ Both files hold the same shape:
 - id: L-001
   statement: "<one actionable sentence naming a concrete artifact, field, or step>"
   sources: ["<session ended_at>"]   # the session(s) this was distilled from
-  status: open                       # open | handled
 ```
 
-You only ever write `open` entries. `handled`, `handled_at`, and `resolved_by`
-are stamped later by the role that resolves the learning — never by you.
+You only ever **create and reinforce** entries. A learning is **drained by its
+consumer**.
 
 ## Process
 
@@ -58,10 +57,9 @@ Turn each unprocessed observation into a learning, holding the bar:
 - **Actionable and concrete.** A learning names a real artifact, field, or step
   and implies an action. Drop the vague — "could be cleaner" is noise, not a
   learning, and produces no entry.
-- **Dedup against `open` entries only.** If an observation restates an existing
-  `open` learning, reinforce it: append the session `ended_at` to its `sources`
-  and add no duplicate. A restatement of a `handled` learning is a regression —
-  add it as a NEW `open` entry.
+- **Dedup against the entries present in the file.** If an observation restates an
+  existing learning, reinforce it: append the session `ended_at` to its `sources` and add
+  no duplicate.
 - Mint ids monotonically per file (`L-NNN`); never reuse a retired number.
 
 ### Phase 4 — Write & commit
@@ -91,10 +89,6 @@ Your last action, always. Run the `wf-basics` §2 `record_session.py` command wi
 - **A run that distils nothing is a valid run.** When every observation is already
   compiled or judged noise, report "nothing new" and commit nothing — never invent
   a learning to look productive.
-- **Create only.** You write `open` entries and reinforce them. Flipping to
-  `handled` belongs to the role that resolves the learning.
-- **Never delete a `handled` entry** — it records when feedback was resolved.
-
 ## Halt conditions
 
 - `$TELEMETRY` is absent or empty — nothing to distil. Report and exit.

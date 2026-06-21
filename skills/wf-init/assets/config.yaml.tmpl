@@ -28,18 +28,19 @@ paths:
   discover_view: ".wf/transient/discover/view.html"              # human interactive map
   discover_brief: ".wf/transient/discover/brief.md"              # agent digest (consumed by planning skills)
   telemetry: ".wf/telemetry/sessions.jsonl"   # Append-only session log. Committed.
-  capabilities: ".wf/CAPABILITIES.yaml"       # Durable user-voice capabilities (wf-po). Committed.
+  capabilities: ".wf/CAPABILITIES.yaml"       # User-voice capabilities (wf-po appends; wf-sa drains when designed). Committed.
 
   # Learnings — distilled from telemetry by wf-retrospective. First-class design
   # inputs (peer of capabilities); each entry is one actionable observation.
-  learnings: ".wf/LEARNINGS.yaml"             # Project-code learnings (wf-sa reads as drivers, flips to handled). Committed.
+  learnings: ".wf/LEARNINGS.yaml"             # Project-code learnings (wf-retrospective appends; wf-sa drains when designed). Committed.
   wf_learnings: ".wf/wf-learnings.yaml"       # wf-toolkit friction, for the wf maintainer. Committed.
 
-  # Planning layer (wf-sa, wf-swa). ADRs are the only durable planning artifact;
-  # the design-slice, drill-cache, and sprint are transient — regenerated per
-  # change, consumed by the next role, never hand-maintained.
+  # Planning layer (wf-sa, wf-swa). The durable planning artifacts are the ADRs and the
+  # design-backlog (committed); the design-slice, drill-cache, and sprint are transient —
+  # regenerated per change, consumed by the next role, never hand-maintained.
   adrs: ".wf/adrs"                             # Durable architecture decision records (wf-sa). Committed dir, one .md per ADR.
-  design_slice: ".wf/transient/design-slice.md"   # wf-sa → wf-swa handover for one change. Transient.
+  design_backlog: ".wf/design-backlog.md"      # wf-sa's designed-but-unbuilt work; drains as reconcile shows it built. Committed.
+  design_slice: ".wf/transient/design-slice.md"   # wf-sa cuts this from the backlog for wf-swa; wf-swa clears it. Transient.
   design_view: ".wf/transient/design-view.html"   # wf-sa interactive design diagram (render_design.py). Transient.
   drill_cache: ".wf/transient/drill-cache"        # Shared scout digests (wf-po/sa/swa append; all read). Transient dir.
   sprint: ".wf/transient/sprint.yaml"             # wf-swa task DAG the orchestrator executes. Transient.

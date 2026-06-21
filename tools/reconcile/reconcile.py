@@ -14,10 +14,10 @@ Tag format (the contract the build/review writer must satisfy):
 
 A plain comment token — any language, any comment style (// , # , /* */ , <!-- -->).
 No hash: a reworded requirement does not invalidate its tag (completion is set
-membership, not content equality). <id> is the program-stable requirement id from
-the design; ids must be unique within the design. After a slice retires, its tag
-stays in the test as a historical breadcrumb — such tags are reported as orphans,
-never as errors.
+membership, not content equality). <id> is a repo-unique requirement id (REQ-<n>,
+monotonic over the whole repo, never reused — a design-local id would collide with a
+retired design's lingering tag). After a design retires, its tag stays in the test as a
+historical breadcrumb — such tags are reported as orphans, never as errors.
 
 Coverage is not correctness: a tag proves a proving test EXISTS and is committed.
 Passing is the merge gate's job; whether the test is worth anything is the review

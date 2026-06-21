@@ -121,9 +121,10 @@ scaffold_home() {
         echo "  WARN: $label template missing ($tmpl) — skipped $rel" >&2
     fi
 }
-scaffold_home capabilities  "../../wf-po/assets/capabilities.yaml.tmpl"            "capabilities home"
-scaffold_home learnings     "../../wf-retrospective/assets/learnings.yaml.tmpl"    "learnings home"
-scaffold_home wf_learnings  "../../wf-retrospective/assets/wf-learnings.yaml.tmpl" "wf-learnings home"
+scaffold_home capabilities    "../../wf-po/assets/capabilities.yaml.tmpl"            "capabilities home"
+scaffold_home design_backlog  "../../wf-sa/assets/design-backlog.md.tmpl"            "design-backlog home"
+scaffold_home learnings       "../../wf-retrospective/assets/learnings.yaml.tmpl"    "learnings home"
+scaffold_home wf_learnings    "../../wf-retrospective/assets/wf-learnings.yaml.tmpl" "wf-learnings home"
 
 # Gitignore the transient output, exactly once.
 IGNORE_LINE="$TRANSIENT_REL/"

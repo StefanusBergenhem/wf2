@@ -31,12 +31,11 @@ When a test proves a requirement, stamp the requirement's id in that test:
 - **No hash.** wf2 verification is hash-free: a reworded requirement does not
   invalidate its tag, because completion is set-membership, not content-equality.
   (This is the deliberate departure from wf1's basis-hash drift mechanism.)
-- `<id>` is the **program-stable** requirement id from the design. Ids must be
-  **unique within the design** (reconcile rejects a duplicate id across slices).
-- The id stays stable for the program's lifetime — exactly the window completion is
-  tracked. After a slice retires, its tag remains in the test as a historical
-  breadcrumb (and the seed of a future compliance trace); reconcile reports it as an
-  orphan, never an error.
+- `<id>` is a **repo-unique** requirement id (`REQ-<n>`, monotonic over the whole repo,
+  never reused — a design-local id would collide with a retired design's lingering tag).
+  reconcile rejects a duplicate id across the slices it is given.
+- After a design retires, its tag remains in the test as a historical breadcrumb (and the
+  seed of a future compliance trace); reconcile reports it as an orphan, never an error.
 
 ## Coverage is not correctness
 
@@ -68,12 +67,13 @@ Exit `0` on success (report produced), `2` on input error. In `--json` mode the
 top-level `all_complete` field is the **"backlog empty → design releasable"** signal;
 each slice carries `complete`, `covered`, and `missing`.
 
-## Two consumers
+## What it drives
 
-The same harvest drives both retirements in the wf2 model:
+reconcile drives **design-backlog retirement**: the SA removes a requirement (and then an
+emptied design) from the committed design backlog once reconcile shows its `[REQ:<id>]` tag
+present. When the backlog empties, every designed thing has shipped — its structure is now
+the codebase's, re-derived by `discover`.
 
-- **Slice/design retirement** — a complete slice is cleared from the backlog; when the
-  backlog empties, the semi-persistent design is released and its structure becomes
-  `discover`'s to re-derive.
-- **Capability graduation** — a capability whose requirements are all covered graduates
-  out of `CAPABILITIES.yaml`.
+It does **not** drive capability removal. A capability leaves `CAPABILITIES.yaml` when the
+SA *designs* it (drains it into the backlog) — upstream of any test, so that transition is
+the SA's, not reconcile's.

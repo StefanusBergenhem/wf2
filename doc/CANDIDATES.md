@@ -289,3 +289,74 @@ sprawl). The moment it grows sections nobody downstream consumes, it has become 
 **Trigger to act:** the first time a real product built on wf2 needs an external /
 sellable description (a dogfood where someone reaches for "what do we tell
 customers"). **C10 (compliance trace)** is its natural second-step extension.
+
+---
+
+## C12 — Design-issue taxonomy + fix-mode routing (orchestration layer)
+
+**Date:** 2026-06-21
+**Context:** Cluster 4 established that SWA flags allocation gaps / under-allocation
+**to the SA** rather than minting unowned tasks (the wf1 discipline). Today that flag is
+*interactive* — the human re-runs/extends SA. wf1 had the mechanized version: a
+build/review-discovered problem is written as a **design-issue** artifact with a
+`fix_kind` taxonomy and routed by the orchestrator —
+`contract_amendment → wf-swa` (fix the task contract), `spec_amendment → wf-sa` (fix the
+design/requirement), `recut → wf-po` (re-cut the slice-backlog), `unknown → human`. The
+fix-mode subagent amends in isolation, commits, and the orchestrator re-dispatches the
+original task at the same attempt count.
+
+**Analysis:** this is the proven non-interactive routing for the flags wf2 now raises
+(allocation gap, untestable requirement, indetailable slice). Building it now is machinery
+wired to an absent caller — wf2 has no orchestrator and no build/review producers yet
+(dogfood law). The interactive "flag to SA/PO" is sufficient while a human drives.
+
+**Trigger to act:** when the orchestration + build/review layer lands. Adopt the
+`fix_kind` taxonomy and the dispatch-fix routing; give wf-sa/wf-swa/wf-po their fix-modes
+(C4 already tracks the wf-swa fix-mode). Keep the **mechanical classification check**
+(compare the contract slice against its source: spec correct + contract diverges →
+contract_amendment; contract matches spec + spec wrong → spec_amendment; else unknown).
+
+---
+
+## C13 — `parent_interface`: verbatim interface contract in the task contract
+
+**Date:** 2026-06-21
+**Context:** Cluster 4's A1 allocates per-component requirements across a delivery path
+(core logic → orchestration → composition-root wiring), coordinated by task `depends_on`.
+A wiring/orchestration task needs the **exact interface** of the component it wires in. wf1
+solved this by quoting the dependency component's exposed interface DbC **verbatim** into
+the dependent task's contract (`parent_interface`), so the developer never guessed the
+integration shape — the contract pinned it.
+
+**Analysis:** relevant precision for A1's wiring tasks, but it depends on an `exposes:`
+interface-with-DbC declaration per component (wf1 carried this in the durable DESIGN —
+which wf2 killed). In wf2 the interface is re-derived (discover) or scouted (wf-drill), so
+the verbatim-quote would be sourced differently. Premature until the task-contract authoring
+(wf-swa → build) is the actual bottleneck and the interface source is settled.
+
+**Trigger to act:** when wiring/integration tasks start failing review for guessed
+interface shapes — add a `parent_interface`-style verbatim quote to the task contract,
+sourced from discover/drill rather than a durable DESIGN.
+
+---
+
+## C14 — In-flight tracking on the design backlog (concurrency)
+
+**Date:** 2026-06-21
+**Context:** the drain-pipeline model has wf-sa cut a design-slice from the committed design
+backlog, and remove built requirements from the backlog when reconcile confirms them. The
+current model assumes the flow is **human-controlled and strictly sequential across roles**
+(SA → SWA → build, one increment at a time), so nothing marks which backlog entries are
+already cut into a live slice/sprint and *building*. wf-sa's "don't re-cut an in-flight
+entry" is enforced only by the operator running one increment at a time.
+
+**Analysis:** under concurrency (parallel increments, or an orchestrator dispatching
+several), wf-sa could re-cut a design that is already mid-build → double-build. The backlog
+would then need explicit per-design **in-flight** state (e.g. `cut` / `building` markers, or
+a derived check against live sprints), and wf-sa would skip in-flight entries when cutting.
+Building it now is machinery for an absent concurrency model (dogfood law) — the sequential
+human-driven flow has no race.
+
+**Trigger to act:** when the flow stops being strictly sequential — a real run with parallel
+increments, or the orchestrator dispatching more than one slice's work at once. Then add
+in-flight tracking to the backlog and an "skip in-flight" rule to wf-sa's cut step.
