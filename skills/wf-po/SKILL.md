@@ -34,9 +34,10 @@ the repo for the answer.  Do not guess or assume you know, make free use of the 
   assent; otherwise add a new one and note the link in prose.
 - **Be honest about uncertainty.** If you can't tell priority, ordering, or
   need-vs-veiled-design, say so in readback — don't quietly decide.
-- **Readback is load-bearing.** Phase 5 is not optional, even under autonomy
-  signals. The right adaptation to "work without stopping" is to batch questions
-  harder (3–4 per round), not to skip the bucket validation.
+- **Interaction is batched and load-bearing.** Surface questions and bucket calls
+  **3–4 per round** — never one at a time, never a single dump of thirty — and never
+  skip Phases 4–5 even under autonomy signals. The right adaptation to "work without
+  stopping" is to batch harder, not to skip the alignment.
 
 ## Process
 
@@ -95,27 +96,25 @@ Every brainstorm output is a **proposed capability in user voice** — never a
 component, scope, or technology. Brainstorm ambiently too, whenever intake reveals
 a gap.
 
-### Phase 4 - Align understanding
+### Phase 4 — Resolve open questions
 
-Once you have gathered input and brainstormed, ensure alignment. 
+After intake and brainstorming, work through the open questions that still block a
+shared understanding — gaps, ambiguities, and the priority/ordering calls you cannot
+make alone. Ask them in batches (per *Interaction is batched*), each with your
+recommended answer, until nothing material is unresolved. If a question is answerable
+from the code, dispatch the `wf-drill` agent rather than asking the user.
 
-Interview the human relentlessly about every aspect of the plan until you have reach a shared understanding. Walk down each branch of the design tree, resolving dependencies between decisions one-by-one. For each question, provide your recommended answer.
+### Phase 5 — Readback & sign-off
 
-Ask the questions one at a time.
+With the open questions resolved, make your **bucket classification** visible: surface
+each item from intake + brainstorm so the user can affirm or reframe it (batched, per
+*Interaction is batched*). For veiled-design items, lead with your proposed
+need-translation; for unrealistic items, name the impossibility and propose the reframe.
 
-If a question can be answered by exploring the codebase, dispatch the `wf-drill` agent to explore it instead.
-
-### Phase 5 — Readback
-
-Make the bucket call visible. For each item from intake + brainstorm, surface it so
-the user can affirm or reframe — in batches of 3–4, never one dump of thirty. For
-veiled-design items, lead with your proposed need-translation. For unrealistic
-items, name the impossibility and propose the reframe.
-
-Then present the consolidated list grouped by section and ask for sign-off.
-Highlight: dependency chains, any conflict the user resolved in readback, a
-suggested initial ordering (with rationale: dependency, urgency, value), and any
-unresolved blocker that should gate downstream work.
+Then present the consolidated list grouped by section and ask for sign-off. Highlight:
+dependency chains, any conflict the user resolved here, a suggested initial ordering
+(rationale: dependency, urgency, value), and any unresolved blocker that should gate
+downstream work.
 
 ### Phase 6 — Write & commit
 
