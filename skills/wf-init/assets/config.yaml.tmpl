@@ -14,6 +14,8 @@ project:
                               # claude | pi | opencode — a single value, or a list
                               # when several are installed. Records which targets
                               # install.sh rendered, for re-install.
+  base_branch: "main"         # Branch the orchestrator cuts sprint branches from and
+                              # opens the ship PR against.
 
 paths:
   tools: ".wf/tools"          # Installed toolkit machinery (extractors, scripts). Committed.
@@ -59,7 +61,6 @@ paths:
   current_task: ".wf/transient/current-task.yaml"      # the extracted task contract the build agent reads.
   review_ready: ".wf/transient/review-ready.yaml"      # build → review handoff (build done, gates green).
   build_blocked: ".wf/transient/build-blocked.yaml"    # build halted: needs a scope amendment.
-  build_progress: ".wf/transient/build-progress.yaml"  # build breadcrumb for crash recovery.
   feedback: ".wf/transient/feedback.yaml"              # review → build rejection feedback.
   design_issues: ".wf/transient/design-issues.yaml"    # build/review-raised design issues (fix_kind taxonomy → dispatch-fix routing).
 
