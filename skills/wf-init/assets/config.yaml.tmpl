@@ -67,5 +67,19 @@ parallel:
   max_concurrent_tasks: 4                     # within-stage concurrency cap — independent tasks run in parallel worktrees.
   worktree_base: ".wf/transient/worktrees"    # per-task git worktree root. Transient.
 
+commands:
+  preflight: ""        # baseline + per-task gate (lint + tests + build) — set per project; build/review run it, the orchestrator runs it as the worktree baseline.
+  stage_check: ""      # heavier checks run only at a stage boundary (e2e / integration) — set per project; empty skips them.
+
+review:
+  passes: [wf-review]      # the ordered build→review chain per task; append e.g. wf-security-review to extend it (no skill change).
+  max_attempts: 3          # build→review cycles per task before escalation.
+  max_scope_amendments: 1  # feature scope amendments allowed per task.
+
+closeout: [wf-retrospective, ship]   # ordered end-of-sprint steps; a wf-* entry is dispatched as an agent, `ship` is the terminal publish. Extend with e.g. wf-update-docs.
+
+orchestrate:
+  history_cap: 50          # live pipeline-state history entries kept; older spill to pipeline_history.
+
 telemetry:
   enabled: true               # When false, skills skip the end-of-session record step.
