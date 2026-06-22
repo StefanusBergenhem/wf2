@@ -5,9 +5,6 @@
 tools/.venv/
 **/__pycache__/
 
-# Vendored graph library for offline rendering (fetched once during setup)
-tools/discover/vendor/
-
 # Language-extractor build artifacts (regenerated from source)
 tools/discover/readview-go/readview
 tools/discover/readview-ts/node_modules/

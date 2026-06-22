@@ -2,7 +2,7 @@
 """render.py — interactive two-level read-view for human planning.
 
 Reads the spine's merged model.json + the scout's reconciled subsystem map and emits
-ONE self-contained interactive HTML page:
+ONE self-contained interactive HTML page on the shared graph-view chassis:
 
   Level 1 (default): a graph of SUBSYSTEMS and how they connect. Nothing else.
   Level 2 (click a subsystem): that subsystem's COMPONENT view — internal component
@@ -15,10 +15,12 @@ regenerated from code + the (cache-owned) subsystem map on demand.
 
 Usage:  render.py --model model.json --subsystems subsystems.json --out view.html [--title T]
 """
-import argparse, json, html, os
+import argparse, json, html, os, sys
 from collections import defaultdict
 
-from _contract import validate_subsystems
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "graphview"))
+import chassis  # noqa: E402
+from _contract import validate_subsystems  # noqa: E402
 
 
 def main():
@@ -91,99 +93,54 @@ def main():
             "soft_edges": [[i, j] for (i, j) in sorted(soft)],
             "disagreements": disagreements}
 
-    out = TEMPLATE.replace("__TITLE__", html.escape(a.title)) \
-                  .replace("__DATA__", json.dumps(data))
-
-    # Inject the graph library LAST (so its bytes aren't touched by the substitutions
-    # above). Vendored = the page is 100% offline/self-contained; CDN = needs internet.
-    vis = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vendor", "vis-network.min.js")
-    if os.path.exists(vis):
-        lib = "<script>\n" + open(vis).read() + "\n</script>"
-        offline = True
-    else:
-        lib = '<script src="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>'
-        offline = False
-    out = out.replace("__VISLIB__", lib)
-
-    open(a.out, "w").write(out)
-    print(f"wrote {a.out}  ({len(cnodes)} components, {len(subs_out)} subsystems, "
-          f"{'offline/self-contained' if offline else 'CDN — needs internet'})")
+    page = chassis.render_page(
+        title=a.title,
+        summary=html.escape(sub.get("system_summary", "")),
+        bar_html=BAR, panel_html="", body_js=BODY_JS, data=data, extra_css=EXTRA_CSS,
+    )
+    open(a.out, "w").write(page)
+    print(f"wrote {a.out}  ({len(cnodes)} components, {len(subs_out)} subsystems)")
 
 
-TEMPLATE = r"""<!doctype html><html><head><meta charset="utf-8"><title>__TITLE__</title>
-__VISLIB__
-<style>
-  :root{--go:#3b82f6;--ts:#f59e0b;--ghost:#cbd5e1;--bg:#f1f5f9;--card:#fff;--line:#e2e8f0;--ink:#0f172a;--mut:#64748b}
-  *{box-sizing:border-box} html,body{margin:0;height:100%;font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;color:var(--ink)}
-  body{display:flex;flex-direction:column;height:100vh;background:var(--bg)}
-  header{padding:14px 22px;background:var(--card);border-bottom:1px solid var(--line);flex:none}
-  h1{margin:0;font-size:17px} .sum{color:var(--mut);font-size:13px;max-width:120ch;margin-top:4px}
-  .bar{display:flex;align-items:center;gap:10px;padding:8px 22px;background:var(--card);border-bottom:1px solid var(--line);flex:none;font-size:13px}
-  .crumb{font-weight:600} .crumb .sep{color:var(--mut);font-weight:400;margin-right:4px}
-  button{font:13px inherit;padding:4px 12px;border:1px solid var(--line);background:#fff;border-radius:6px;cursor:pointer}
-  button:hover{border-color:var(--go);background:#eff6ff} button:disabled{opacity:.4;cursor:default}
-  .legend{margin-left:auto;color:var(--mut);font-size:12px;display:flex;gap:14px;align-items:center}
-  .dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:4px;vertical-align:middle}
-  .wrap{flex:1;display:flex;min-height:0}
-  #graph{flex:1;min-width:0;background:var(--bg)}
-  aside{width:370px;flex:none;border-left:1px solid var(--line);background:var(--card);overflow:auto;padding:18px}
-  aside h2{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--mut);margin:0 0 8px}
-  .ph{color:var(--mut);font-size:13px}
-  .nm{font:15px ui-monospace,SFMono-Regular,Menlo,monospace;font-weight:600;word-break:break-all}
-  .pth{font:11px ui-monospace,monospace;color:var(--mut);word-break:break-all;margin-bottom:8px}
-  .meta{font-size:12px;color:var(--mut);margin-bottom:10px}
-  .desc{font-size:13px;margin:8px 0 14px;line-height:1.55}
-  .grp{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--mut);margin:14px 0 6px}
-  .row{font:12px ui-monospace,monospace;padding:3px 0;cursor:pointer;border-bottom:1px solid #f1f5f9}
-  .row:hover{color:var(--go)} .row .st{font-family:inherit;color:var(--mut);font-size:11px;float:right}
-  .empty{color:#cbd5e1;font-style:italic;font-size:12px}
-  .basis{font-size:11px;color:#94a3b8;border-top:1px dashed var(--line);margin-top:12px;padding-top:8px}
-  .dis{background:#fffbeb;border:1px solid #fde68a;border-radius:7px;padding:8px 10px;margin-top:10px;font-size:12px;color:#78350f}
-  .hint{font-size:11px;color:var(--mut);margin-top:6px}
-</style></head><body>
-<header><h1 id="title"></h1><div class="sum" id="summary"></div></header>
-<div class="bar">
-  <button id="back" onclick="goSystem()" disabled>← System</button>
-  <span class="crumb" id="crumb"></span>
-  <span class="legend">
-    <span><span class="dot" style="background:var(--go)"></span>Go</span>
-    <span><span class="dot" style="background:var(--ts)"></span>TS</span>
-    <span><span class="dot" style="background:var(--ghost)"></span>other subsystem</span>
-    <span id="leg-edges"></span>
-  </span>
-</div>
-<div class="wrap">
-  <div id="graph"></div>
-  <aside><h2 id="panel-h">Details</h2><div id="panel"></div></aside>
-</div>
-<script>
-const D = __DATA__;
+BAR = """<button id="back" onclick="goSystem()" disabled>← System</button>
+<span class="crumb" id="crumb"></span>
+<span class="legend">
+  <span><span class="dot" style="background:var(--go)"></span>Go</span>
+  <span><span class="dot" style="background:var(--ts)"></span>TS</span>
+  <span><span class="dot" style="background:var(--ghost)"></span>other subsystem</span>
+  <span id="leg-edges"></span>
+</span>"""
+
+# discover-specific styling; the chassis base provides the layout + shared classes.
+EXTRA_CSS = """
+ :root{--ts:#f59e0b;--ghost:#cbd5e1}
+ .crumb{font-weight:600} .crumb .sep{color:var(--mut);font-weight:400;margin-right:4px}
+ .legend{color:var(--mut);font-size:12px}
+ .dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:4px;vertical-align:middle}
+ .ph{color:var(--mut);font-size:13px}
+ .pth{font:11px ui-monospace,monospace;color:var(--mut);word-break:break-all;margin-bottom:8px}
+ .meta{font-size:12px;color:var(--mut);margin-bottom:10px}
+ .row{font:12px ui-monospace,monospace;padding:3px 0}
+ .row .st{font-family:inherit;color:var(--mut);font-size:11px;float:right}
+ .basis{font-size:11px;color:#94a3b8;border-top:1px dashed var(--line);margin-top:12px;padding-top:8px}
+ .dis{background:#fffbeb;border:1px solid #fde68a;border-radius:7px;padding:8px 10px;margin-top:10px;font-size:12px;color:#78350f}
+ .hint{font-size:11px;color:var(--mut);margin-top:6px}
+"""
+
+# Two-level navigation + the details panel. Builds on the chassis WF helper:
+# WF.draw(nodes,edges) owns the network + spacing; WF.onNode(fn) wires clicks. The
+# panel writes through the chassis' #panel / #panel-h mount points.
+BODY_JS = r"""
+const D = DATA;
 const N = D.nodes, S = D.subsystems;
 const LANGCOL = {go:"#3b82f6", ts:"#f59e0b"};
 const langCol = l => LANGCOL[l] || "#8b5cf6";
-document.getElementById("title").textContent = D.title;
-document.getElementById("summary").textContent = D.system_summary;
 
 const RDEP = {}; for(const u in N){ for(const d of N[u].deps){ (RDEP[d]=RDEP[d]||[]).push(u); } }
 const subName = i => i>=0 ? S[i].name : "—";
 
-let network=null, level="system", curSub=-1;
-const container=document.getElementById("graph");
-const baseOpts={
-  interaction:{hover:true, tooltipDelay:120},
-  physics:{stabilization:true, barnesHut:{springLength:150, avoidOverlap:0.5, gravitationalConstant:-6000}},
-  nodes:{shape:"dot", font:{size:13, multi:false, face:"-apple-system,Segoe UI,Roboto"}, borderWidth:1},
-  edges:{color:{color:"#cbd5e1", highlight:"#3b82f6"}, smooth:{type:"continuous"}, width:1}
-};
+let level="system", curSub=-1;
 const sizeFor = loc => 12 + Math.min(40, Math.sqrt(loc)/3);
-
-function draw(nodes, edges){
-  const data={nodes:new vis.DataSet(nodes), edges:new vis.DataSet(edges)};
-  if(!network){
-    network=new vis.Network(container, data, baseOpts);
-    network.on("click", p=>{ if(p.nodes.length) onClick(p.nodes[0]); });
-  } else { network.setData(data); }
-}
 
 function goSystem(){
   level="system"; curSub=-1;
@@ -202,7 +159,7 @@ function goSystem(){
     edges.push({from:"s"+i, to:"s"+j, dashes:true, color:{color:"#a78bfa"}, width:2,
       title:"co-change coupling (no static import)"});
   }
-  draw(nodes, edges);
+  WF.draw(nodes, edges);
   showSystem();
 }
 
@@ -246,7 +203,7 @@ function enterSub(i){
     nodes.push({id:e, label:n.name+"\n["+subName(n.sub)+"]", color:"#e2e8f0",
       font:{color:"#475569"}, value:10, title:n.path+" — "+subName(n.sub)+" (click to open)"});
   }
-  draw(nodes, edges);
+  WF.draw(nodes, edges);
   showSub(i, false);
 }
 
@@ -287,9 +244,10 @@ function showComp(u){
     <div class="grp">Depended on by (${ins.length})</div>${ins.length?ins.map(link).join(""):"<div class='empty'>none</div>"}`;
 }
 
+WF.onNode(onClick);
 goSystem();
-</script></body></html>
 """
+
 
 if __name__ == "__main__":
     main()

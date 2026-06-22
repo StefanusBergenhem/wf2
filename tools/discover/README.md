@@ -71,18 +71,16 @@ is missing. Required vs optional:
 ## One-time setup (per checkout)
 
 Run from this directory. The Python scripts are stdlib-only (no venv, no pip). Build the
-extractor for each language the repo uses, and fetch the graph lib once for offline views:
+extractor for each language the repo uses:
 
 ```sh
-mkdir -p vendor && curl -fsSL \
-  https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js \
-  -o vendor/vis-network.min.js              # graph lib → inlined → offline HTML
 cd readview-go && go build -o readview .     # if the repo has Go
 cd ../readview-ts && npm install && npm run build   # if the repo has TS/JS
 ```
 
-If `vendor/vis-network.min.js` is absent, `render.py` falls back to a CDN `<script>`
-(needs internet) — fetch it once for fully-offline views.
+The graph lib for offline views ships with the toolkit (`tools/graphview/vendor/`, shared
+by every view) — no fetch needed. If it is somehow absent the views fall back to a CDN
+`<script>` (needs internet).
 
 ## Run the mechanical half
 

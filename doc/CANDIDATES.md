@@ -117,26 +117,6 @@ flip the DI to resolved — mirroring wf1's `mode-fix`, generalized.
 
 ---
 
-## C7 — Vendored vis-network is duplicated across two tools
-
-**Date:** 2026-06-14
-**Context:** the SA design view (`tools/design_view/render_design.py`) inlines a
-vendored `vis-network.min.js` for an offline self-contained page — the same lib
-`tools/discover/render.py` already vendors. The 673 KB blob is now **committed
-twice** (`tools/discover/vendor/` and `tools/design_view/vendor/`).
-
-**Observation:** duplicating was the scoped choice — folding it into a shared
-`tools/vendor/` would mean editing discover's `render.py` path and re-validating its
-output, dragging discover into a planning-layer change mid-review. The duplication is
-tracked tech-debt, not an accident.
-
-**Trigger to act:** next time either renderer is touched, or on a cleanup pass. Move
-the lib to a shared `tools/vendor/vis-network.min.js`, point both renderers at
-`../vendor/…`, and confirm both still emit offline pages. (`install.sh` copies
-`tools/*/` so a new `tools/vendor/` ships automatically.)
-
----
-
 ## C6 — How SA knows which capabilities are in scope this round
 
 **Date:** 2026-06-14
