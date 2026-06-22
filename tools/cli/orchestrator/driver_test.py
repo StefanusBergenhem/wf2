@@ -273,7 +273,7 @@ def test_build_design_issue():
     proj = make_project(["T1"])
     orch, state, git, dispatcher = make_orch(
         proj, ["T1"], build={"T1": [{"verdict": "design_issue", "di_id": "DI-1"}]})
-    outcome = asyncio.run(orch._build_pass_loop("T1", ".wf/transient/worktrees/sprint-T1"))
+    outcome = asyncio.run(orch._build_pass_loop("T1", ".wf/transient/worktrees/sprint-T1", "sprint/test"))
 
     if outcome.status == "design_issue":
         ok("build DI: build-boundary design_issue parks the task")
@@ -295,7 +295,7 @@ def test_review_design_issue():
     proj = make_project(["T1"])
     orch, state, git, dispatcher = make_orch(
         proj, ["T1"], review={"T1": [{"verdict": "design_issue", "di_id": "DI-2"}]})
-    outcome = asyncio.run(orch._build_pass_loop("T1", ".wf/transient/worktrees/sprint-T1"))
+    outcome = asyncio.run(orch._build_pass_loop("T1", ".wf/transient/worktrees/sprint-T1", "sprint/test"))
 
     if outcome.status == "design_issue" and state.recorded_dis == ["DI-2"]:
         ok("review DI: review-boundary design_issue recorded + parks the task")
@@ -307,10 +307,29 @@ def test_review_design_issue():
         bad("review DI not approved", state.approved)
 
 
+def test_review_envelope_carries_sprint_branch():
+    # wf-review runs in a worktree that cannot see the gitignored host pipeline_state,
+    # so its diff base (the sprint branch) must travel in the dispatch envelope.
+    proj = make_project(["T1"])
+    orch, state, git, dispatcher = make_orch(proj, ["T1"])
+    asyncio.run(orch.run())
+
+    review_calls = dispatcher.calls_for_agent("wf-review")
+    if not review_calls:
+        bad("review envelope sprint_branch", "no wf-review dispatch recorded")
+        return
+    env = json.loads(review_calls[0].envelope)
+    if env.get("sprint_branch"):
+        ok("review envelope carries sprint_branch (worktree diff base)")
+    else:
+        bad("review envelope sprint_branch", f"envelope missing sprint_branch: {env}")
+
+
 if __name__ == "__main__":
     test_happy_path()
     test_reject_then_rebuild()
     test_build_design_issue()
     test_review_design_issue()
+    test_review_envelope_carries_sprint_branch()
     print(f"\n  driver: {PASS} passed, {FAIL} failed")
     sys.exit(1 if FAIL else 0)

@@ -297,8 +297,11 @@ class Orchestrator:
     def _build_envelope(self, tid: str, worktree: str) -> str:
         return json.dumps({"mode": "build", "task_id": tid, "worktree": worktree})
 
-    def _review_envelope(self, tid: str, worktree: str, pass_agent: str) -> str:
-        return json.dumps({"mode": "review", "task_id": tid, "worktree": worktree, "pass": pass_agent})
+    def _review_envelope(self, tid: str, worktree: str, pass_agent: str, sprint_branch: str) -> str:
+        # sprint_branch is review's diff base; it must travel in the envelope because the
+        # worktree cannot see the gitignored host pipeline_state that records it.
+        return json.dumps({"mode": "review", "task_id": tid, "worktree": worktree,
+                           "pass": pass_agent, "sprint_branch": sprint_branch})
 
     def _swa_envelope(self) -> str:
         return json.dumps({"mode": "default", "instruction":
@@ -398,12 +401,12 @@ class Orchestrator:
             try:
                 self.git.add_worktree(worktree, branch, sprint_branch)
                 self._write_task(tid, str(self._worktree_artifact(worktree, "current_task")))
-                return await self._build_pass_loop(tid, worktree)
+                return await self._build_pass_loop(tid, worktree, sprint_branch)
             except Escalation as exc:
                 self.state.run("block_task", tid, "--reason", f"escalated: {exc.reason}", soft=True)
                 return TaskOutcome(tid, "escalated", exc.reason)
 
-    async def _build_pass_loop(self, tid: str, worktree: str) -> TaskOutcome:
+    async def _build_pass_loop(self, tid: str, worktree: str, sprint_branch: str) -> TaskOutcome:
         attempt = 1
         while True:
             # BUILD
@@ -436,7 +439,7 @@ class Orchestrator:
                 self.state.run("dispatch", "--agent", pass_agent, "--task", tid,
                                "--attempt", str(attempt), "--pass", str(pass_idx), soft=True)
                 await asyncio.to_thread(self.dispatcher.dispatch, pass_agent,
-                                        self._review_envelope(tid, worktree, pass_agent), worktree)
+                                        self._review_envelope(tid, worktree, pass_agent, sprint_branch), worktree)
                 rres = await asyncio.to_thread(self._inspect_review, worktree, tid, build_sha)
                 rv = rres["verdict"]
 
@@ -445,7 +448,7 @@ class Orchestrator:
                     continue
                 if rv == "redispatch_same_attempt":
                     await asyncio.to_thread(self.dispatcher.dispatch, pass_agent,
-                                            self._review_envelope(tid, worktree, pass_agent), worktree)
+                                            self._review_envelope(tid, worktree, pass_agent, sprint_branch), worktree)
                     rres = await asyncio.to_thread(self._inspect_review, worktree, tid, build_sha)
                     rv = rres["verdict"]
                     if rv == "approved":
@@ -640,7 +643,7 @@ class Orchestrator:
                     return False
                 build_sha = self.git.head_sha(worktree)
                 await asyncio.to_thread(self.dispatcher.dispatch, self.passes[0],
-                                        self._review_envelope(fix_id, worktree, self.passes[0]), worktree)
+                                        self._review_envelope(fix_id, worktree, self.passes[0], sprint_branch), worktree)
                 rv = (await asyncio.to_thread(self._inspect_review, worktree, fix_id, build_sha))["verdict"]
                 if rv == "approved":
                     self.git.merge(branch, sprint_branch)

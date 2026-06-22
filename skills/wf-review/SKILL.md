@@ -37,8 +37,9 @@ the task branch forked from the sprint branch:
 git diff $(git merge-base HEAD <sprint-branch>)..HEAD
 ```
 
-`<sprint-branch>` is `pipeline_state.sprint_branch` — never the repo's default branch (the
-sprint lineage carries prior tasks' work that is not this task's to answer for).
+`<sprint-branch>` is the `sprint_branch` named in your dispatch envelope — never the repo's
+default branch (the sprint lineage carries prior tasks' work that is not this task's to
+answer for).
 
 ## Step 2 — Judge (stop at the first P0 failure)
 

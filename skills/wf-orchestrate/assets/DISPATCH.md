@@ -25,17 +25,18 @@ a design problem, `paths.design_issues`.
 ## Review pass — `review.passes[k]` (e.g. `wf-review`, later `wf-security-review`)
 
 ```
+mode:          review
 task_id:       <id>
 worktree:      <path>
-contract:      <paths.current_task>
-build_commit:  <sha>          # what to review
+sprint_branch: <name>         # review's diff base; the worktree cannot read host pipeline_state
 pass:          <agent-name>   # which pass this is
 ```
 
-The review agent validates the build against its contract and either advances the chain
-(an approval commit) or writes `paths.feedback` (reject) / `paths.design_issues` (design
-problem). The next pass in `review.passes` reviews on top of the prior — each pass reads
-the same contract and the current worktree HEAD.
+The review agent resolves the contract (`paths.current_task`) from its worktree config and
+diffs the task branch against `sprint_branch`. It either advances the chain (an approval
+commit) or writes `paths.feedback` (reject) / `paths.design_issues` (design problem). The
+next pass in `review.passes` reviews on top of the prior — each reads the same contract and
+the current worktree HEAD.
 
 ## Fix — `wf-swa` / `wf-sa` (from `dispatch-fix`)
 
