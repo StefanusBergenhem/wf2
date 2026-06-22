@@ -8,10 +8,11 @@ from __future__ import annotations
 
 import sys
 
+import orchestrate
 import pipeline
 
 REGISTRY: dict = {}
-for _mod in (pipeline,):
+for _mod in (pipeline, orchestrate):
     REGISTRY.update(getattr(_mod, "COMMANDS", {}))
 
 

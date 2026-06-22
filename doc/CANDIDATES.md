@@ -97,23 +97,31 @@ absence does not hurt — defer. Build the Claude adapter first (the dogfood har
 
 ---
 
-## C4 — wf-swa fix-mode (orchestrator-dispatched contract amendment)
+## C4 — Fix-mode subagents (wf-swa contract_amendment + wf-sa spec_amendment)
 
-**Date:** 2026-06-14
-**Context:** `wf-swa` ships **default-mode only** (design-slice → sprint.yaml). wf1's
-SWA had a second **fix mode**: the orchestrator dispatched it to surgically amend a
-single task contract when a build/review raised a `contract_amendment` design issue
-mid-execution.
+**Date:** 2026-06-14 (updated 2026-06-22)
+**Context:** the orchestration layer now ships the **routing half** — `wf orchestrate
+dispatch-fix` reads a design issue's `fix_kind` and routes it: `contract_amendment →
+wf-swa`, `spec_amendment → wf-sa`, `unknown → human`. What is NOT built is the **fix
+MODE** in each subagent: today `wf-swa` / `wf-sa` ship default-mode only. wf1's SWA/SA
+had a second mode the orchestrator dispatched to surgically resolve a DI mid-execution
+(amend in isolation, commit, flip the DI to resolved; the orchestrator re-dispatches the
+original task at the same attempt count). The lifecycle reason SA|SWA stay split (SWA is
+the re-dispatched, surgical contract-fixer) still holds; only the mechanism is unbuilt.
 
-**Observation:** fix-mode needs two things wf2 does not have yet — the orchestration
-layer that dispatches it, and a design-issue artifact + routing for it to consume.
-Building it now would be speculative machinery wired to an absent caller (dogfood
-law). The lifecycle reason SA|SWA stay split (SWA is the re-dispatched, surgical
-contract-fixer) still holds; only the mechanism is unbuilt.
+**Reconciliation (absorbs the dropped C12 — taxonomy + routing now built):** the
+taxonomy is two autonomous kinds plus unknown. wf1's `recut → wf-po` is **dropped** —
+wf2's PO owns capabilities, not sprint cutting; SA owns the slice cut, so a needed
+re-cut folds into a `spec_amendment` (SA decides the fix scope). The planning-time
+"infeasible cut" case is the `preparing` swa→sa escalation, not a stage-execution DI a
+task-scoped build/review agent could classify.
 
-**Trigger to act:** when the orchestration layer and its design-issue routing are
-built. Then add a fix-mode flow to `wf-swa` — single DI, minimum-amendment scope,
-flip the DI to resolved — mirroring wf1's `mode-fix`, generalized.
+**Trigger to act:** now that routing is built — add the fix-mode flow to `wf-swa`
+(single DI, minimum-amendment scope on one task contract) and the symmetric mode to
+`wf-sa` (amend the requirement / ADR / slice). Mirror wf1's `mode-fix`, generalized.
+Keep the **mechanical classification check** the writer uses to set `fix_kind` (spec
+correct + contract diverges → contract_amendment; contract matches spec + spec wrong →
+spec_amendment; else unknown). These land with the build/review DI-writers (sub-step 7).
 
 ---
 
@@ -269,32 +277,6 @@ sprawl). The moment it grows sections nobody downstream consumes, it has become 
 **Trigger to act:** the first time a real product built on wf2 needs an external /
 sellable description (a dogfood where someone reaches for "what do we tell
 customers"). **C10 (compliance trace)** is its natural second-step extension.
-
----
-
-## C12 — Design-issue taxonomy + fix-mode routing (orchestration layer)
-
-**Date:** 2026-06-21
-**Context:** Cluster 4 established that SWA flags allocation gaps / under-allocation
-**to the SA** rather than minting unowned tasks (the wf1 discipline). Today that flag is
-*interactive* — the human re-runs/extends SA. wf1 had the mechanized version: a
-build/review-discovered problem is written as a **design-issue** artifact with a
-`fix_kind` taxonomy and routed by the orchestrator —
-`contract_amendment → wf-swa` (fix the task contract), `spec_amendment → wf-sa` (fix the
-design/requirement), `recut → wf-po` (re-cut the slice-backlog), `unknown → human`. The
-fix-mode subagent amends in isolation, commits, and the orchestrator re-dispatches the
-original task at the same attempt count.
-
-**Analysis:** this is the proven non-interactive routing for the flags wf2 now raises
-(allocation gap, untestable requirement, indetailable slice). Building it now is machinery
-wired to an absent caller — wf2 has no orchestrator and no build/review producers yet
-(dogfood law). The interactive "flag to SA/PO" is sufficient while a human drives.
-
-**Trigger to act:** when the orchestration + build/review layer lands. Adopt the
-`fix_kind` taxonomy and the dispatch-fix routing; give wf-sa/wf-swa/wf-po their fix-modes
-(C4 already tracks the wf-swa fix-mode). Keep the **mechanical classification check**
-(compare the contract slice against its source: spec correct + contract diverges →
-contract_amendment; contract matches spec + spec wrong → spec_amendment; else unknown).
 
 ---
 

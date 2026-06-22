@@ -53,6 +53,16 @@ paths:
   pipeline_state: ".wf/transient/pipeline-state.yaml"      # live run state: stages, task_states, design_issues, history. Transient.
   pipeline_history: ".wf/transient/pipeline-history.yaml"  # archived history overflow. Transient.
 
+  # Per-task pipeline artifacts — written by the build/review agents inside their task
+  # worktree, read by the orchestrator's return-inspection (verdict from on-disk artifact,
+  # never from prose). Worktree-local + transient.
+  current_task: ".wf/transient/current-task.yaml"      # the extracted task contract the build agent reads.
+  review_ready: ".wf/transient/review-ready.yaml"      # build → review handoff (build done, gates green).
+  build_blocked: ".wf/transient/build-blocked.yaml"    # build halted: needs a scope amendment.
+  build_progress: ".wf/transient/build-progress.yaml"  # build breadcrumb for crash recovery.
+  feedback: ".wf/transient/feedback.yaml"              # review → build rejection feedback.
+  design_issues: ".wf/transient/design-issues.yaml"    # build/review-raised design issues (fix_kind taxonomy → dispatch-fix routing).
+
 parallel:
   max_concurrent_tasks: 4                     # within-stage concurrency cap — independent tasks run in parallel worktrees.
   worktree_base: ".wf/transient/worktrees"    # per-task git worktree root. Transient.
