@@ -10,9 +10,10 @@ import sys
 
 import orchestrate
 import pipeline
+import sprint
 
 REGISTRY: dict = {}
-for _mod in (pipeline, orchestrate):
+for _mod in (pipeline, orchestrate, sprint):
     REGISTRY.update(getattr(_mod, "COMMANDS", {}))
 
 

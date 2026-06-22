@@ -32,6 +32,7 @@ _OCCUPIES_SLOT = {"building", "reviewing", "dispatching"}  # active; counts agai
 _PARKED = {"design_issue"}                  # hit a design issue; resolved at end_of_stage
 _ESCALATED = {"escalated"}                  # terminal failure — dependents are doomed
 _BLOCKED = {"blocked"}                      # a dependency is doomed; can never run
+_APPROVED = {"approved"}                    # passed all review passes; awaiting the end_of_stage batch merge
 
 
 def _now() -> str:
@@ -238,8 +239,9 @@ def _next(rest):
     repairing = [t for t in stage_ids if status(t) in _PARKED]
     escalated = [t for t in stage_ids if status(t) in _ESCALATED]
     blocked = [t for t in stage_ids if status(t) in _BLOCKED]
+    approved = [t for t in stage_ids if status(t) in _APPROVED]
     pending = [t for t in stage_ids if status(t) not in (
-        _COMPLETED | _OCCUPIES_SLOT | _PARKED | _ESCALATED | _BLOCKED)]
+        _COMPLETED | _OCCUPIES_SLOT | _PARKED | _ESCALATED | _BLOCKED | _APPROVED)]
     pending.sort()
 
     slots = max(0, cap - len(in_flight))
@@ -249,8 +251,9 @@ def _next(rest):
     ready = pending[slots:]
 
     # The stage is settled (leave running_stage) once nothing is pending or running.
-    # Parked design-issue / escalated / blocked tasks do NOT hold the stage open —
-    # end_of_stage resolves design issues and propagates blocks before merging.
+    # approved tasks (awaiting the batch merge), parked design-issue, escalated and
+    # blocked tasks do NOT hold the stage open — end_of_stage merges the approved set,
+    # resolves design issues, and propagates blocks before advancing.
     stage_done = not (dispatch or ready or in_flight)
     sprint_done = stage_done and cur >= total
 
@@ -259,6 +262,7 @@ def _next(rest):
         "dispatch": dispatch,
         "ready": ready,
         "in_flight": in_flight,
+        "approved": approved,
         "repairing": repairing,
         "escalated": escalated,
         "blocked": blocked,
@@ -487,6 +491,26 @@ def _complete_task(rest):
     doc.setdefault("history", []).append({
         "ts": _now(), "event": "task_completed", "task_id": args.task_id,
         "build_commit": args.commit, "merge_commit": args.merge,
+    })
+    _save_state(args, doc)
+    return 0
+
+
+def _approve_task(rest):
+    """Mark a task as having passed every review pass — built and approved, awaiting
+    the end_of_stage batch merge. Distinct from completed (which records the merge)."""
+    p = common.base_parser("pipeline approve-task")
+    p.add_argument("task_id")
+    p.add_argument("--commit", required=True)
+    args = p.parse_args(rest)
+
+    doc = _load_state(args)
+    ts = doc.setdefault("task_states", {}).setdefault(args.task_id, {})
+    ts["status"] = "approved"
+    ts["build_commit"] = args.commit
+    doc.setdefault("history", []).append({
+        "ts": _now(), "event": "task_approved", "task_id": args.task_id,
+        "build_commit": args.commit,
     })
     _save_state(args, doc)
     return 0
@@ -731,6 +755,7 @@ def _stage_summary(rest):
     summary = {
         "tasks": list(stage_ids),
         "completed": completed,
+        "approved": [t for t in stage_ids if st(t) in _APPROVED],
         "escalated": [t for t in stage_ids if st(t) in _ESCALATED],
         "design_issue": [t for t in stage_ids if st(t) in _PARKED],
         "blocked": [t for t in stage_ids if st(t) in _BLOCKED],
@@ -834,6 +859,7 @@ COMMANDS = {
     ("pipeline", "transition"): _transition,
     ("pipeline", "dispatch"): _dispatch,
     ("pipeline", "complete-task"): _complete_task,
+    ("pipeline", "approve-task"): _approve_task,
     ("pipeline", "reject-task"): _reject_task,
     ("pipeline", "block-task"): _block_task,
     ("pipeline", "reclaim-stale"): _reclaim_stale,

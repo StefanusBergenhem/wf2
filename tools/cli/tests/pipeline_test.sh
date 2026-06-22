@@ -160,6 +160,19 @@ NDI="$(wf "$PROJ_DI" pipeline next --format json)"
 [ "$(jget "$NDI" "d['repairing']")" = "['T2']" ] && ok "next: design_issue task surfaces as repairing" || bad "repairing" "$NDI"
 [ "$(jget "$NDI" "d['terminal']['stage_done']")" = "True" ] && ok "next: parked DI does not hold the stage open" || bad "parked stage_done" "$NDI"
 
+# an approved task (awaiting batch merge) is settled — surfaced, not re-dispatched, stage settles
+PROJ_APN="$(echo "$DIAMOND" | new_proj)"
+seed_state "$PROJ_APN" <<'YAML'
+stages: {definitions: [[T1, T2], [T3], [T4]], current: 1, total: 3}
+task_states:
+  T1: {status: approved}
+  T2: {status: completed}
+YAML
+NAPN="$(wf "$PROJ_APN" pipeline next --format json)"
+[ "$(jget "$NAPN" "d['approved']")" = "['T1']" ] && ok "next: approved task surfaces under approved[]" || bad "approved list" "$NAPN"
+[ "$(jget "$NAPN" "[e['task_id'] for e in d['dispatch']]")" = "[]" ] && ok "next: approved task is not re-dispatched" || bad "approved dispatch" "$NAPN"
+[ "$(jget "$NAPN" "d['terminal']['stage_done']")" = "True" ] && ok "next: approved task does not hold the stage open" || bad "approved stage_done" "$NAPN"
+
 # last stage complete → sprint_done
 PROJ_FIN="$(echo "$DIAMOND" | new_proj)"
 seed_state "$PROJ_FIN" <<'YAML'
@@ -199,6 +212,13 @@ wf "$PROJ_M" pipeline complete-task T1 --commit abc123 --merge def456 >/dev/null
 TSC="$(wf "$PROJ_M" pipeline task-state T1 --format json)"
 [ "$(jget "$TSC" "d['state']")" = "completed" ] && ok "complete-task → completed" || bad "complete" "$TSC"
 [ "$(jget "$TSC" "d['build_commit']")" = "abc123" ] && ok "complete-task records build_commit" || bad "build_commit" "$TSC"
+
+# approve-task → approved (passed all passes, awaiting the end_of_stage batch merge)
+PROJ_AP="$(echo "$DIAMOND" | new_proj)"
+wf "$PROJ_AP" pipeline approve-task T1 --commit cab00d >/dev/null
+TSAP="$(wf "$PROJ_AP" pipeline task-state T1 --format json)"
+[ "$(jget "$TSAP" "d['state']")" = "approved" ] && ok "approve-task → approved" || bad "approve" "$TSAP"
+[ "$(jget "$TSAP" "d['build_commit']")" = "cab00d" ] && ok "approve-task records build_commit" || bad "approve build_commit" "$TSAP"
 
 # reject-task → building, attempt++, pass_index reset to 0 (N-pass restart at build)
 wf "$PROJ_M" pipeline dispatch --agent wf-review --task T2 --attempt 1 --pass 1 >/dev/null
