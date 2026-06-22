@@ -436,20 +436,19 @@ def _history_tail(rest):
 
 
 def _transition(rest):
+    """Advance the macro-phase pointer (current_phase) and append it to history. The
+    phase is a resume/observability breadcrumb only — `next` never consults it — so this
+    is an unguarded write: the controller is the sole writer and stamps the phase it is
+    entering."""
     p = common.base_parser("pipeline transition")
-    p.add_argument("--from", dest="from_phase", required=True)
     p.add_argument("--to", dest="to_phase", required=True)
     p.add_argument("--reason")
     args = p.parse_args(rest)
 
     doc = _load_state(args)
     doc["current_phase"] = args.to_phase
-    doc["last_transition"] = {
-        "from": args.from_phase, "to": args.to_phase, "timestamp": _now(),
-        "reason": args.reason,
-    }
-    entry = {"ts": _now(), "event": "transition",
-             "from_phase": args.from_phase, "to_phase": args.to_phase}
+    doc["last_transition"] = {"to": args.to_phase, "timestamp": _now(), "reason": args.reason}
+    entry = {"ts": _now(), "event": "transition", "to_phase": args.to_phase}
     if args.reason:
         entry["reason"] = args.reason
     doc.setdefault("history", []).append(entry)

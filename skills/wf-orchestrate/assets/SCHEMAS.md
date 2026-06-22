@@ -41,7 +41,7 @@ stage_summaries:
     merged: [{task_id: T1, merge_commit: "<sha>"}]
 
 history:                            # append-only; spilled past orchestrate.history_cap to paths.pipeline_history
-  - {ts: "...", event: "transition", from_phase: preparing, to_phase: running_stage}
+  - {ts: "...", event: "transition", to_phase: running_stage}
 ```
 
 **Status meaning for `next`:** `pending` → dispatchable; `building`/`reviewing`/

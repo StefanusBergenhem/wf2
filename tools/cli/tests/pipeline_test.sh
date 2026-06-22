@@ -194,7 +194,7 @@ NNC="$(wf "$PROJ_NC" pipeline next --format json)"
 PROJ_M="$(echo "$DIAMOND" | new_proj)"
 
 # transition writes phase + history
-wf "$PROJ_M" pipeline transition --from idle --to preparing --reason kickoff >/dev/null
+wf "$PROJ_M" pipeline transition --to preparing --reason kickoff >/dev/null
 CP="$(wf "$PROJ_M" pipeline current-phase --format json)"
 [ "$(jget "$CP" "d['phase']")" = "preparing" ] && ok "transition sets current_phase" || bad "transition" "$CP"
 
@@ -302,7 +302,7 @@ SUM="$(wf "$PROJ_SS" pipeline stage-summary --stage 1 --format json)"
 
 # complete-sprint resets to idle and clears the sprint slot (no archive configured)
 PROJ_CS="$(echo "$DIAMOND" | new_proj)"
-wf "$PROJ_CS" pipeline transition --from idle --to running_stage >/dev/null
+wf "$PROJ_CS" pipeline transition --to running_stage >/dev/null
 wf "$PROJ_CS" pipeline complete-sprint >/dev/null
 [ "$(jget "$(wf "$PROJ_CS" pipeline current-phase --format json)" "d['phase']")" = "idle" ] \
     && ok "complete-sprint resets phase to idle" || bad "complete-sprint phase" ""

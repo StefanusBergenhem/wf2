@@ -65,21 +65,21 @@ python3 <paths.tools>/cli/wf pipeline reclaim-stale
 `building`/`reviewing` slots back to `pending` (no attempt bump — an interruption is not
 a failure). Then read `wf pipeline current-phase` and resume from where it points:
 
-- **`idle` / unset** → fresh start: `wf pipeline transition --from idle --to preparing`, then the preparing steps.
-- **`preparing`** → re-run the preparing steps (all idempotent).
-- **`running_stage`** → skip preparing; re-enter the stage loop (§1) — `reclaim-stale` + `next` reconstruct the position from disk.
-- **`end_of_sprint`** → re-run the closeout (§2).
+- **`idle` / unset** → fresh start: `wf pipeline transition --to preparing`, then preparing (§1).
+- **`preparing`** → re-run preparing (§1; all idempotent).
+- **`running_stage`** → skip preparing; re-enter the stage loop (§2) — `reclaim-stale` + `next` reconstruct the position from disk.
+- **`end_of_sprint`** → re-run the closeout (§3).
 
-**Preparing steps:**
+### 1 — Preparing
 
 1. **No `$SPRINT`?** Dispatch the `wf-swa` agent (autonomous — it creates the sprint
    from the design slice). If it cannot (it raises a design issue or halts), **HALT and
    report** — the slice is resolved at the `wf-sa` level; re-run after.
 2. **Ensure the sprint branch** — see [GIT_OPERATIONS.md](assets/GIT_OPERATIONS.md) § Sprint branch. Record it in state.
 3. `wf pipeline compute-stages` (idempotent; HALTs on a dependency cycle).
-4. `wf pipeline transition --from preparing --to running_stage`, then enter the stage loop (§1).
+4. `wf pipeline transition --to running_stage`, then enter the stage loop (§2).
 
-### 1 — The stage loop
+### 2 — The stage loop
 
 On entering each stage, run `wf pipeline stage-start --stage <N>` once (N = the
 `stage.index` from `next`). Then repeat:
@@ -89,11 +89,11 @@ python3 <paths.tools>/cli/wf pipeline next --format json
 ```
 
 - **`terminal.halt` non-null** → HALT, report its `reason`, stop.
-- **`terminal.stage_done` is false** → dispatch the frontier (§1a), apply returns (§ Return protocols), loop.
-- **`terminal.stage_done` is true, `repairing` non-empty** → resolve design issues (§1b), loop.
-- **`terminal.stage_done` is true, no open issues** → finalize the stage (§1c).
+- **`terminal.stage_done` is false** → dispatch the frontier (§2a), apply returns (§ Return protocols), loop.
+- **`terminal.stage_done` is true, `repairing` non-empty** → resolve design issues (§2b), loop.
+- **`terminal.stage_done` is true, no open issues** → finalize the stage (§2c).
 
-#### 1a — Dispatch the frontier (running_stage)
+#### 2a — Dispatch the frontier (running_stage)
 
 For each entry in `dispatch[]` (already capped to free slots — dispatch exactly these):
 
@@ -106,7 +106,7 @@ For each entry in `dispatch[]` (already capped to free slots — dispatch exactl
 Tasks run concurrently in their own worktrees. As each agent returns, apply the
 matching Return protocol, then ask `wf pipeline next` again.
 
-#### 1b — Resolve design issues (stage boundary)
+#### 2b — Resolve design issues (stage boundary)
 
 For each open issue (`repairing` from `next`):
 
@@ -120,7 +120,7 @@ python3 <paths.tools>/cli/wf orchestrate dispatch-fix <di-id>
   task re-enters running_stage on the next `next`.
 - **exit 1** → human gate: HALT, report the issue, stop.
 
-#### 1c — Finalize the stage (end_of_stage)
+#### 2c — Finalize the stage (end_of_stage)
 
 1. `wf pipeline propagate-blocks` — an escalated task dooms its dependents in later stages.
 2. **Batch-merge** the `approved` set (from `next`): for each, merge its worktree to the
@@ -133,11 +133,11 @@ python3 <paths.tools>/cli/wf orchestrate dispatch-fix <di-id>
 4. `wf pipeline stage-summary --stage <N>`; `wf pipeline stage-end --stage <N>`; if history
    exceeds `orchestrate.history_cap`, `wf pipeline archive-history --cap <history_cap>`.
 5. `wf pipeline advance-stage` — **advanced** → return to the stage loop for the next stage
-   (run `stage-start` for it); **not advanced** (was the last stage) → § 2.
+   (run `stage-start` for it); **not advanced** (was the last stage) → § 3.
 
-### 2 — End of sprint (closeout)
+### 3 — End of sprint (closeout)
 
-`wf pipeline transition --from running_stage --to end_of_sprint`, then run the
+`wf pipeline transition --to end_of_sprint`, then run the
 `closeout` steps in order. For each entry:
 
 - a `wf-*` agent name → dispatch that agent (e.g. `wf-retrospective`).
@@ -203,7 +203,7 @@ A build or review writes its design issue to the worktree `design_issues` artifa
 the return inspector surfaces it directly as a **`design_issue` verdict** carrying its
 `di_id` — a design-issued build never goes on to review. On that verdict do **not** retry
 the task: `wf pipeline record-design-issue <di_id> --task <id> --severity <s> --fix_kind <k>`
-(parks the task) and continue other tasks. The issue is resolved at the stage boundary (§1b).
+(parks the task) and continue other tasks. The issue is resolved at the stage boundary (§2b).
 
 ## Dispatch & envelopes
 

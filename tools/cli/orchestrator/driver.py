@@ -311,15 +311,22 @@ class Orchestrator:
     # --- the staged scheduler loop ----------------------------------------
 
     async def run(self) -> RunResult:
-        # preparing
+        # Kickoff / resume safety (mirrors wf-orchestrate §0): sweep already-consumed
+        # handoffs and reclaim orphaned building/reviewing slots left by an interrupted
+        # run, before any preparing step — no attempt bump, an interruption is not a failure.
+        self.scripts.run("sweep-transients", "--config", self.config_path)
+        self.state.run("reclaim_stale", soft=True)
+
+        # preparing (§1)
+        self.state.run("transition", "--to", "preparing", soft=True)
         if not self.sprint_path.exists():
             await asyncio.to_thread(self.dispatcher.dispatch, AGENT_SWA, self._swa_envelope(), None)
             if not self.sprint_path.exists():
                 raise Escalation(f"wf-swa did not produce {self.sprint_path}; cannot execute a sprint")
         sprint_branch = self._sprint_branch()
         self.git.ensure_branch(sprint_branch)
-        self.state.run("reclaim_stale", soft=True)
         self.state.run("compute_stages")
+        self.state.run("transition", "--to", "running_stage", soft=True)
 
         running: dict[str, asyncio.Task] = {}
         while True:
@@ -678,7 +685,7 @@ class Orchestrator:
         }, sort_keys=False))
 
     async def _end_of_sprint(self, sprint_branch: str) -> None:
-        self.state.run("transition", "--from", "running_stage", "--to", "end_of_sprint", soft=True)
+        self.state.run("transition", "--to", "end_of_sprint", soft=True)
         for step in (self.cfg.get("closeout") or ["wf-retrospective", "ship"]):
             if step == "ship":
                 self._ship(sprint_branch)
