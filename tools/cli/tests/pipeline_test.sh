@@ -30,6 +30,7 @@ version: 1
 paths:
   sprint: ".wf/sprint.yaml"
   pipeline_state: ".wf/transient/pipeline-state.yaml"
+  pipeline_history: ".wf/transient/pipeline-history.yaml"
 parallel:
   max_concurrent_tasks: 4
 YAML
@@ -174,6 +175,132 @@ PROJ_NC="$(echo "$DIAMOND" | new_proj)"
 NNC="$(wf "$PROJ_NC" pipeline next --format json)"
 [ "$(jget "$NNC" "d['terminal']['halt'] is not None")" = "True" ] \
     && ok "next: halts when stages not computed" || bad "uncomputed halt" "$NNC"
+
+# ── run-state mutations ──────────────────────────────────────────────────────
+
+PROJ_M="$(echo "$DIAMOND" | new_proj)"
+
+# transition writes phase + history
+wf "$PROJ_M" pipeline transition --from idle --to preparing --reason kickoff >/dev/null
+CP="$(wf "$PROJ_M" pipeline current-phase --format json)"
+[ "$(jget "$CP" "d['phase']")" = "preparing" ] && ok "transition sets current_phase" || bad "transition" "$CP"
+
+# dispatch maps agent → task state, records pass_index
+wf "$PROJ_M" pipeline dispatch --agent wf-build --task T1 --attempt 1 >/dev/null
+[ "$(jget "$(wf "$PROJ_M" pipeline task-state T1 --format json)" "d['state']")" = "building" ] \
+    && ok "dispatch wf-build → building" || bad "dispatch build state" ""
+wf "$PROJ_M" pipeline dispatch --agent wf-security-review --task T1 --attempt 1 --pass 1 >/dev/null
+TSR="$(wf "$PROJ_M" pipeline task-state T1 --format json)"
+[ "$(jget "$TSR" "d['state']")" = "reviewing" ] && ok "dispatch a review pass → reviewing" || bad "dispatch review state" "$TSR"
+[ "$(jget "$TSR" "d['pass_index']")" = "1" ] && ok "dispatch records pass_index" || bad "pass_index" "$TSR"
+
+# complete-task → completed + commits
+wf "$PROJ_M" pipeline complete-task T1 --commit abc123 --merge def456 >/dev/null
+TSC="$(wf "$PROJ_M" pipeline task-state T1 --format json)"
+[ "$(jget "$TSC" "d['state']")" = "completed" ] && ok "complete-task → completed" || bad "complete" "$TSC"
+[ "$(jget "$TSC" "d['build_commit']")" = "abc123" ] && ok "complete-task records build_commit" || bad "build_commit" "$TSC"
+
+# reject-task → building, attempt++, pass_index reset to 0 (N-pass restart at build)
+wf "$PROJ_M" pipeline dispatch --agent wf-review --task T2 --attempt 1 --pass 1 >/dev/null
+wf "$PROJ_M" pipeline reject-task T2 --feedback /tmp/fb.yaml >/dev/null
+TSJ="$(wf "$PROJ_M" pipeline task-state T2 --format json)"
+[ "$(jget "$TSJ" "d['state']")" = "building" ] && ok "reject-task → building" || bad "reject state" "$TSJ"
+[ "$(jget "$TSJ" "d['attempt_counter']")" = "1" ] && ok "reject-task bumps attempt_counter" || bad "reject attempt" "$TSJ"
+[ "$(jget "$TSJ" "d['pass_index']")" = "0" ] && ok "reject-task resets pass_index to 0" || bad "reject pass_index" "$TSJ"
+
+# block-task → blocked
+wf "$PROJ_M" pipeline block-task T3 --reason "manual" >/dev/null
+[ "$(jget "$(wf "$PROJ_M" pipeline task-state T3 --format json)" "d['state']")" = "blocked" ] \
+    && ok "block-task → blocked" || bad "block" ""
+
+# record-design-issue → design_issue + surfaces as unresolved
+wf "$PROJ_M" pipeline record-design-issue DI-1 --task T4 --severity high --fix_kind contract_amendment >/dev/null
+[ "$(jget "$(wf "$PROJ_M" pipeline task-state T4 --format json)" "d['state']")" = "design_issue" ] \
+    && ok "record-design-issue → design_issue" || bad "DI state" ""
+UDI="$(wf "$PROJ_M" pipeline unresolved-design-issues --format json)"
+[ "$(jget "$UDI" "d['count']")" = "1" ] && ok "unresolved-design-issues counts the open DI" || bad "DI count" "$UDI"
+
+# scope-amendment bumps the count
+wf "$PROJ_M" pipeline scope-amendment T2 --added "a.go,b.go" >/dev/null
+[ "$(jget "$(wf "$PROJ_M" pipeline scope-amendment-count T2 --format json)" "d['value']")" = "1" ] \
+    && ok "scope-amendment bumps count" || bad "scope count" ""
+
+# reclaim-stale flips an orphan slot back to pending
+PROJ_R="$(echo "$DIAMOND" | new_proj)"
+seed_state "$PROJ_R" <<'YAML'
+task_states:
+  T1: {status: reviewing}
+  T2: {status: completed}
+YAML
+RC="$(wf "$PROJ_R" pipeline reclaim-stale --format json)"
+[ "$(jget "$RC" "[r['task_id'] for r in d['reclaimed']]")" = "['T1']" ] \
+    && ok "reclaim-stale reclaims the in-flight orphan only" || bad "reclaim" "$RC"
+[ "$(jget "$(wf "$PROJ_R" pipeline task-state T1 --format json)" "d['state']")" = "pending" ] \
+    && ok "reclaim-stale resets orphan to pending" || bad "reclaim state" ""
+
+# ── staged-model mutations ───────────────────────────────────────────────────
+
+# advance-stage walks current; no-op on the last stage
+PROJ_A="$(echo "$DIAMOND" | new_proj)"
+wf "$PROJ_A" pipeline compute-stages >/dev/null
+A1="$(wf "$PROJ_A" pipeline advance-stage --format json)"
+[ "$(jget "$A1" "d['current']")" = "2" ] && ok "advance-stage → stage 2" || bad "advance 2" "$A1"
+wf "$PROJ_A" pipeline advance-stage >/dev/null   # → 3 (last)
+A3="$(wf "$PROJ_A" pipeline advance-stage --format json)"
+[ "$(jget "$A3" "d['advanced']")" = "False" ] && ok "advance-stage is a no-op past the last stage" || bad "advance last" "$A3"
+
+# propagate-blocks: an escalated dep dooms its dependents
+PROJ_P="$(echo "$DIAMOND" | new_proj)"
+seed_state "$PROJ_P" <<'YAML'
+task_states:
+  T1: {status: escalated}
+YAML
+PB="$(wf "$PROJ_P" pipeline propagate-blocks --format json)"
+[ "$(jget "$PB" "sorted(d['blocked'])")" = "['T3', 'T4']" ] \
+    && ok "propagate-blocks dooms T3,T4 behind escalated T1" || bad "propagate" "$PB"
+
+# stage timing
+PROJ_TM="$(echo "$DIAMOND" | new_proj)"
+SS="$(wf "$PROJ_TM" pipeline stage-start --stage 1 --format json)"
+[ -n "$(jget "$SS" "d['started_at']")" ] && ok "stage-start records started_at" || bad "stage-start" "$SS"
+SE="$(wf "$PROJ_TM" pipeline stage-end --stage 1 --format json)"
+[ "$(jget "$SE" "'duration_seconds' in d['timing']")" = "True" ] && ok "stage-end records duration_seconds" || bad "stage-end" "$SE"
+
+# stage-summary derives lists from task_states
+PROJ_SS="$(echo "$DIAMOND" | new_proj)"
+seed_state "$PROJ_SS" <<'YAML'
+stages: {definitions: [[T1, T2], [T3], [T4]], current: 1, total: 3}
+task_states:
+  T1: {status: completed}
+  T2: {status: escalated}
+YAML
+SUM="$(wf "$PROJ_SS" pipeline stage-summary --stage 1 --format json)"
+[ "$(jget "$SUM" "d['completed']")" = "['T1']" ] && ok "stage-summary derives completed" || bad "summary completed" "$SUM"
+[ "$(jget "$SUM" "d['escalated']")" = "['T2']" ] && ok "stage-summary derives escalated" || bad "summary escalated" "$SUM"
+
+# ── sprint lifecycle ─────────────────────────────────────────────────────────
+
+# complete-sprint resets to idle and clears the sprint slot (no archive configured)
+PROJ_CS="$(echo "$DIAMOND" | new_proj)"
+wf "$PROJ_CS" pipeline transition --from idle --to running_stage >/dev/null
+wf "$PROJ_CS" pipeline complete-sprint >/dev/null
+[ "$(jget "$(wf "$PROJ_CS" pipeline current-phase --format json)" "d['phase']")" = "idle" ] \
+    && ok "complete-sprint resets phase to idle" || bad "complete-sprint phase" ""
+[ ! -f "$PROJ_CS/.wf/sprint.yaml" ] && ok "complete-sprint clears the sprint slot" || bad "complete-sprint sprint" "still present"
+
+# archive-history spills the overflow past the cap
+PROJ_H="$(echo "$DIAMOND" | new_proj)"
+"$PYTHON" - "$PROJ_H/.wf/transient/pipeline-state.yaml" <<'PY'
+import sys,yaml
+p=sys.argv[1]
+d={"current_phase":"running_stage","history":[{"ts":"t","event":f"e{i}"} for i in range(10)]}
+open(p,'w').write(yaml.safe_dump(d))
+PY
+wf "$PROJ_H" pipeline archive-history --cap 3 >/dev/null
+HT="$(wf "$PROJ_H" pipeline history-tail 100 --format json)"
+# live history kept at cap (3) + the archival event appended = 4
+[ "$(jget "$HT" "len(d)")" = "4" ] && ok "archive-history keeps cap + the archival marker live" || bad "archive-history live" "$HT"
+[ -f "$PROJ_H/.wf/transient/pipeline-history.yaml" ] && ok "archive-history writes the spill file" || bad "archive-history spill" "missing"
 
 # ── summary ──
 echo ""

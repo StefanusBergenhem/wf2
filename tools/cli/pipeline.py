@@ -344,9 +344,508 @@ def _task_state(rest):
     return 0
 
 
+def _unresolved_design_issues(rest):
+    args = common.base_parser("pipeline unresolved-design-issues").parse_args(rest)
+    doc = _load_state(args)
+    raw = doc.get("design_issues", {}) or {}
+    issues = []
+    items = raw.items() if isinstance(raw, dict) else (
+        (None, v) for v in raw if isinstance(v, dict))
+    for k, v in items:
+        if not isinstance(v, dict):
+            continue
+        status = v.get("status", "open")
+        if status in ("open", "routing"):
+            issues.append({
+                "di_id": v.get("issue_id") or v.get("di_id") or k,
+                "task_id": v.get("task_id") or k,
+                "fix_kind": v.get("fix_kind", ""),
+                "status": status,
+            })
+    common.emit({"count": len(issues), "issues": issues}, args.format)
+    return 0
+
+
+def _blocked_tasks(rest):
+    args = common.base_parser("pipeline blocked-tasks").parse_args(rest)
+    doc = _load_state(args)
+    raw = doc.get("blocked_tasks", {}) or {}
+    tasks = []
+    if isinstance(raw, dict):
+        for k, v in raw.items():
+            entry = {"task_id": k}
+            if isinstance(v, dict):
+                entry.update(v)
+            tasks.append(entry)
+    elif isinstance(raw, list):
+        tasks = [t for t in raw if isinstance(t, dict)]
+    common.emit({"count": len(tasks), "tasks": tasks}, args.format)
+    return 0
+
+
+def _attempt_counter(rest):
+    p = common.base_parser("pipeline attempt-counter")
+    p.add_argument("task_id")
+    args = p.parse_args(rest)
+    ts = (_load_state(args).get("task_states", {}) or {}).get(args.task_id) or {}
+    common.emit({"value": ts.get("attempt_counter", 0)}, args.format)
+    return 0
+
+
+def _scope_amendment_count(rest):
+    p = common.base_parser("pipeline scope-amendment-count")
+    p.add_argument("task_id")
+    args = p.parse_args(rest)
+    ts = (_load_state(args).get("task_states", {}) or {}).get(args.task_id) or {}
+    common.emit({"value": ts.get("scope_amendment_count", 0)}, args.format)
+    return 0
+
+
+def _history_tail(rest):
+    p = common.base_parser("pipeline history-tail")
+    p.add_argument("n", nargs="?", default="20")
+    args = p.parse_args(rest)
+    hist = _load_state(args).get("history", []) or []
+    try:
+        n = int(args.n)
+    except (TypeError, ValueError):
+        n = 20
+    common.emit(hist[-n:] if n > 0 else [], args.format)
+    return 0
+
+
+# ── Run-state mutations ──────────────────────────────────────────────────────
+
+
+def _transition(rest):
+    p = common.base_parser("pipeline transition")
+    p.add_argument("--from", dest="from_phase", required=True)
+    p.add_argument("--to", dest="to_phase", required=True)
+    p.add_argument("--reason")
+    args = p.parse_args(rest)
+
+    doc = _load_state(args)
+    doc["current_phase"] = args.to_phase
+    doc["last_transition"] = {
+        "from": args.from_phase, "to": args.to_phase, "timestamp": _now(),
+        "reason": args.reason,
+    }
+    entry = {"ts": _now(), "event": "transition",
+             "from_phase": args.from_phase, "to_phase": args.to_phase}
+    if args.reason:
+        entry["reason"] = args.reason
+    doc.setdefault("history", []).append(entry)
+    _save_state(args, doc)
+    return 0
+
+
+# Agent role → task state. Build is `building`; the design-issue fixers get their
+# own states; every other dispatch is a review pass (build → review → security-review
+# → …), all of which occupy a slot as `reviewing`.
+_DISPATCH_STATE = {
+    "wf-build": "building", "build": "building",
+    "wf-swa": "fix_swa", "wf-sa": "fix_sa",
+    "wf-retrospective": "retrospective",
+}
+
+
+def _dispatch(rest):
+    p = common.base_parser("pipeline dispatch")
+    p.add_argument("--agent", required=True)
+    p.add_argument("--task", required=True)
+    p.add_argument("--attempt", required=True)
+    p.add_argument("--pass", dest="pass_index", type=int,
+                   help="review-pass index this dispatch advances to (N-pass loop)")
+    args = p.parse_args(rest)
+
+    doc = _load_state(args)
+    ts = doc.setdefault("task_states", {}).setdefault(args.task, {})
+    ts["status"] = _DISPATCH_STATE.get(args.agent, "reviewing")
+    if args.pass_index is not None:
+        ts["pass_index"] = args.pass_index
+    entry = {"ts": _now(), "event": "dispatch", "agent": args.agent,
+             "task_id": args.task, "attempt": int(args.attempt)}
+    if args.pass_index is not None:
+        entry["pass_index"] = args.pass_index
+    doc.setdefault("history", []).append(entry)
+    _save_state(args, doc)
+    return 0
+
+
+def _complete_task(rest):
+    p = common.base_parser("pipeline complete-task")
+    p.add_argument("task_id")
+    p.add_argument("--commit", required=True)
+    p.add_argument("--merge", required=True)
+    args = p.parse_args(rest)
+
+    doc = _load_state(args)
+    ts = doc.setdefault("task_states", {}).setdefault(args.task_id, {})
+    ts["status"] = "completed"
+    ts["build_commit"] = args.commit
+    ts["merge_commit"] = args.merge
+    doc.setdefault("history", []).append({
+        "ts": _now(), "event": "task_completed", "task_id": args.task_id,
+        "build_commit": args.commit, "merge_commit": args.merge,
+    })
+    _save_state(args, doc)
+    return 0
+
+
+def _reject_task(rest):
+    p = common.base_parser("pipeline reject-task")
+    p.add_argument("task_id")
+    # --feedback is an explicit path ARGUMENT: stored verbatim, never re-anchored.
+    p.add_argument("--feedback", required=True)
+    args = p.parse_args(rest)
+
+    doc = _load_state(args)
+    ts = doc.setdefault("task_states", {}).setdefault(args.task_id, {})
+    ts["attempt_counter"] = int(ts.get("attempt_counter", 0)) + 1
+    ts["status"] = "building"
+    ts["pass_index"] = 0  # a rejection restarts the pass pipeline at build (fix mode)
+    doc.setdefault("history", []).append({
+        "ts": _now(), "event": "task_rejected", "task_id": args.task_id,
+        "feedback_path": args.feedback, "next_attempt": ts["attempt_counter"],
+    })
+    _save_state(args, doc)
+    return 0
+
+
+def _block_task(rest):
+    p = common.base_parser("pipeline block-task")
+    p.add_argument("task_id")
+    p.add_argument("--reason", required=True)
+    args = p.parse_args(rest)
+
+    doc = _load_state(args)
+    blocked = doc.setdefault("blocked_tasks", {})
+    if isinstance(blocked, list):
+        blocked.append({"task_id": args.task_id, "reason": args.reason})
+    else:
+        blocked[args.task_id] = {"reason": args.reason}
+    doc.setdefault("task_states", {}).setdefault(args.task_id, {})["status"] = "blocked"
+    doc.setdefault("history", []).append({
+        "ts": _now(), "event": "task_blocked", "task_id": args.task_id, "reason": args.reason,
+    })
+    _save_state(args, doc)
+    return 0
+
+
+def _reclaim_stale(rest):
+    """Cold-resume safety: reset orphan slots (building/reviewing/dispatching) left by
+    an interrupted run back to pending so `next` re-surfaces them. The attempt counter
+    is NOT bumped — an external disruption is not a task failure."""
+    args = common.base_parser("pipeline reclaim-stale").parse_args(rest)
+    doc = _load_state(args)
+    stale = _OCCUPIES_SLOT
+    reclaimed = []
+    for tid, ts in (doc.get("task_states") or {}).items():
+        if (ts or {}).get("status") in stale:
+            ts["status"] = "pending"
+            reclaimed.append({"task_id": tid, "from_status": ts.get("status", "")})
+    if reclaimed:
+        hist = doc.setdefault("history", [])
+        for r in reclaimed:
+            hist.append({"ts": _now(), "event": "reclaimed_stale_dispatch",
+                         "task_id": r["task_id"]})
+        _save_state(args, doc)
+    common.emit({"reclaimed": reclaimed}, args.format)
+    return 0
+
+
+def _record_design_issue(rest):
+    p = common.base_parser("pipeline record-design-issue")
+    p.add_argument("di_id")
+    p.add_argument("--task", required=True)
+    p.add_argument("--severity", required=True)
+    p.add_argument("--fix_kind", required=True)
+    args = p.parse_args(rest)
+
+    doc = _load_state(args)
+    issues = doc.setdefault("design_issues", {})
+    entry = {
+        "issue_id": args.di_id, "task_id": args.task, "severity": args.severity,
+        "fix_kind": args.fix_kind, "status": "open",
+    }
+    if isinstance(issues, list):
+        issues.append(entry)
+    else:
+        issues[args.di_id] = entry
+    doc.setdefault("task_states", {}).setdefault(args.task, {})["status"] = "design_issue"
+    doc.setdefault("history", []).append({
+        "ts": _now(), "event": "design_issue_recorded", "di_id": args.di_id,
+        "task_id": args.task, "fix_kind": args.fix_kind, "severity": args.severity,
+    })
+    _save_state(args, doc)
+    return 0
+
+
+def _scope_amendment(rest):
+    p = common.base_parser("pipeline scope-amendment")
+    p.add_argument("task_id")
+    p.add_argument("--added", required=True)
+    args = p.parse_args(rest)
+
+    doc = _load_state(args)
+    files = [f.strip() for f in args.added.split(",") if f.strip()]
+    ts = doc.setdefault("task_states", {}).setdefault(args.task_id, {})
+    ts["scope_amendment_count"] = int(ts.get("scope_amendment_count", 0)) + 1
+    doc.setdefault("history", []).append({
+        "ts": _now(), "event": "scope_amendment_applied", "task_id": args.task_id,
+        "added_files": files, "scope_amendment_count": ts["scope_amendment_count"],
+    })
+    _save_state(args, doc)
+    return 0
+
+
+# ── Staged-model mutations ───────────────────────────────────────────────────
+
+
+def _advance_stage(rest):
+    """Move to the next stage (current += 1). No-op (advanced: false) when already on
+    the last stage — that is sprint_done, the controller's signal to end_of_sprint."""
+    args = common.base_parser("pipeline advance-stage").parse_args(rest)
+    doc = _load_state(args)
+    stages = doc.get("stages") or {}
+    cur = int(stages.get("current", 1) or 1)
+    total = int(stages.get("total", 0) or 0)
+    if cur >= total:
+        common.emit({"advanced": False, "current": cur, "total": total}, args.format)
+        return 0
+    stages["current"] = cur + 1
+    doc["stages"] = stages
+    doc.setdefault("history", []).append({
+        "ts": _now(), "event": "stage_advanced", "from_stage": cur, "to_stage": cur + 1,
+    })
+    _save_state(args, doc)
+    common.emit({"advanced": True, "current": cur + 1, "total": total}, args.format)
+    return 0
+
+
+def _propagate_blocks(rest):
+    """Mark every task transitively depending on an escalated/blocked task as blocked.
+    The staged-model escalation propagation: an escalated dependency dooms its dependents
+    in any later stage, so they are never dispatched. Mechanical — recomputes the doomed
+    set over the sprint DAG and records the newly-doomed as blocked."""
+    args = common.base_parser("pipeline propagate-blocks").parse_args(rest)
+    sprint = common.load_yaml(common.resolve_path(args.config, "sprint", None))
+    doc = _load_state(args)
+    tasks, ids, deps_of = _sprint_graph(sprint)
+    task_states = doc.get("task_states") or {}
+    status_of = {t["id"]: _effective_status(t["id"], t.get("status"), task_states) for t in tasks}
+
+    doomed = {tid for tid in ids if status_of[tid] in (_ESCALATED | _BLOCKED)}
+    raw_blocked = doc.get("blocked_tasks") or {}
+    if isinstance(raw_blocked, dict):
+        doomed |= set(raw_blocked)
+    elif isinstance(raw_blocked, list):
+        doomed |= {b.get("task_id") for b in raw_blocked if isinstance(b, dict)}
+
+    changed = True
+    while changed:
+        changed = False
+        for tid in ids:
+            if tid in doomed or status_of[tid] in _COMPLETED:
+                continue
+            if any(d in doomed for d in deps_of[tid]):
+                doomed.add(tid)
+                changed = True
+
+    newly = []
+    blocked = doc.setdefault("blocked_tasks", {})
+    for tid in ids:
+        if tid in doomed and status_of[tid] not in (_ESCALATED | _BLOCKED | _COMPLETED):
+            reason = next((d for d in deps_of[tid] if d in doomed), "blocked")
+            if isinstance(blocked, list):
+                blocked.append({"task_id": tid, "blocked_by": reason})
+            else:
+                blocked.setdefault(tid, {"blocked_by": reason})
+            doc.setdefault("task_states", {}).setdefault(tid, {})["status"] = "blocked"
+            newly.append(tid)
+    if newly:
+        doc.setdefault("history", []).append({
+            "ts": _now(), "event": "blocks_propagated", "blocked": sorted(newly),
+        })
+        _save_state(args, doc)
+    common.emit({"blocked": sorted(newly)}, args.format)
+    return 0
+
+
+def _stage_start(rest):
+    """Record stage start time (idempotent — preserves an existing started_at so a
+    resumed stage keeps its original wall-clock origin)."""
+    p = common.base_parser("pipeline stage-start")
+    p.add_argument("--stage", required=True, type=int)
+    args = p.parse_args(rest)
+    doc = _load_state(args)
+    timing = doc.setdefault("stage_summaries", {}).setdefault(args.stage, {}).setdefault("timing", {})
+    if not timing.get("started_at"):
+        timing["started_at"] = _now()
+        _save_state(args, doc)
+    common.emit({"stage": args.stage, "started_at": timing["started_at"]}, args.format)
+    return 0
+
+
+def _stage_end(rest):
+    """Record stage completion time + duration_seconds against the recorded start."""
+    p = common.base_parser("pipeline stage-end")
+    p.add_argument("--stage", required=True, type=int)
+    args = p.parse_args(rest)
+    doc = _load_state(args)
+    timing = doc.setdefault("stage_summaries", {}).setdefault(args.stage, {}).setdefault("timing", {})
+    end = _now()
+    timing["completed_at"] = end
+    started = timing.get("started_at")
+    if started:
+        try:
+            fmt = "%Y-%m-%dT%H:%M:%SZ"
+            delta = datetime.datetime.strptime(end, fmt) - datetime.datetime.strptime(started, fmt)
+            timing["duration_seconds"] = int(delta.total_seconds())
+        except ValueError:
+            pass
+    _save_state(args, doc)
+    common.emit({"stage": args.stage, "timing": timing}, args.format)
+    return 0
+
+
+def _stage_summary(rest):
+    """Write a compact summary of a stage by deriving completed/escalated/design_issue
+    task lists from the live task_states for that stage's tasks. The context-hygiene
+    anchor: at stage close the controller writes this and stops re-reading the stage's
+    per-task detail."""
+    p = common.base_parser("pipeline stage-summary")
+    p.add_argument("--stage", required=True, type=int)
+    args = p.parse_args(rest)
+    doc = _load_state(args)
+    defs = (doc.get("stages") or {}).get("definitions") or []
+    if args.stage < 1 or args.stage > len(defs):
+        common.die(f"stage {args.stage} out of range 1..{len(defs)}")
+    stage_ids = defs[args.stage - 1]
+    task_states = doc.get("task_states") or {}
+
+    def st(tid):
+        return (task_states.get(tid) or {}).get("status", "pending")
+
+    completed = [t for t in stage_ids if st(t) in _COMPLETED]
+    summary = {
+        "tasks": list(stage_ids),
+        "completed": completed,
+        "escalated": [t for t in stage_ids if st(t) in _ESCALATED],
+        "design_issue": [t for t in stage_ids if st(t) in _PARKED],
+        "blocked": [t for t in stage_ids if st(t) in _BLOCKED],
+        "merged": [
+            {"task_id": t, "merge_commit": (task_states.get(t) or {}).get("merge_commit")}
+            for t in completed if (task_states.get(t) or {}).get("merge_commit")
+        ],
+    }
+    ss = doc.setdefault("stage_summaries", {}).setdefault(args.stage, {})
+    ss.update(summary)
+    _save_state(args, doc)
+    common.emit({"stage": args.stage, **summary}, args.format)
+    return 0
+
+
+# ── Sprint lifecycle ─────────────────────────────────────────────────────────
+
+
+def _archive_history(rest):
+    """Spill the oldest history entries into paths.pipeline_history, keeping at most
+    --cap entries live. Both files together preserve the append-only audit trail."""
+    p = common.base_parser("pipeline archive-history")
+    p.add_argument("--cap", required=True, type=int)
+    args = p.parse_args(rest)
+
+    history_path = common.resolve_path(args.config, "pipeline_history", None)
+    doc = _load_state(args)
+    hist = doc.get("history", []) or []
+    if len(hist) <= args.cap:
+        return 0
+    spill_count = len(hist) - args.cap
+    spill, keep = hist[:spill_count], hist[spill_count:]
+
+    history_path.parent.mkdir(parents=True, exist_ok=True)
+    prior = common.load_yaml(history_path, optional=True)
+    prior_entries = prior.get("history", []) if isinstance(prior, dict) else []
+    _write_yaml(history_path, {"history": prior_entries + spill})
+
+    doc["history"] = keep
+    doc.setdefault("history", []).append({
+        "ts": _now(), "event": "history_archived", "spilled_count": spill_count,
+        "archive_path": str(history_path),
+    })
+    _save_state(args, doc)
+    return 0
+
+
+def _complete_sprint(rest):
+    """Close a shipped sprint and reset the pipeline for the next one. Run at the end
+    of ship: archive the sprint plan + its final run state under paths.archive_sprints
+    (when configured), then reset pipeline_state to a bare ``idle`` so the next run
+    starts clean instead of overlaying the shipped sprint's all-completed task states.
+
+    Git is intentionally NOT touched — a pure file/state mutation both drivers share."""
+    args = common.base_parser("pipeline complete-sprint").parse_args(rest)
+
+    doc = _load_state(args)
+    sprint_path = common.resolve_path(args.config, "sprint", None)
+    sprint_doc = common.load_yaml(sprint_path, optional=True)
+    sprint_id = sprint_doc.get("sprint_id") or doc.get("sprint_id") or "sprint"
+
+    rel = (common.config_doc(args.config).get("paths") or {}).get("archive_sprints")
+    archived = archived_state = None
+    if rel:
+        archive_dir = common.project_root(args.config) / rel
+        archive_dir.mkdir(parents=True, exist_ok=True)
+        if sprint_path.exists():
+            dest = archive_dir / f"{sprint_id}.yaml"
+            sprint_path.replace(dest)
+            archived = str(dest)
+        if doc:
+            state_dest = archive_dir / f"{sprint_id}.pipeline_state.yaml"
+            _write_yaml(state_dest, doc)
+            archived_state = str(state_dest)
+    elif sprint_path.exists():
+        sprint_path.unlink()  # no archive configured — clear the active slot
+
+    _save_state(args, {"current_phase": "idle"})
+    common.emit({
+        "sprint_id": sprint_id,
+        "archived_sprint": archived,
+        "archived_pipeline_state": archived_state,
+        "pipeline_state_reset": str(_state_path(args)),
+    }, args.format)
+    return 0
+
+
 COMMANDS = {
+    # stage computation + frontier
     ("pipeline", "compute-stages"): _compute_stages,
     ("pipeline", "next"): _next,
+    # reads
     ("pipeline", "current-phase"): _current_phase,
     ("pipeline", "task-state"): _task_state,
+    ("pipeline", "unresolved-design-issues"): _unresolved_design_issues,
+    ("pipeline", "blocked-tasks"): _blocked_tasks,
+    ("pipeline", "attempt-counter"): _attempt_counter,
+    ("pipeline", "scope-amendment-count"): _scope_amendment_count,
+    ("pipeline", "history-tail"): _history_tail,
+    # run-state mutations
+    ("pipeline", "transition"): _transition,
+    ("pipeline", "dispatch"): _dispatch,
+    ("pipeline", "complete-task"): _complete_task,
+    ("pipeline", "reject-task"): _reject_task,
+    ("pipeline", "block-task"): _block_task,
+    ("pipeline", "reclaim-stale"): _reclaim_stale,
+    ("pipeline", "record-design-issue"): _record_design_issue,
+    ("pipeline", "scope-amendment"): _scope_amendment,
+    # staged-model mutations
+    ("pipeline", "advance-stage"): _advance_stage,
+    ("pipeline", "propagate-blocks"): _propagate_blocks,
+    ("pipeline", "stage-start"): _stage_start,
+    ("pipeline", "stage-end"): _stage_end,
+    ("pipeline", "stage-summary"): _stage_summary,
+    # sprint lifecycle
+    ("pipeline", "archive-history"): _archive_history,
+    ("pipeline", "complete-sprint"): _complete_sprint,
 }
