@@ -31,14 +31,13 @@ each requirement, which files change, what each task demonstrates, what order ta
 
 ## Mode
 
-Your dispatch envelope names your `mode`. Read and follow **exactly one** procedure, then do
-**Telemetry** (below):
+Your dispatch envelope (the input handed to you) names your `mode`. Read and follow **exactly
+one** procedure, then do **Telemetry** (below):
 
 - **`fix`** — `mode` is `fix` (the envelope carries a `di_id`): repair one contract design
   issue. Read `references/fix-mode.md` and follow it. Do **not** read the default-mode procedure.
-- **`default`** — `mode` is `default`, absent, or you were run interactively: build the sprint
-  from the design slice. Read `references/default-mode.md` and follow it. Do **not** read the
-  fix-mode procedure.
+- **`default`** — `mode` is `default`: build the sprint from the design slice. Read
+  `references/default-mode.md` and follow it. Do **not** read the fix-mode procedure.
 
 ## Telemetry (REQUIRED)
 

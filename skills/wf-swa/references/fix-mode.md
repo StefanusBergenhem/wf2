@@ -25,8 +25,9 @@ Decide where the defect lives:
   `depends_on` edge is missing. A CONTRACT defect: go to Step 3.
 - **The requirement or an ADR is wrong** — the contract faithfully reflects a requirement
   that is itself unbuildable or contradictory. A SPEC defect, above your altitude. Do **not**
-  amend the contract. **Halt and escalate to the human:** report that `di_id` needs `wf-sa`
-  (a spec amendment) and the one-line reason. Then go to Telemetry with outcome `escalated`.
+  amend the contract or mark the issue resolved. **Halt and report** that `di_id` is a spec
+  defect needing `wf-sa` (a requirement/ADR change), with the one-line reason, then go to
+  Telemetry with outcome `escalated`.
 
 ## Step 3 — Amend (contract defect only)
 
@@ -43,8 +44,8 @@ issue is closed.
 
 ## Halt conditions
 
-Stop and surface to the user if:
+Halt and report with outcome `escalated` if:
 
 - `di_id` is not in `$di_artifact`, or `task_id` is not in `$sprint_artifact`.
-- The defect is a spec defect (Step 2) — escalate to the human for `wf-sa`.
+- The defect is a spec defect (Step 2) — it needs `wf-sa`.
 - Resolving it would require changing more than the one `task_id` contract.

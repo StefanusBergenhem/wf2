@@ -72,9 +72,10 @@ a failure). Then read `wf pipeline current-phase` and resume from where it point
 
 ### 1 — Preparing
 
-1. **No `$SPRINT`?** Dispatch the `wf-swa` agent (autonomous — it creates the sprint
-   from the design slice). If it cannot (it raises a design issue or halts), **HALT and
-   report** — the slice is resolved at the `wf-sa` level; re-run after.
+1. **Ensure `$SPRINT` exists** before proceeding. If it is absent, dispatch the `wf-swa`
+   agent with the **Preparing envelope** (DISPATCH.md) to build the sprint from the design
+   slice, then re-check `$SPRINT` on disk: still absent → **HALT and report** (wf-swa could
+   not build a sprint from the slice). Never run compute-stages without `$SPRINT` present.
 2. **Ensure the sprint branch** — see [GIT_OPERATIONS.md](assets/GIT_OPERATIONS.md) § Sprint branch. Record it in state.
 3. `wf pipeline compute-stages` (idempotent; HALTs on a dependency cycle).
 4. `wf pipeline transition --to running_stage`, then enter the stage loop (§2).

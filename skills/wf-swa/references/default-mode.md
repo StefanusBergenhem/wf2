@@ -12,8 +12,8 @@ component. Cross-component work is separate tasks.
 
 1. Read `$DESIGN_SLICE` — one **buildable increment** wf-sa cut from the design backlog:
    the component requirements (each with its owner and driver), the architecture moves, and
-   the governing ADRs. Its requirements are your whole scope. **HALT if it is absent** — ask
-   the user to run `wf-sa` first.
+   the governing ADRs. Its requirements are your whole scope. **HALT and report if it is
+   absent** — it is wf-sa's output.
 2. Read `$BRIEF` for system shape, and the relevant `$ADRS` for the rationale you must
    respect when writing `implementation_notes`.
 3. Read the **source** of every component the slice's requirements name. The slice has
@@ -51,25 +51,22 @@ interface, a migration, a type another task imports). Tasks with no edge between
 run in parallel. The graph must be acyclic — a cycle is a decomposition error; resolve
 it by splitting a task or merging two.
 
-## Phase 5 — Present & write
+## Phase 5 — Write
 
-1. Present the task list and the dependency shape (what runs in parallel, what blocks
-   what) to the user for a sanity check. The slice's scope was already approved at the
-   SA gate, so this is a decomposition check, not a scope gate.
-2. Write `$SPRINT` from `assets/sprint.yaml.tmpl`. It is transient and gitignored —
+1. Write `$SPRINT` from `assets/sprint.yaml.tmpl`. It is transient and gitignored —
    there is nothing to commit; the build pipeline consumes the working-tree file
    directly.
-3. **Clear `$DESIGN_SLICE`.** You have refined it into the sprint, so drain your input —
+2. **Clear `$DESIGN_SLICE`.** You have refined it into the sprint, so drain your input —
    delete the slice (it is transient and gitignored; the backlog it was cut from persists).
-4. Report: the task count, the dependency shape, and the suggested next step.
+3. Return a summary: the task count and the dependency shape.
 
 ## Halt conditions
 
-Stop and surface to the user if:
+Halt and report with outcome `escalated` if:
 
-- `$DESIGN_SLICE` is absent (run `wf-sa` first).
+- `$DESIGN_SLICE` is absent (it is wf-sa's output).
 - A component's source directory does not exist at the path the brief names — the
-  structure has drifted; ask for a discover re-run.
+  structure has drifted (needs a discover re-run).
 - A requirement cannot be made testable, or its criteria cannot be turned into a task
   without crossing a component boundary — flag to the SA.
 - The tasks form a dependency cycle that cannot be broken by splitting or merging.

@@ -304,9 +304,7 @@ class Orchestrator:
                            "pass": pass_agent, "sprint_branch": sprint_branch})
 
     def _swa_envelope(self) -> str:
-        return json.dumps({"mode": "default", "instruction":
-                           "Create the sprint from the design slice into paths.sprint. "
-                           "Run autonomously; surface a blocking design issue rather than guessing."})
+        return json.dumps({"mode": "default"})
 
     # --- the staged scheduler loop ----------------------------------------
 

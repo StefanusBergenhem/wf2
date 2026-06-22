@@ -5,8 +5,8 @@ You supply **only** the envelope below — the minimum context for that one task
 pass another agent's definition, pipeline internals, or out-of-scope files. Sub-agent
 output goes to `/tmp/wf-orch-<task>.log`; you keep only the verdict.
 
-All paths are worktree-relative (resolve from the worktree's `.wf/config.yaml`); the agent
-runs **in its worktree**.
+Build and review run **in a worktree** (paths resolve from the worktree's `.wf/config.yaml`);
+preparing, fix, and closeout run **host-side** (paths resolve from the host config).
 
 ## Build — `wf-build`
 
@@ -37,6 +37,17 @@ diffs the task branch against `sprint_branch`. It either advances the chain (an 
 commit) or writes `paths.feedback` (reject) / `paths.design_issues` (design problem). The
 next pass in `review.passes` reviews on top of the prior — each reads the same contract and
 the current worktree HEAD.
+
+## Preparing — `wf-swa` (build the sprint)
+
+```
+mode: default
+```
+
+The swa agent resolves its inputs from config (design slice, brief, ADRs), authors the
+acceptance criteria, decomposes them into the task DAG, and writes `paths.sprint`. It runs
+autonomously; an unbuildable input (absent slice, untestable requirement) halts with outcome
+`escalated` instead of guessing.
 
 ## Fix — `wf-swa` / `wf-sa` (from `dispatch-fix`)
 
