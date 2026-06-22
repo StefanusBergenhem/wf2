@@ -367,7 +367,7 @@ harmless and consistent across the two callers.
 
 ---
 
-## C16 — A `wf-research` agent for external-standard grounding (symmetric to wf-drill)
+## C17 — A `wf-research` agent for external-standard grounding (symmetric to wf-drill)
 
 **Date:** 2026-06-22
 **Context:** Cluster 8 gave wf-po an external-research affordance as a *nudge* — when a
