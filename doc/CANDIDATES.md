@@ -373,3 +373,30 @@ reaches for it), or a harness without a usable research capability makes the nud
 unreliable. Then define `wf-research` (read-only, transient digest, per-harness render) and
 point wf-po — and any other upstream role that grounds against external standards — at it
 instead of the host capability.
+
+---
+
+## C18 — A mechanical scope-compliance check (`git diff --name-only` ⊆ `files_to_touch`)
+
+**Date:** 2026-06-22
+**Context:** `wf-review` was reduced to a pure **judgement** gate — it re-runs no mechanical
+command (the build already ran `commands.preflight` green to hand off; the stage boundary
+re-runs the heavy checks). The one check that straddles the line is **scope**: "did the diff
+stay inside `files_to_touch`?" Review does it now by reading `git diff --name-only` against
+the contract's list — cheap, but still a human-in-the-loop judgement that a mechanical check
+could make deterministic. This also stands in for wf1's dropped architecture-compliance gate
+(no durable DESIGN to check component ownership / dependency_rules against), so a changed file
+outside `files_to_touch` is the only structural boundary review still enforces.
+
+**Observation:** set-membership of changed files in a declared list is purely mechanical —
+exactly the kind of check the toolkit prefers to do in a script, not an LLM. A
+`wf check scope <worktree> <task-id>` verb (diff names vs the contract's `files_to_touch`,
+exit non-zero + the offending paths) would turn the one remaining structural review check into
+a deterministic verdict the build/review boundary could route on, freeing the reviewer to spend
+its judgement only on what genuinely needs reading.
+
+**Trigger to act:** a scope violation slips past review judgement, or a dogfood wants the
+files_to_touch boundary enforced deterministically (e.g. a mechanical pre-review gate, or
+folding it into the build-return inspection). Then add the check as a CLI verb and have review
+cite it instead of eyeballing `git diff --name-only`. Until then the judgement read is cheap and
+sufficient.

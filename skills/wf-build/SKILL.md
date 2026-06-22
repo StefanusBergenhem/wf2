@@ -58,8 +58,7 @@ Announce each phase.
    it before continuing.
 4. Run the project's test command for what you changed and **confirm the tests FAIL** for
    the right reason — an assertion or missing-symbol failure, not a compile error
-   elsewhere. Save the key failure lines; they are the red-phase evidence the handoff
-   carries.
+   elsewhere.
 
 A test that passes before any implementation exists is testing the wrong thing —
 investigate, do not proceed.
@@ -105,10 +104,10 @@ pass — do not write `review_ready`.
    git commit -m "<task-id> <title>"
    ```
    Do not push — the orchestrator merges at the stage boundary.
-3. Write `paths.review_ready` from `assets/review_ready.yaml.tmpl` (`task_id`,
-   `files_modified`, and the red-phase failure lines as `tdd_evidence.red_phase`). Its
-   presence is the ready-for-review signal; the reviewer re-derives `[REQ]` coverage from
-   the tests and re-runs preflight itself, so this file does not restate them.
+3. Write `paths.review_ready` from `assets/review_ready.yaml.tmpl` — a presence marker. Its
+   presence is the ready-for-review signal; the reviewer judges the committed diff, the
+   contract, and the `[REQ]` tags in the tests, never a build self-report, so the file
+   carries nothing but the task id.
 
 ## Fix mode (`paths.feedback` present)
 

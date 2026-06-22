@@ -1,10 +1,5 @@
-# Build → review handoff. Transient, worktree-local. Its PRESENCE is the
-# ready_for_review verdict; the review agent reads this for the change summary and the
-# red-phase proof. The reviewer re-derives [REQ] coverage from the tests and re-runs
-# preflight itself, so neither is restated here.
+# Build → review handoff marker. Transient, worktree-local. Its PRESENCE is the
+# ready_for_review verdict — that is its whole job. The reviewer judges the committed code
+# and tests from the diff, the contract, and the [REQ] tags, never from a build self-report,
+# so this file carries nothing but the task id it belongs to.
 task_id: "<id>"
-files_modified:
-  - "<path>"
-tdd_evidence:
-  red_phase: |
-    <the key failure lines from the Red run — proof the tests failed before the code existed>
