@@ -400,3 +400,26 @@ files_to_touch boundary enforced deterministically (e.g. a mechanical pre-review
 folding it into the build-return inspection). Then add the check as a CLI verb and have review
 cite it instead of eyeballing `git diff --name-only`. Until then the judgement read is cheap and
 sufficient.
+
+---
+
+## C19 — Auto-route a wf-swa-reclassified design issue to wf-sa (spec escalation)
+
+**Date:** 2026-06-22
+**Context:** the code-layer/spec-layer principle has `wf-swa`, while fixing a
+`contract_amendment` design issue, escalate to `wf-sa` when the root cause is actually a wrong
+requirement or ADR. `wf-swa` fix-mode does the honest thing today: on a spec defect it **halts
+and escalates to the human**, who re-runs `wf-sa`. The loop cannot yet consume an automatic
+re-route: the orchestrator's `_resolve_design_issues` dispatches the fixer and then **re-runs
+the task immediately**, without re-reading the design issue. So a fix-mode re-classification
+(flip `fix_kind` → `spec_amendment`, leave `status: open`) would be clobbered by the re-run's
+fresh `contract_amendment` issue before any second `dispatch-fix` pass could route it to `wf-sa`.
+
+**Likely shape when built:** after the fixer returns, re-read the design issue; if it is still
+open and `fix_kind` changed, re-run `dispatch-fix` (routing to `wf-sa`) **before** re-running
+the task, instead of unconditionally re-dispatching build. Touches the driver
+`_resolve_design_issues`, the LLM-track §1b return protocol, and the driver tests. Then
+`wf-swa` fix-mode can re-classify autonomously instead of halting to the human.
+
+**Trigger to act:** a real run hits a spec defect surfaced at the contract layer and the
+human round-trip is friction. Until then the halt-to-human path is correct and cheap.
