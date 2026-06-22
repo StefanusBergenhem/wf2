@@ -1,6 +1,6 @@
 ---
 name: wf-retrospective
-description: Distils the session telemetry log into actionable learnings — project-code improvements the architect designs against, and wf-toolkit friction for the maintainer. Run after a stretch of work to compile session feedback into the learnings streams.
+description: Distils a run into actionable learnings — session telemetry feedback plus, when present, the cross-task patterns in the run's pipeline state. Run at sprint closeout or after a stretch of work to compile feedback into the learnings streams.
 ---
 
 # wf-retrospective
@@ -8,15 +8,18 @@ description: Distils the session telemetry log into actionable learnings — pro
 **Read `wf-basics` first** for the `.wf/` layout and the telemetry handshake.
 Capture `TS_START` now. Resolve every path below from `.wf/config.yaml`:
 
-- `TELEMETRY`    = `paths.telemetry`     (append-only session log — read)
-- `LEARNINGS`    = `paths.learnings`     (project-code learnings — read + append)
-- `WF_LEARNINGS` = `paths.wf_learnings`  (wf-toolkit learnings — read + append)
+- `TELEMETRY`      = `paths.telemetry`       (append-only session log — read)
+- `PIPELINE_STATE` = `paths.pipeline_state`  (the finished run's state — read if present)
+- `LEARNINGS`      = `paths.learnings`       (project-code learnings — read + append)
+- `WF_LEARNINGS`   = `paths.wf_learnings`    (wf-toolkit learnings — read + append)
 
-You distil the raw session log into learnings. Each session record carries two
-feedback fields; route each by field:
+You distil a finished run into learnings, from two sources:
 
-- `feedback.repo_observation` → `$LEARNINGS` — a learning about **the project's code**.
-- `feedback.wf_friction` → `$WF_LEARNINGS` — a learning about **the wf toolkit itself**.
+- **session telemetry** (`$TELEMETRY`) — each record's two feedback fields, routed by field:
+  - `feedback.repo_observation` → `$LEARNINGS` — a learning about **the project's code**.
+  - `feedback.wf_friction` → `$WF_LEARNINGS` — a learning about **the wf toolkit itself**.
+- **the run's execution** (`$PIPELINE_STATE`, when an orchestration run produced one) — the
+  **cross-task patterns** no single session can see. Absent it, distil telemetry alone.
 
 ## The entry
 
@@ -25,7 +28,7 @@ Both files hold the same shape:
 ```yaml
 - id: L-001
   statement: "<one actionable sentence naming a concrete artifact, field, or step>"
-  sources: ["<session ended_at>"]   # the session(s) this was distilled from
+  sources: ["<session ended_at, or sprint:<sprint_id>>"]   # what this was distilled from
 ```
 
 You only ever **create and reinforce** entries — never remove one.
@@ -35,60 +38,79 @@ You only ever **create and reinforce** entries — never remove one.
 ### Phase 1 — Load
 
 1. Read `$TELEMETRY` — one JSON record per line.
-2. Read `$LEARNINGS` and `$WF_LEARNINGS` (each may not exist yet). For each,
-   collect the union of every entry's `sources`: that union is the set of sessions
-   already compiled into that stream.
+2. Read `$PIPELINE_STATE` if it exists — the finished run's `task_states`, `design_issues`,
+   and `stage_summaries`. If absent, skip the run-pattern steps; you are distilling telemetry
+   alone.
+3. Read `$LEARNINGS` and `$WF_LEARNINGS` (each may not exist yet). For each, collect the
+   union of every entry's `sources`: that union is what has already been compiled.
 
 ### Phase 2 — Select what's new
 
-Walk the session records. For each channel (`repo_observation` → `$LEARNINGS`,
-`wf_friction` → `$WF_LEARNINGS`):
+- **Telemetry:** walk the session records. For each channel (`repo_observation` →
+  `$LEARNINGS`, `wf_friction` → `$WF_LEARNINGS`): skip the record if its `ended_at` is
+  already in that channel's `sources` set, or if that feedback field is empty.
+- **Run patterns:** if `$PIPELINE_STATE` is present and `sprint:<sprint_id>` is not yet in
+  either channel's `sources`, this run's patterns are unprocessed.
 
-- skip the record if its `ended_at` is already in that channel's `sources` set;
-- skip it if that feedback field is empty.
+What remains is this run's unprocessed input.
 
-What remains is this run's unprocessed feedback.
+### Phase 3 — Find the cross-task patterns (only with `$PIPELINE_STATE`)
 
-### Phase 3 — Distil
+A single session reports its own friction; only the whole run reveals a pattern **across
+tasks**. Read these signals and keep only what repeats or clusters — one task's lone hiccup
+is noise, not a learning:
 
-Turn each unprocessed observation into a learning, holding the bar:
+- **Recurring rejection** — several tasks whose `attempt_counter` climbed for the **same
+  reason**. The shared cause is the learning (a process/toolkit gap → `$WF_LEARNINGS`, or a
+  code smell the tasks share → `$LEARNINGS`), never the count.
+- **Design-issue cluster** — multiple `design_issues` of the same `fix_kind` against related
+  contracts: a systematic gap in how the work was specified → `$WF_LEARNINGS`.
+- **Escalation / block cause** — an `escalated` or `blocked` task: what defeated it, stated
+  as something to change next time.
 
-- **Actionable and concrete.** A learning names a real artifact, field, or step
-  and implies an action. Drop the vague — "could be cleaner" is noise, not a
-  learning, and produces no entry.
-- **Dedup against the entries present in the file.** If an observation restates an
-  existing learning, reinforce it: append the session `ended_at` to its `sources` and add
-  no duplicate.
+Velocity and per-task counts are run telemetry, not learnings — they belong in the Phase 5
+summary, not the streams.
+
+### Phase 4 — Distil
+
+Turn each unprocessed observation and each cross-task pattern into a learning, holding the bar:
+
+- **Actionable and concrete.** Names a real artifact, field, or step and implies an action.
+  Drop the vague — "could be cleaner" is noise, not a learning, and produces no entry.
+- **Dedup against the entries present in the file.** If an observation or pattern restates an
+  existing learning, reinforce it: append its source (the session `ended_at`, or
+  `sprint:<sprint_id>` for a run pattern) to that entry's `sources` and add no duplicate.
 - Mint ids monotonically per file (`L-NNN`); never reuse a retired number.
 
-### Phase 4 — Write & commit
+### Phase 5 — Write, summarize & commit
 
-1. Append the new and reinforced entries to `$LEARNINGS` and `$WF_LEARNINGS`,
-   creating either from its template (`assets/learnings.yaml.tmpl`,
-   `assets/wf-learnings.yaml.tmpl`) if absent.
-2. Report what you distilled: new entries per stream, reinforcements, and the
-   count dropped as non-actionable.
-3. Commit both files — they are durable, and leaving them uncommitted is one
+1. Append the new and reinforced entries to `$LEARNINGS` and `$WF_LEARNINGS`, creating either
+   from its template (`assets/learnings.yaml.tmpl`, `assets/wf-learnings.yaml.tmpl`) if absent.
+2. **Report the run in your return only — store nothing beyond the streams:** new entries per
+   stream, reinforcements, the count dropped as non-actionable, and (when `$PIPELINE_STATE`
+   was present) a one-glance execution summary — tasks completed/escalated/blocked, design
+   issues by `fix_kind`, stage durations. This summary is transient; do not write it to a file.
+3. Commit the learnings files — they are durable, and leaving them uncommitted is one
    `git clean` from gone. Stage explicit paths, never `git add .`:
    ```sh
    git add $LEARNINGS $WF_LEARNINGS
-   git commit -m "learnings: distil <session range>"
+   git commit -m "learnings: distil <sprint-id or session range>"
    ```
-   If the commit fails (hook, identity), report the exact error and halt — never
-   `--no-verify`.
+   If the commit fails (hook, identity), report the exact error and halt — never `--no-verify`.
 
-### Phase 5 — Telemetry (REQUIRED)
+### Phase 6 — Telemetry (REQUIRED)
 
 Your last action, always. Run the `wf-basics` §2 `record_session.py` command with
-`--agent wf-retrospective`, this run's `--outcome`, and the two feedback answers
-(omit a flag when there is nothing concrete). If it errors, continue.
+`--agent wf-retrospective`, this run's `--outcome`, and the two feedback answers (omit a
+flag when there is nothing concrete). If it errors, continue.
 
 ## Hard constraints
 
-- **A run that distils nothing is a valid run.** When every observation is already
-  compiled or judged noise, report "nothing new" and commit nothing — never invent
-  a learning to look productive.
+- **A run that distils nothing is a valid run.** When every observation is already compiled
+  or judged noise, report "nothing new" and commit nothing — never invent a learning to look
+  productive.
 
 ## Halt conditions
 
-- `$TELEMETRY` is absent or empty — nothing to distil. Report and exit.
+- `$TELEMETRY` is absent or empty **and** `$PIPELINE_STATE` is absent — nothing to distil.
+  Report and exit.

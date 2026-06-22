@@ -199,7 +199,7 @@ harness's agent-definition schema and, where it differs, guard the frontmatter w
 
 ---
 
-## C9 — Retrospective ships the thin telemetry-distil slice; sprint analysis deferred
+## C9 — Retrospective: telemetry-distil + cross-task run analysis BUILT; MEMORY.yaml store deferred
 
 **Date:** 2026-06-20
 **Context:** `wf-retrospective` ships as the **dogfoodable slice**: read the telemetry
@@ -208,12 +208,13 @@ reads as drivers) and `wf_friction` → `paths.wf_learnings` (toolkit friction),
 the `sources` provenance set, create-only `open` entries. It runs against the telemetry
 PO/SA/SWA/drill already write — no orchestration needed.
 
-**Deferred (no producer yet):** wf1's retrospective also did sprint-execution analysis —
-`pipeline_state` attempt-counts / rejection-pattern / velocity / design-issue triage —
-and `continuous-learning` maintained a `MEMORY.yaml` lessons store (dedup, capacity-cap,
-confidence, reinforcement). None of that has a producer in wf2 (no orchestrator, no
-review role), and the maintained `MEMORY.yaml` was wf1's governor-ish overreach. Building
-it now would be machinery wired to absent callers.
+**Built since (2026-06-22):** the sprint-execution analysis now lands as **cross-task pattern
+detection** — `wf-retrospective` reads `pipeline_state` (recurring rejections, design-issue
+clusters by `fix_kind`, escalation/block causes) and distils the patterns no single session
+can see into the same learnings streams, sourced by `sprint_id`. Per-task velocity/counts are
+reported transiently, not stored. **Still deferred:** the maintained `MEMORY.yaml` lessons
+store (dedup, capacity-cap, confidence, reinforcement) — wf1's governor-ish overreach, and
+nothing in wf2 consumes a distilled-lessons store.
 
 **Also deferred — `handled` is an optimistic close.** wf-sa flips a learning to
 `handled` when it *designs* the fix, not when build *lands* it; nothing downstream
@@ -222,9 +223,9 @@ observation and re-distils. When the `[REQ]`-style coverage harvester exists, `h
 can become *derived from commit citations* instead of a stored flag — the same move
 deferred for capability "done" in C6.
 
-**Trigger to act:** when the orchestration + review layer lands (so `pipeline_state`,
-rejections, and design-issues exist to analyse), grow `wf-retrospective` to consume them;
-and when the coverage harvester lands, switch `handled` to derived.
+**Trigger to act:** the orchestration half is done. Build the `MEMORY.yaml` store only if a
+real consumer for a maintained lessons store appears (none today — the open learnings streams
+suffice). When the `[REQ]` coverage harvester lands, switch `handled` to derived (above).
 
 ---
 

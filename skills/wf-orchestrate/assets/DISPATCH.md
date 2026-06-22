@@ -57,10 +57,11 @@ re-dispatch it.
 ## Closeout — `wf-retrospective` (and any future `wf-*` closeout agent)
 
 ```
-pipeline_state: <paths.pipeline_state>
-sprint:         <paths.sprint>
-design_issues:  <paths.design_issues>
+mode:           <step-name>
+sprint_branch:  <name>
 ```
 
-The retrospective reads the run's state + git log and writes its report. A future
-closeout agent (e.g. docs) receives the analogous read-only pointers it needs.
+The retrospective resolves its inputs from config — `paths.telemetry` (session feedback) and
+`paths.pipeline_state` (the run's cross-task execution) — distils them into the learnings
+streams, and returns a transient run summary (nothing durable beyond the streams). A future
+closeout agent (e.g. docs) resolves the analogous inputs it needs.
