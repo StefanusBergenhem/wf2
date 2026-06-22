@@ -51,6 +51,16 @@ widely-depended-on component? **Smell:** the change edits the internals of somet
 many components rely on. → Prefer adding a component or a well-defined extension
 point; reserve in-place modification for when extension genuinely doesn't fit.
 
+## Allocation completeness
+
+**Ask:** does every component the change **traverses** own at least one requirement — the
+core logic, its orchestration (the coordinating handler), and its composition root (where
+dependencies are wired)? **Smell:** a behaviour that must be observable end-to-end carries
+requirements only on its core-logic component, leaving the wiring unallocated. → An
+untouched composition root is the gap that ships a feature half-built — a `nil`-wired
+dependency that compiles and silently does nothing. Allocate the full delivery path, the
+composition root included.
+
 ## Move discipline
 
 A split, merge, new component, or dependency change must **improve a fitness measure

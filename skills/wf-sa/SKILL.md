@@ -172,21 +172,25 @@ before the next. The back-and-forth is the point; do not dump every decision in 
 wall of text. When a redirection changes the shape or a requirement, fold it back into
 Phase 2 or 3 and re-present.
 
+**Do not leave Phase 4 on your own judgement.** When you have no open
+decision left, ask: *"Anything else to settle, or shall I validate and record?"* and
+**WAIT for an affirmative** before Phase 5. Inferring completion and moving on records a
+design the human was still reshaping.
+
 ### Phase 5 — Validate the design is sound
 
-Before recording anything, walk the agreed plan to confirm it holds together. Take each
-branch of the design tree in turn and resolve the dependencies between decisions one at
-a time:
+Before recording anything, walk the agreed plan to confirm it holds together — and make the
+walk **auditable, not asserted**. **Re-load `references/design-heuristics.md` and take each
+heuristic in turn** against the design as a whole; for each, write a one-line verdict — pass
+with its justification, or the conflict it surfaces. These verdicts become the design-slice's
+`## Soundness` section (Phase 6), so wf-swa and a later reviewer can audit the gate instead of
+trusting a one-line summary. Then resolve the cross-cutting checks the heuristics don't cover:
+does each move still hold given the others (or did a later decision undercut it), and does no
+requirement smuggle a design choice that belongs in an ADR?
 
-- Does each move still hold given the others, or did a later decision undercut it?
-- Does every requirement have exactly one clean owner, and does every component the change
-  **traverses** — core logic, orchestration, and composition root — own at least one
-  requirement? An untouched wiring/composition-root component is the allocation gap that
-  ships a feature half-built. (design-heuristics' allocation-completeness.)
-- No dependency cycle, no orphaned concept, no requirement smuggling a design choice.
-
-This is the soundness gate. If the walk surfaces a conflict, return to Phase 2 or 3 and
-re-settle it — do not paper over it in the slice.
+This is the soundness gate. If a heuristic fails or a conflict surfaces, return to Phase 2 or 3
+and re-settle it — do not paper over it in the slice, and do not record a pass you cannot
+justify.
 
 ### Phase 6 — Record & commit
 
@@ -204,8 +208,8 @@ The judgement already happened; this is capture.
 4. **Cut the design-slice.** Fill `$DESIGN_SLICE` from `assets/design-slice.md.tmpl` with a
    **buildable increment** of the backlog — the whole backlog if it fits one slice, else a
    coherent subset along the dependency spine: its requirements (with owners), the moves, the
-   binding ADRs (new + standing), and any risk for wf-swa. Point at the backlog/brief/
-   drill-cache by path; restate no structure.
+   binding ADRs (new + standing), the Phase 5 soundness verdicts, and any risk for wf-swa.
+   Point at the backlog/brief/drill-cache by path; restate no structure.
 5. **Confirm before commit.** Present a brief summary of the decisions and ADRs the alignment
    settled, reopen `$DESIGN_VIEW`, and ask for the go-ahead to commit. If the human declines,
    or the environment forbids committing (sandbox, CI, detached-HEAD or read-only worktree),
