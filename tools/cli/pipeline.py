@@ -175,6 +175,20 @@ def _compute_stages(rest):
     return 0
 
 
+def _run(rest):
+    """Launch the standalone Python orchestrator — a thin driver over this same brain
+    + the inspect/dispatch helpers. Imported lazily so the optional Claude-Agent-SDK
+    dependency never loads for a plain `pipeline next` query."""
+    try:
+        from orchestrator import driver
+    except ImportError as exc:
+        common.die(
+            f"orchestrator unavailable: {exc} "
+            "(install .wf/tools/cli/orchestrator/requirements.txt for the Claude-SDK adapter)"
+        )
+    return driver.main(rest)
+
+
 # ── The frontier query (running_stage) ───────────────────────────────────────
 
 
@@ -847,6 +861,7 @@ COMMANDS = {
     # stage computation + frontier
     ("pipeline", "compute-stages"): _compute_stages,
     ("pipeline", "next"): _next,
+    ("pipeline", "run"): _run,
     # reads
     ("pipeline", "current-phase"): _current_phase,
     ("pipeline", "task-state"): _task_state,
