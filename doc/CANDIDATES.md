@@ -384,3 +384,30 @@ decision, not a reflex `paths.tests: ".wf/..."`.
 resolving it inconsistently between the reconcile call and the next_id call. Then add a config
 key (likely a list) and point both invocations at it. Until then the judgement-filled path is
 harmless and consistent across the two callers.
+
+---
+
+## C16 — A `wf-research` agent for external-standard grounding (symmetric to wf-drill)
+
+**Date:** 2026-06-22
+**Context:** Cluster 8 gave wf-po an external-research affordance as a *nudge* — when a
+capability must conform to an external standard the brief and user cannot settle (IFC in the
+dogfood; equally a regulation, an API spec, an accessibility standard), the PO dispatches its
+harness's research/web capability and treats the result as input. This leans on a host
+capability rather than a wf-defined agent.
+
+**Analysis:** the principled answer is a `wf-research` agent symmetric to `wf-drill` —
+`wf-drill` is the *internal* scout (repo), `wf-research` would be the *external* scout
+(domain/standard); both read-only, both depositing a transient digest the caller treats as
+input. It would make external grounding **harness-portable** (wf-defined, rendered per
+harness) instead of depending on whatever research tool the host happens to expose, and it
+would give other upstream roles (a future SA grounding a constraint against a standard) the
+same affordance. Building it now is machinery on a single data point (one IFC case) — the
+dogfood law says wait. The nudge is sufficient while the host's general research capability
+covers it.
+
+**Trigger to act:** external-standard grounding recurs across dogfoods (a second or third run
+reaches for it), or a harness without a usable research capability makes the nudge
+unreliable. Then define `wf-research` (read-only, transient digest, per-harness render) and
+point wf-po — and any other upstream role that grounds against external standards — at it
+instead of the host capability.

@@ -21,6 +21,11 @@ You never read source code, reading source code will eat up your context window 
 if it can't answer a product-fact question and the user can't either, dispatch the `wf-drill` agent to scout
 the repo for the answer.  Do not guess or assume you know, make free use of the `wf-drill` agent.
 
+When a capability must conform to an **external** standard or domain the brief and user cannot
+settle — an industry spec, a regulation, an API contract — ground it the same way: dispatch your
+harness's research/web capability and treat what it returns as input. It grounds the capability's
+wording; nothing from it is written durably beyond the capability itself.
+
 ## Hard constraints
 
 - **User voice, never architecture.** A capability says what a user, operator, or
@@ -38,6 +43,11 @@ the repo for the answer.  Do not guess or assume you know, make free use of the 
   **3–4 per round** — never one at a time, never a single dump of thirty — and never
   skip Phases 4–5 even under autonomy signals. The right adaptation to "work without
   stopping" is to batch harder, not to skip the alignment.
+- **Speak product-voice, not wf-voice.** Keep wf's internal vocabulary off the human's
+  screen — translate it. Don't say "bucket", say "let me play back what I heard"; don't
+  expose phase names, the `CAP-NNN` scheme as a process artifact, or sibling role/agent
+  names (`SA`, `wf-drill`). The internal taxonomy is for your reasoning; the user hears
+  product language.
 
 ## Process
 
@@ -102,13 +112,14 @@ After intake and brainstorming, work through the open questions that still block
 shared understanding — gaps, ambiguities, and the priority/ordering calls you cannot
 make alone. Ask them in batches (per *Interaction is batched*), each with your
 recommended answer, until nothing material is unresolved. If a question is answerable
-from the code, dispatch the `wf-drill` agent rather than asking the user.
+from the code or an external standard, dispatch the right scout (`wf-drill` for the repo,
+your research capability for the standard) rather than asking the user.
 
 ### Phase 5 — Readback & sign-off
 
-With the open questions resolved, make your **bucket classification** visible: surface
-each item from intake + brainstorm so the user can affirm or reframe it (batched, per
-*Interaction is batched*). For veiled-design items, lead with your proposed
+With the open questions resolved, play back each item from intake + brainstorm the way
+you understood it — your read of what they need — so the user can affirm or reframe it
+(batched, per *Interaction is batched*). For veiled-design items, lead with your proposed
 need-translation; for unrealistic items, name the impossibility and propose the reframe.
 
 Then present the consolidated list grouped by section and ask for sign-off. Highlight:
