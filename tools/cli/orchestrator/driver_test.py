@@ -124,25 +124,38 @@ class FakeBrain:
 
 
 class FakeScripts:
-    """Returns scripted helper verdicts. ``review[tid]`` is a per-task verdict queue
-    (defaults to a steady 'approved')."""
+    """Returns scripted helper verdicts. ``build[tid]`` / ``review[tid]`` are per-task
+    verdict queues; each entry is a bare verdict string or a dict ``{verdict, di_id}``.
+    They default to a steady 'ready_for_review' / 'approved'."""
 
-    def __init__(self, review=None):
+    def __init__(self, review=None, build=None):
         self.review = review or {}
+        self.build = build or {}
+
+    @staticmethod
+    def _norm(entry, default):
+        if entry is None:
+            return {"verdict": default}
+        if isinstance(entry, str):
+            return {"verdict": entry}
+        return dict(entry)
 
     def run(self, verb, *args):
         if verb == "preserve-uncommitted":
             return _proc("clean")
         if verb == "inspect-build-return":
             tid = args[1]
-            return _proc(json.dumps({"task_id": tid, "verdict": "ready_for_review",
-                                     "artifact": None, "last_step": None}))
+            q = self.build.get(tid)
+            v = self._norm(q.pop(0) if q else None, "ready_for_review")
+            return _proc(json.dumps({"task_id": tid, "verdict": v["verdict"],
+                                     "artifact": v.get("artifact"), "di_id": v.get("di_id")}))
         if verb == "inspect-review-return":
             tid = args[1]
             q = self.review.get(tid)
-            verdict = q.pop(0) if q else "approved"
-            return _proc(json.dumps({"task_id": tid, "verdict": verdict,
-                                     "head_sha": "h", "build_commit_sha": args[2], "artifact": None}))
+            v = self._norm(q.pop(0) if q else None, "approved")
+            return _proc(json.dumps({"task_id": tid, "verdict": v["verdict"], "head_sha": "h",
+                                     "build_commit_sha": args[2], "artifact": None,
+                                     "di_id": v.get("di_id")}))
         return _proc()
 
 
@@ -178,7 +191,7 @@ class FakeGit:
         self.prs.append((title, head, base))
 
 
-def make_orch(proj, tasks, review=None):
+def make_orch(proj, tasks, review=None, build=None):
     state = FakeState()
     git = FakeGit()
     dispatcher = FakeDispatcher()
@@ -186,7 +199,7 @@ def make_orch(proj, tasks, review=None):
         str(proj / ".wf" / "config.yaml"),
         dispatcher,
         brain=FakeBrain(state, tasks),
-        scripts=FakeScripts(review),
+        scripts=FakeScripts(review, build),
         state=state,
         git=git,
         write_task=lambda tid, dest: None,
@@ -254,8 +267,50 @@ def test_reject_then_rebuild():
         bad("reject complete", f"completed={result.completed} merges={git.merges}")
 
 
+def test_build_design_issue():
+    # A design issue surfaced at the BUILD boundary parks the task — recorded with its
+    # di_id, and never sent on to review.
+    proj = make_project(["T1"])
+    orch, state, git, dispatcher = make_orch(
+        proj, ["T1"], build={"T1": [{"verdict": "design_issue", "di_id": "DI-1"}]})
+    outcome = asyncio.run(orch._build_pass_loop("T1", ".wf/transient/worktrees/sprint-T1"))
+
+    if outcome.status == "design_issue":
+        ok("build DI: build-boundary design_issue parks the task")
+    else:
+        bad("build DI status", outcome.status)
+    if state.recorded_dis == ["DI-1"]:
+        ok("build DI: recorded with its di_id")
+    else:
+        bad("build DI recorded", state.recorded_dis)
+    if "wf-review" not in dispatcher.agents_dispatched():
+        ok("build DI: no review dispatched on a build design issue")
+    else:
+        bad("build DI no review", dispatcher.agents_dispatched())
+
+
+def test_review_design_issue():
+    # A design issue surfaced at the REVIEW boundary parks the task too — recorded, not
+    # approved.
+    proj = make_project(["T1"])
+    orch, state, git, dispatcher = make_orch(
+        proj, ["T1"], review={"T1": [{"verdict": "design_issue", "di_id": "DI-2"}]})
+    outcome = asyncio.run(orch._build_pass_loop("T1", ".wf/transient/worktrees/sprint-T1"))
+
+    if outcome.status == "design_issue" and state.recorded_dis == ["DI-2"]:
+        ok("review DI: review-boundary design_issue recorded + parks the task")
+    else:
+        bad("review DI", f"status={outcome.status} recorded={state.recorded_dis}")
+    if "T1" not in state.approved:
+        ok("review DI: task not approved on a review design issue")
+    else:
+        bad("review DI not approved", state.approved)
+
+
 if __name__ == "__main__":
     test_happy_path()
     test_reject_then_rebuild()
+    test_build_design_issue()
+    test_review_design_issue()
     print(f"\n  driver: {PASS} passed, {FAIL} failed")
     sys.exit(1 if FAIL else 0)

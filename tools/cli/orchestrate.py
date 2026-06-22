@@ -63,6 +63,30 @@ def _config_path_value(config_doc: dict, key: str) -> str:
     return "" if v is None else str(v)
 
 
+def _open_design_issue_for_task(path: Path, task_id: str) -> str:
+    """Return the id of the first OPEN design issue whose task_id matches, else ''.
+    A design issue is a build/review result artifact: its presence (an open entry for
+    this task) is the routing signal — the inspectors surface it as a `design_issue`
+    verdict carrying this id. A malformed file is treated as no signal (cascade falls
+    through), not an error."""
+    if not path.is_file():
+        return ""
+    try:
+        doc = _load_yaml_file(path)
+    except _MalformedYAML:
+        return ""
+    for issue in (doc.get("issues") or []):
+        if not isinstance(issue, dict):
+            continue
+        if issue.get("task_id") != task_id:
+            continue
+        if (issue.get("status") or "open") == "open":
+            iid = issue.get("id")
+            if iid:
+                return str(iid)
+    return ""
+
+
 # ===========================================================================
 # 1. inspect-build-return
 # ===========================================================================
@@ -84,41 +108,32 @@ def _inspect_build_return(rest):
 
     p_build_blocked = _config_path_value(config_doc, "build_blocked") or \
         ".wf/transient/build-blocked.yaml"
+    p_design_issues = _config_path_value(config_doc, "design_issues") or \
+        ".wf/transient/design-issues.yaml"
     p_review_ready = _config_path_value(config_doc, "review_ready") or \
         ".wf/transient/review-ready.yaml"
-    p_build_progress = _config_path_value(config_doc, "build_progress") or \
-        ".wf/transient/build-progress.yaml"
 
     abs_build_blocked = worktree_path / p_build_blocked
+    abs_design_issues = worktree_path / p_design_issues
     abs_review_ready = worktree_path / p_review_ready
-    abs_build_progress = worktree_path / p_build_progress
 
+    # Build writes exactly one result artifact; route on presence, in priority order.
+    # A design issue parks the task (routes to a fix agent) — it never goes on to review.
     verdict = ""
     artifact_rel = ""
-    last_step = ""
+    di_id = ""
 
+    di = _open_design_issue_for_task(abs_design_issues, task_id)
     if abs_build_blocked.is_file():
         verdict = "build_blocked"
         artifact_rel = p_build_blocked
+    elif di:
+        verdict = "design_issue"
+        artifact_rel = p_design_issues
+        di_id = di
     elif abs_review_ready.is_file():
         verdict = "ready_for_review"
         artifact_rel = p_review_ready
-    elif abs_build_progress.is_file():
-        artifact_rel = p_build_progress
-        try:
-            bp_doc = _load_yaml_file(abs_build_progress)
-        except _MalformedYAML as exc:
-            return _err(f"error: parse {abs_build_progress}: {exc}")
-        ls = bp_doc.get("last_step")
-        last_step = "" if ls is None else str(ls)
-        if last_step == "review_ready_written":
-            verdict = "recovered_lost_signal_review_ready_written"
-        elif last_step == "committed":
-            verdict = "recovered_lost_signal_committed"
-        elif last_step == "all_gates_passed":
-            verdict = "resume_after_gates"
-        else:
-            verdict = "restart"
     else:
         verdict = "escalate_no_artifacts"
 
@@ -126,7 +141,7 @@ def _inspect_build_return(rest):
         "task_id": task_id,
         "verdict": verdict,
         "artifact": artifact_rel if artifact_rel else None,
-        "last_step": last_step if last_step else None,
+        "di_id": di_id if di_id else None,
     }
     print(json.dumps(out, separators=(",", ":"), sort_keys=False))
     return 0
@@ -174,10 +189,13 @@ def _inspect_review_return(rest):
 
     p_feedback = _config_path_value(config_doc, "feedback") or \
         ".wf/transient/feedback.yaml"
+    p_design_issues = _config_path_value(config_doc, "design_issues") or \
+        ".wf/transient/design-issues.yaml"
     p_review_ready = _config_path_value(config_doc, "review_ready") or \
         ".wf/transient/review-ready.yaml"
 
     abs_feedback = worktree_path / p_feedback
+    abs_design_issues = worktree_path / p_design_issues
     abs_review_ready = worktree_path / p_review_ready
 
     # --- Git state ---
@@ -212,10 +230,16 @@ def _inspect_review_return(rest):
 
     verdict = ""
     artifact_rel = ""
+    di_id = ""
 
+    di = _open_design_issue_for_task(abs_design_issues, task_id)
     if abs_feedback.is_file():
         verdict = "rejected"
         artifact_rel = p_feedback
+    elif di:
+        verdict = "design_issue"
+        artifact_rel = p_design_issues
+        di_id = di
     elif head_advanced and subject_is_approval:
         verdict = "approved"
         artifact_rel = ""
@@ -235,6 +259,7 @@ def _inspect_review_return(rest):
         "head_sha": head_sha,
         "build_commit_sha": build_commit_sha,
         "artifact": artifact_rel if artifact_rel else None,
+        "di_id": di_id if di_id else None,
     }
     print(json.dumps(out, separators=(",", ":"), sort_keys=False))
     return 0
@@ -419,7 +444,6 @@ def _sweep_transients(rest):
     p_feedback = resolve("feedback", ".wf/transient/feedback.yaml")
     p_review_ready = resolve("review_ready", ".wf/transient/review-ready.yaml")
     p_build_blocked = resolve("build_blocked", ".wf/transient/build-blocked.yaml")
-    p_build_progress = resolve("build_progress", ".wf/transient/build-progress.yaml")
 
     history = []
     if p_pipeline_state.exists():
@@ -505,23 +529,6 @@ def _sweep_transients(rest):
             {"scope_amendment_applied", "amendment_with_mechanical_follow_on", "escalated"}, m
         ),
         "no scope_amendment_applied / amendment_with_mechanical_follow_on / escalated after mtime",
-    )
-
-    m = mtime(p_build_progress)
-    recovery_seen = has_event_after(
-        {
-            "recovered_lost_return_signal",
-            "recovered_committed_without_handoff",
-            "resuming_after_gate_pass",
-        },
-        m,
-    )
-    rr_m = mtime(p_review_ready)
-    review_ready_newer = (m is not None and rr_m is not None and rr_m >= m)
-    consume(
-        p_build_progress,
-        recovery_seen or review_ready_newer,
-        "no recovery event after mtime and no newer review_ready.yaml",
     )
 
     print(json.dumps({"deleted": deleted, "skipped": skipped}, sort_keys=False))

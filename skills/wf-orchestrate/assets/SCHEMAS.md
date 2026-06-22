@@ -60,9 +60,8 @@ return-inspection helpers (which resolve them against the worktree root):
 | `paths.current_task`  | orchestrator (`sprint task --write`) | the contract the build agent executes |
 | `paths.review_ready`  | build | build done, gates green → ready for review |
 | `paths.build_blocked` | build | build halted, needs a scope amendment |
-| `paths.build_progress`| build | crash-recovery breadcrumb (`last_step`) |
 | `paths.feedback`      | review | rejection feedback → build fix mode |
-| `paths.design_issues` | build/review | a design issue (with `fix_kind`) → `dispatch-fix` |
+| `paths.design_issues` | build/review | a design issue (with `fix_kind`) → `design_issue` verdict → `dispatch-fix` |
 
 The inspect helpers turn the presence/content of these into the verdicts the Return
 protocols route on — you never parse them yourself.

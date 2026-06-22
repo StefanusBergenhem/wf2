@@ -30,8 +30,8 @@ the live `pipeline_state` resolve to the SAME files as the host — the build/re
 and the helpers all read one state. Name the task branch from the task id.
 
 If `git worktree add` fails (e.g. the path exists from an interrupted run), reuse the
-existing worktree rather than recreating it — its prior commit + `build_progress`
-breadcrumb let the Build return protocol recover in-progress work.
+existing worktree rather than recreating it — a re-dispatched build restarts from zero in
+it (it re-reads its contract), so the surviving worktree is just where it runs.
 
 ## Merge (stage boundary, batch)
 

@@ -170,10 +170,8 @@ python3 <paths.tools>/cli/wf orchestrate inspect-build-return <worktree> <task-i
 | verdict | action |
 |:--|:--|
 | `ready_for_review` | dispatch `review.passes[0]` (Review envelope); `wf pipeline dispatch --agent <pass> --task <id> --attempt <n> --pass 0`. |
+| `design_issue` | park, don't review — record it (Design issues, below); the verdict carries `di_id`. |
 | `build_blocked` | scope-amendment (below). |
-| `resume_after_gates` | re-dispatch build in fix-resume mode; do **not** bump the attempt. |
-| `restart` | re-dispatch build from scratch; bump the attempt. |
-| `recovered_lost_signal_*` | treat as a completed build; proceed to `review.passes[0]`. |
 | `escalate_no_artifacts` | escalate; `wf pipeline block-task <id> --reason <…>`. |
 
 **Scope amendment** (`build_blocked`): read the artifact; classify it with
@@ -193,6 +191,7 @@ python3 <paths.tools>/cli/wf orchestrate inspect-review-return <worktree> <task-
 | verdict | action |
 |:--|:--|
 | `approved` | the chain advances. If a next pass exists in `review.passes`, dispatch it (`--pass <k+1>`). If this was the **last** pass, `wf pipeline approve-task <id> --commit <build-sha>` (merge happens at the stage boundary). |
+| `design_issue` | park, don't retry — record it (Design issues, below); the verdict carries `di_id`. |
 | `rejected` | `wf pipeline reject-task <id> --feedback <path>`; re-dispatch build in fix mode. Escalate at `review.max_attempts`. |
 | `redispatch_same_attempt` | re-dispatch the same pass at the same attempt (recovery). |
 | `defer_to_build_inspector` | fall back to the Build return protocol. |
@@ -200,9 +199,11 @@ python3 <paths.tools>/cli/wf orchestrate inspect-review-return <worktree> <task-
 
 ### Design issues
 
-When a build or review writes a design issue, do **not** retry the task —
-`wf pipeline record-design-issue <di> --task <id> --severity <s> --fix_kind <k>` (parks
-the task) and continue other tasks. The issue is resolved at the stage boundary (§1b).
+A build or review writes its design issue to the worktree `design_issues` artifact;
+the return inspector surfaces it directly as a **`design_issue` verdict** carrying its
+`di_id` — a design-issued build never goes on to review. On that verdict do **not** retry
+the task: `wf pipeline record-design-issue <di_id> --task <id> --severity <s> --fix_kind <k>`
+(parks the task) and continue other tasks. The issue is resolved at the stage boundary (§1b).
 
 ## Dispatch & envelopes
 

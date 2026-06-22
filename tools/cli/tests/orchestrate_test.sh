@@ -28,26 +28,38 @@ mkrepo() {  # → prints repo dir; a git repo with .wf/transient/
 gitc() { git -C "$1" -c core.hooksPath=/dev/null commit -q --allow-empty -m "$2"; git -C "$1" rev-parse --short HEAD; }
 
 # ── inspect-build-return ─────────────────────────────────────────────────────
+# One result artifact per outcome; verdict from presence, in priority order:
+#   build_blocked → design_issue → review_ready → escalate_no_artifacts.
 
 R="$(mkrepo)"
 : > "$R/.wf/transient/build-blocked.yaml"
 [ "$(jget "$(wf orchestrate inspect-build-return "$R" T1)" "d['verdict']")" = "build_blocked" ] \
     && ok "inspect-build: build_blocked present → build_blocked" || bad "ib build_blocked" ""
 rm "$R/.wf/transient/build-blocked.yaml"
+
+# design issue: an open issue for the task → design_issue + di_id
+printf 'issues:\n  - id: DI-1\n    task_id: T1\n    fix_kind: contract_amendment\n    status: open\n' \
+    > "$R/.wf/transient/design-issues.yaml"
+OUT="$(wf orchestrate inspect-build-return "$R" T1)"
+[ "$(jget "$OUT" "d['verdict']")" = "design_issue" ] \
+    && ok "inspect-build: open design issue for task → design_issue" || bad "ib di verdict" "$OUT"
+[ "$(jget "$OUT" "d['di_id']")" = "DI-1" ] \
+    && ok "inspect-build: design_issue carries di_id" || bad "ib di_id" "$OUT"
+# an issue for a DIFFERENT task does not fire
+[ "$(jget "$(wf orchestrate inspect-build-return "$R" T2)" "d['verdict']")" = "escalate_no_artifacts" ] \
+    && ok "inspect-build: design issue for another task → not design_issue" || bad "ib di othertask" ""
+# a resolved issue does not fire
+printf 'issues:\n  - id: DI-1\n    task_id: T1\n    fix_kind: contract_amendment\n    status: resolved\n' \
+    > "$R/.wf/transient/design-issues.yaml"
+[ "$(jget "$(wf orchestrate inspect-build-return "$R" T1)" "d['verdict']")" = "escalate_no_artifacts" ] \
+    && ok "inspect-build: resolved design issue → not design_issue" || bad "ib di resolved" ""
+rm "$R/.wf/transient/design-issues.yaml"
+
 : > "$R/.wf/transient/review-ready.yaml"
 [ "$(jget "$(wf orchestrate inspect-build-return "$R" T1)" "d['verdict']")" = "ready_for_review" ] \
     && ok "inspect-build: review_ready present → ready_for_review" || bad "ib review_ready" ""
 rm "$R/.wf/transient/review-ready.yaml"
-printf 'last_step: all_gates_passed\n' > "$R/.wf/transient/build-progress.yaml"
-[ "$(jget "$(wf orchestrate inspect-build-return "$R" T1)" "d['verdict']")" = "resume_after_gates" ] \
-    && ok "inspect-build: build_progress all_gates_passed → resume_after_gates" || bad "ib resume" ""
-printf 'last_step: committed\n' > "$R/.wf/transient/build-progress.yaml"
-[ "$(jget "$(wf orchestrate inspect-build-return "$R" T1)" "d['verdict']")" = "recovered_lost_signal_committed" ] \
-    && ok "inspect-build: build_progress committed → recovered_lost_signal_committed" || bad "ib committed" ""
-printf 'last_step: scaffolding\n' > "$R/.wf/transient/build-progress.yaml"
-[ "$(jget "$(wf orchestrate inspect-build-return "$R" T1)" "d['verdict']")" = "restart" ] \
-    && ok "inspect-build: build_progress early step → restart" || bad "ib restart" ""
-rm "$R/.wf/transient/build-progress.yaml"
+
 [ "$(jget "$(wf orchestrate inspect-build-return "$R" T1)" "d['verdict']")" = "escalate_no_artifacts" ] \
     && ok "inspect-build: nothing present → escalate_no_artifacts" || bad "ib none" ""
 
@@ -60,6 +72,13 @@ BUILD="$(gitc "$R" "T1 build: done")"
 [ "$(jget "$(wf orchestrate inspect-review-return "$R" T1 "$BUILD")" "d['verdict']")" = "rejected" ] \
     && ok "inspect-review: feedback present → rejected" || bad "ir rejected" ""
 rm "$R/.wf/transient/feedback.yaml"
+# open design issue for the task → design_issue + di_id (review's own DI, routed at its boundary)
+printf 'issues:\n  - id: DI-9\n    task_id: T1\n    fix_kind: contract_amendment\n    status: open\n' \
+    > "$R/.wf/transient/design-issues.yaml"
+ROUT="$(wf orchestrate inspect-review-return "$R" T1 "$BUILD")"
+[ "$(jget "$ROUT" "d['verdict']")" = "design_issue" ] && [ "$(jget "$ROUT" "d['di_id']")" = "DI-9" ] \
+    && ok "inspect-review: open design issue → design_issue + di_id" || bad "ir design_issue" "$ROUT"
+rm "$R/.wf/transient/design-issues.yaml"
 # review_ready present, HEAD == build → redispatch_same_attempt
 : > "$R/.wf/transient/review-ready.yaml"
 [ "$(jget "$(wf orchestrate inspect-review-return "$R" T1 "$BUILD")" "d['verdict']")" = "redispatch_same_attempt" ] \

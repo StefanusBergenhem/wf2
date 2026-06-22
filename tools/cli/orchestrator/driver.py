@@ -157,8 +157,9 @@ class GitOps:
 
     def add_worktree(self, worktree: str, branch: str, base: str) -> None:
         # Idempotent: a reclaimed task reuses a worktree that survived an interrupted
-        # run (its prior commit + build-progress breadcrumb drive recovery). Create
-        # only when absent.
+        # run. A re-dispatched build restarts from zero (it re-reads its contract), so the
+        # surviving worktree is just the place it runs — there is no resume breadcrumb to
+        # honour. Create only when absent.
         if Path(worktree).exists():
             return
         Path(worktree).parent.mkdir(parents=True, exist_ok=True)
@@ -409,16 +410,13 @@ class Orchestrator:
             await asyncio.to_thread(self.dispatcher.dispatch, AGENT_BUILD,
                                     self._build_envelope(tid, worktree), worktree)
             await asyncio.to_thread(self._preserve, worktree, tid)
-            bv = (await asyncio.to_thread(self._inspect_build, worktree, tid))["verdict"]
-            if bv in ("ready_for_review", "recovered_lost_signal_review_ready_written",
-                      "recovered_lost_signal_committed"):
+            bres = await asyncio.to_thread(self._inspect_build, worktree, tid)
+            bv = bres["verdict"]
+            if bv == "ready_for_review":
                 pass
-            elif bv == "resume_after_gates":
-                continue
-            elif bv == "restart":
-                attempt += 1
-                self.state.run("dispatch", "--agent", AGENT_BUILD, "--task", tid, "--attempt", str(attempt))
-                continue
+            elif bv == "design_issue":
+                di = self._record_design_issue(worktree, tid, bres.get("di_id"))
+                return TaskOutcome(tid, "design_issue", f"design issue {di}")
             elif bv == "build_blocked":
                 if await asyncio.to_thread(self._handle_build_blocked, tid, worktree):
                     continue
@@ -439,7 +437,8 @@ class Orchestrator:
                                "--attempt", str(attempt), "--pass", str(pass_idx), soft=True)
                 await asyncio.to_thread(self.dispatcher.dispatch, pass_agent,
                                         self._review_envelope(tid, worktree, pass_agent), worktree)
-                rv = (await asyncio.to_thread(self._inspect_review, worktree, tid, build_sha))["verdict"]
+                rres = await asyncio.to_thread(self._inspect_review, worktree, tid, build_sha)
+                rv = rres["verdict"]
 
                 if rv == "approved":
                     pass_idx += 1
@@ -447,14 +446,15 @@ class Orchestrator:
                 if rv == "redispatch_same_attempt":
                     await asyncio.to_thread(self.dispatcher.dispatch, pass_agent,
                                             self._review_envelope(tid, worktree, pass_agent), worktree)
-                    rv = (await asyncio.to_thread(self._inspect_review, worktree, tid, build_sha))["verdict"]
+                    rres = await asyncio.to_thread(self._inspect_review, worktree, tid, build_sha)
+                    rv = rres["verdict"]
                     if rv == "approved":
                         pass_idx += 1
                         continue
+                if rv == "design_issue":
+                    di = self._record_design_issue(worktree, tid, rres.get("di_id"))
+                    return TaskOutcome(tid, "design_issue", f"design issue {di}")
                 if rv == "rejected":
-                    di = self._mirror_design_issue(worktree, tid)
-                    if di is not None:
-                        return TaskOutcome(tid, "design_issue", f"design issue {di}")
                     self.state.run("reject_task", tid, "--feedback", self._feedback_path(worktree))
                     if attempt < self.max_attempts:
                         attempt += 1
@@ -476,14 +476,10 @@ class Orchestrator:
 
     # --- design issues (parked → resolved at the stage boundary) ----------
 
-    def _mirror_design_issue(self, worktree: str, tid: str):
-        """If the task's review_ready signals a design issue, copy its entry from the
-        worktree design_issues artifact to the host design_issues file (so dispatch-fix
-        finds it) and record it in pipeline_state. Returns the DI id, else None."""
-        rr = common.load_yaml(self._worktree_artifact(worktree, "review_ready"), optional=True)
-        if (rr.get("status") or "").lower() != "design_issue":
-            return None
-        di_id = rr.get("design_issue_id") or rr.get("di_id") or rr.get("issue_id")
+    def _record_design_issue(self, worktree: str, tid: str, di_id):
+        """An inspector returned a `design_issue` verdict carrying <di_id>. Copy that
+        entry from the worktree design_issues artifact to the host design_issues file (so
+        dispatch-fix finds it) and record it in pipeline_state. Returns the DI id."""
         if not di_id:
             return None
         wt_di = common.load_yaml(self._worktree_artifact(worktree, "design_issues"), optional=True)
@@ -638,13 +634,9 @@ class Orchestrator:
                                         self._build_envelope(fix_id, worktree), worktree)
                 await asyncio.to_thread(self._preserve, worktree, fix_id)
                 bv = (await asyncio.to_thread(self._inspect_build, worktree, fix_id))["verdict"]
-                if bv == "resume_after_gates":
-                    continue
-                if bv not in ("ready_for_review", "recovered_lost_signal_review_ready_written",
-                              "recovered_lost_signal_committed"):
-                    if bv == "restart" and attempt < self.max_attempts:
-                        attempt += 1
-                        continue
+                if bv != "ready_for_review":
+                    # build_blocked / design_issue / escalate_no_artifacts on a stage-fix
+                    # task is not auto-recoverable here — give up so the boundary escalates.
                     return False
                 build_sha = self.git.head_sha(worktree)
                 await asyncio.to_thread(self.dispatcher.dispatch, self.passes[0],
