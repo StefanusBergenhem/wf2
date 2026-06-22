@@ -97,7 +97,7 @@ absence does not hurt — defer. Build the Claude adapter first (the dogfood har
 
 ---
 
-## C4 — Fix-mode subagents (wf-swa contract_amendment + wf-sa spec_amendment)
+## C4 — Fix-mode subagents (wf-swa contract_amendment BUILT; wf-sa spec_amendment deferred)
 
 **Date:** 2026-06-14 (updated 2026-06-22)
 **Context:** the orchestration layer now ships the **routing half** — `wf orchestrate
@@ -116,12 +116,24 @@ re-cut folds into a `spec_amendment` (SA decides the fix scope). The planning-ti
 "infeasible cut" case is the `preparing` swa→sa escalation, not a stage-execution DI a
 task-scoped build/review agent could classify.
 
-**Trigger to act:** now that routing is built — add the fix-mode flow to `wf-swa`
-(single DI, minimum-amendment scope on one task contract) and the symmetric mode to
-`wf-sa` (amend the requirement / ADR / slice). Mirror wf1's `mode-fix`, generalized.
-Keep the **mechanical classification check** the writer uses to set `fix_kind` (spec
-correct + contract diverges → contract_amendment; contract matches spec + spec wrong →
-spec_amendment; else unknown). These land with the build/review DI-writers (sub-step 7).
+**Status (2026-06-22):** the **`wf-swa` contract_amendment fix-mode is BUILT** — agent
+wrapper + a mode-split skill (classify → minimum-amend one task contract, no commit since the
+sprint is transient → flip the DI to `resolved`; a genuine spec defect halts to the human). It
+is on a **live path**: build/review raise `contract_amendment`, the orchestrator routes it to
+`wf-swa`. The **`wf-sa` spec_amendment fix-mode — and its agent wrapper — are NOT built and are
+deferred.**
+
+**Trigger to act (wf-sa half):** there is **no automated producer of a `spec_amendment` DI
+today** — build/review are code-layer and raise `contract_amendment` only, and `wf-swa`
+fix-mode escalates a genuine spec defect **to the human** rather than auto-reclassifying (that
+auto-route is **C19**). So a `wf-sa` fix-mode would be a consumer with no producer, and `wf-sa`
+is never autonomously dispatched anyway (the `preparing` step dispatches only `wf-swa`; on its
+escalation the human re-runs `wf-sa`'s default mode). Build the `wf-sa` spec_amendment fix-mode
++ wrapper **together with C19** — the loop change that first produces a `spec_amendment` DI.
+Until then a spec defect surfaced at build time is a human escalation: re-run `wf-sa` default
+mode to reshape the spec and re-cut. Keep the **mechanical classification check** for when it
+lands (spec correct + contract diverges → contract_amendment; contract matches spec + spec
+wrong → spec_amendment; else unknown).
 
 ---
 
@@ -419,7 +431,9 @@ fresh `contract_amendment` issue before any second `dispatch-fix` pass could rou
 open and `fix_kind` changed, re-run `dispatch-fix` (routing to `wf-sa`) **before** re-running
 the task, instead of unconditionally re-dispatching build. Touches the driver
 `_resolve_design_issues`, the LLM-track §1b return protocol, and the driver tests. Then
-`wf-swa` fix-mode can re-classify autonomously instead of halting to the human.
+`wf-swa` fix-mode can re-classify autonomously instead of halting to the human. This is the
+first producer of a `spec_amendment` DI, so it lands **with the `wf-sa` spec_amendment fix-mode
++ wrapper deferred in C4** — one is the route, the other its consumer.
 
 **Trigger to act:** a real run hits a spec defect surfaced at the contract layer and the
 human round-trip is friction. Until then the halt-to-human path is correct and cheap.

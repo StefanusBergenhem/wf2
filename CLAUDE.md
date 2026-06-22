@@ -150,3 +150,9 @@ real run proves its absence hurt).
   gold-plate any single skill** — no extra visualization, config knobs, or review
   passes — before that first dogfood. Build the thin version, dogfood it, then
   earn each addition with evidence its absence hurt.
+- **Candidates are a parking lot, not a backlog.** Deferred observations live in
+  `doc/CANDIDATES.md`: promote one to real work when its trigger fires, and **delete it
+  when resolved** — once a candidate's change has shipped, remove the entry rather than
+  leaving it as a resolved tombstone. The rationale survives in the commit and the code; a
+  lingering "done" candidate is exactly the kind of stored-what-code-reports the governor
+  forbids.
