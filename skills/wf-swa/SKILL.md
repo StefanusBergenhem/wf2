@@ -9,7 +9,6 @@ description: Software Architect — in default mode authors acceptance criteria 
 Capture `TS_START` now. Resolve every path below from `.wf/config.yaml`:
 
 - `DESIGN_SLICE`  = `paths.design_slice`     (the SA's handover)
-- `BRIEF`         = `paths.discover_brief`   (discover's system digest)
 - `ADRS`          = `paths.adrs`             (governing decisions)
 - `SPRINT`        = `paths.sprint`           (the task DAG — transient)
 
@@ -19,7 +18,7 @@ each requirement, which files change, what each task demonstrates, what order ta
 ## Hard constraints (both modes)
 
 - **Read the source.** Read the actual code of every component you touch before authoring
-  or amending. The slice and brief give intent; only the source gives the real interfaces.
+  or amending. The slice gives intent; only the source gives the real interfaces.
 - **Never cross into the spec layer.** You author and amend acceptance criteria and task
   contracts. You never mint or change a requirement, an acceptance criterion's traced
   requirement, or a component boundary — those are the SA's. A defect that needs one is a

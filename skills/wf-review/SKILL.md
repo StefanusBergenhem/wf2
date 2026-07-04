@@ -56,11 +56,14 @@ the build to have done.
 - **Scope.** `git diff --name-only` against `files_to_touch` (wf-verification §3). A
   changed file outside the set rejects — or, when the contract genuinely needs it, is a
   design issue. → `scope_violation`.
-- **[REQ] coverage + AC↔test.** For every requirement id in the contract's `covers`, find a
-  test carrying its `[REQ:<id>]` tag that **genuinely exercises** the requirement (not a
-  vacuous assertion). For every entry in `acceptance_criteria`, find a real test that proves
-  it. A requirement with no tagged test, a tag on a vacuous test, or an AC with no genuine
-  test rejects. → `requirement_trace_missing` / `acceptance_criteria_unmet`.
+- **Proving-tag coverage + AC↔test.** For every requirement id in the contract's `covers`,
+  find a test carrying its `[REQ:<id>]` tag that **genuinely exercises** the requirement (not
+  a vacuous assertion); for every `system_tests[].id` on an e2e task, find an end-to-end test
+  carrying its `[SYS-TC:<id>]` tag that runs the real assembled path (no component-seam
+  mocks). For every entry in `acceptance_criteria`, find a real test that proves it. A missing
+  tagged test, a tag on a vacuous test, an AC with no genuine test, or a system test that
+  mocks the seam it exists to exercise rejects. → `requirement_trace_missing` /
+  `acceptance_criteria_unmet`.
 
 **P1 — test & code quality:**
 

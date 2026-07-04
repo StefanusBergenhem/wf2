@@ -88,6 +88,35 @@ echo "$JOUT3" | python3 -c 'import sys,json; d=json.load(sys.stdin); assert d["a
 python3 "$SCRIPT" --slices "$TMP/nope.json" --tests "$TESTS" >/dev/null 2>"$TMP/err7"; rc=$?
 [ "$rc" -eq 2 ] && ok "missing slices file rejected (exit 2)" || bad "missing slices file not rejected (rc=$rc)"
 
+# --- 8: SYS-TC lane — a slice's system_tests drain via [SYS-TC:...] tags ---
+SYSSLICE="$TMP/sys-slice.json"
+cat > "$SYSSLICE" <<'JSON'
+{"slices":[{"id":"cap","requirements":["REQ-1"],"system_tests":["SYS-TC-1","SYS-TC-2"]}]}
+JSON
+SYSTESTS="$TMP/systests"; mkdir -p "$SYSTESTS"
+cat > "$SYSTESTS/req.test.ts" <<'TS'
+// [REQ:REQ-1] the component requirement
+TS
+cat > "$SYSTESTS/e2e.spec.ts" <<'TS'
+// [SYS-TC:SYS-TC-1] operator exports yesterday's memos end-to-end
+TS
+# REQ-1 + SYS-TC-1 covered, SYS-TC-2 missing -> slice incomplete
+JOUT8="$(python3 "$SCRIPT" --slices "$SYSSLICE" --tests "$SYSTESTS" --json 2>/dev/null)"
+echo "$JOUT8" | python3 -c '
+import sys, json
+s = json.load(sys.stdin)["slices"][0]
+assert "REQ-1" in s["covered"] and "SYS-TC-1" in s["covered"], s
+assert "SYS-TC-2" in s["missing"] and s["complete"] is False, s
+' && ok "system_tests drain via [SYS-TC:...] tags; missing SYS-TC reported" || bad "sys-tc lane wrong: $JOUT8"
+
+# --- 9: a system-test id duplicated across slices is a design error -------
+SYSDUP="$TMP/sysdup.json"
+cat > "$SYSDUP" <<'JSON'
+{"slices":[{"id":"a","system_tests":["SYS-TC-1"]},{"id":"b","system_tests":["SYS-TC-1"]}]}
+JSON
+python3 "$SCRIPT" --slices "$SYSDUP" --tests "$SYSTESTS" >/dev/null 2>"$TMP/err9"; rc=$?
+[ "$rc" -eq 2 ] && ok "duplicate SYS-TC id across slices rejected (exit 2)" || bad "duplicate SYS-TC id not rejected (rc=$rc)"
+
 echo ""
 echo "  $pass passed, $fail failed"
 [ "$fail" -eq 0 ] && echo "ALL GREEN" || { echo "FAILURES"; exit 1; }

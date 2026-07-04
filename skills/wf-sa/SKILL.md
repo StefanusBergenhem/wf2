@@ -45,10 +45,11 @@ input whatever it has refined. **Capabilities** (wf-po appends) and **learnings*
 (wf-retrospective appends) are your inputs; the **design backlog** (`$DESIGN_BACKLOG`,
 committed) is your output — your designed-but-unbuilt work. You:
 
-- **drain the built** — a requirement is built when a proving test carries its `[REQ:<id>]`
-  tag; run **reconcile** (`<paths.tools>/reconcile/reconcile.py`, see its README) against the
-  test tree and remove every built requirement (then any emptied design) from the backlog.
-  Nothing stores "done"; reconcile derives it from the tests.
+- **drain the built** — a backlog id is built when a proving test carries its tag: `[REQ:<id>]`
+  for a component requirement, `[SYS-TC:<id>]` for a system test case. Run **reconcile**
+  (`<paths.tools>/reconcile/reconcile.py`, see its README) against the test tree and remove
+  every built id (then any emptied design) from the backlog. Nothing stores "done"; reconcile
+  derives it from the tests.
 - **design new input** — shape a solution for each in-scope capability/learning, append it to
   the backlog, then **remove that capability/learning from its input log** — a design that
   fully covers it *is* its refinement, so the input is digested. Cover it fully before you
@@ -108,7 +109,7 @@ and the risk in the **decision format** (below): you present these at Phase 4, s
 prepare them now rather than stopping for the human. Judge only the change's surface
 (the components it touches and any it introduces), never the whole repo.
 
-### Phase 3 — Derive the component requirements (still on your own)
+### Phase 3 — Derive the component requirements
 
 **Load `references/requirement-syntax.md` before writing any requirement** — writing
 EARS from memory is how smuggled design and untestable statements get in.
@@ -144,6 +145,22 @@ commit hands back the same base, so two requirements would take the same id.
 
 Deriving requirements often exposes a missing owner or a mis-scoped boundary — when it
 does, return to Phase 2 and reshape. Architecture and requirements settle together.
+
+**Write the system test case(s).** **Load `references/system-testcase-syntax.md` first** —
+writing an end-to-end scenario from memory smuggles in component-level (EARS) thinking and
+seam mocks that make it not a system test. For each end-to-end behaviour the change delivers,
+write a **system test case**: a Gherkin-light scenario that **covers the capability**
+(`Covers: CAP-<n>`), never a component requirement. It answers directly to the capability —
+there is no requirement above it. Give each a repo-unique `SYS-TC-<n>` id from its own lane:
+
+```sh
+python3 <paths.tools>/reconcile/next_id.py --prefix SYS-TC --count <how many> \
+  --scan <the test tree you reconcile against> --scan $DESIGN_BACKLOG --scan $ADRS
+```
+
+A single-component change with no observable end-to-end behaviour needs none. wf-swa plans
+each case as its own e2e task; the build stamps `[SYS-TC:SYS-TC-<n>]` in the e2e test and
+`reconcile` harvests it to confirm the capability is proven.
 
 ### Phase 4 — Present & align (the interactive core)
 
@@ -200,15 +217,17 @@ The judgement already happened; this is capture.
    threshold once more, write each survivor from `assets/adr.md.tmpl`, drop the rest.
 2. **Append the design to the backlog.** Add a block to `$DESIGN_BACKLOG` (shape per
    `assets/design-backlog.md.tmpl`): the design's component requirements (each with its
-   repo-unique id and owner), the architecture moves, and the ADRs that bind it. Reference
-   the brief and drill-cache by path — do **not** restate structure.
+   repo-unique id and owner), its **system test cases** (each `SYS-TC-<n>`, covering a
+   capability), the architecture moves, and the ADRs that bind it. Reference the brief and
+   drill-cache by path — do **not** restate structure.
 3. **Drain the inputs you designed in.** Remove from `$CAPABILITIES` each capability now
    covered by a backlog design, and from `$LEARNINGS` each learning likewise — cover it
    fully first, per **The drain pipeline**.
 4. **Cut the design-slice.** Fill `$DESIGN_SLICE` from `assets/design-slice.md.tmpl` with a
    **buildable increment** of the backlog — the whole backlog if it fits one slice, else a
-   coherent subset along the dependency spine: its requirements (with owners), the moves, the
-   binding ADRs (new + standing), the Phase 5 soundness verdicts, and any risk for wf-swa.
+   coherent subset along the dependency spine: its requirements (with owners and drivers), the
+   **system test cases** for its end-to-end behaviours, the moves, the binding ADRs (new +
+   standing), the Phase 5 soundness verdicts, and any risk for wf-swa.
    Point at the backlog/brief/drill-cache by path; restate no structure.
 5. **Confirm before commit.** Present a brief summary of the decisions and ADRs the alignment
    settled, reopen `$DESIGN_VIEW`, and ask for the go-ahead to commit. If the human declines,

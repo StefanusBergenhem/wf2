@@ -11,32 +11,42 @@ component. Cross-component work is separate tasks.
 ## Phase 1 — Ground
 
 1. Read `$DESIGN_SLICE` — one **buildable increment** wf-sa cut from the design backlog:
-   the component requirements (each with its owner and driver), the architecture moves, and
-   the governing ADRs. Its requirements are your whole scope. **HALT and report if it is
-   absent** — it is wf-sa's output.
-2. Read `$BRIEF` for system shape, and the relevant `$ADRS` for the rationale you must
-   respect when writing `implementation_notes`.
-3. Read the **source** of every component the slice's requirements name. The slice has
-   already bounded the work to these components — their code is your depth; read it
-   directly rather than working from a summary.
+   the component requirements (each with its owner and driver), the **system test cases**
+   (wf-sa wrote them; you plan each into a task), the architecture moves, the governing ADRs,
+   and the **risks wf-sa flagged for you** (fragile seams, ordering constraints, external deps
+   — they shape your decomposition). Its requirements are your whole scope. **HALT and report
+   if it is absent** — it is wf-sa's output.
+2. Read the relevant `$ADRS` for the rationale you must respect when writing
+   `implementation_notes`.
+3. Read the **source** of every component the slice's requirements name — locate each in
+   the repo. The slice has already bounded the work to these components; their code is your
+   depth, read it directly rather than working from a summary.
 
 ## Phase 2 — Author the acceptance criteria
 
-**Load `references/task-contract.md` before writing any criterion or contract.** For
-each requirement in the slice, write the **acceptance criteria** that prove it: each a
-concrete, file-level testable condition with named inputs and expected outputs, given
-an id `REQ-N.AC-M` and tracing to its requirement. The bar: the build phase must be
-able to write a failing test from the criterion alone.
-
-A requirement whose failure or boundary behavior the criteria don't cover is an
-incomplete set — add the missing criterion. A requirement you cannot make testable
-from the source is a flag to the SA, not a guess.
+**Load `references/task-contract.md` before writing any criterion or contract** — it holds
+the AC rules (testable-from-source, the `REQ-N.AC-M` id scheme, failure/boundary
+completeness, staying within the requirement) and governs the contract you build in the
+later phases. For each requirement in the slice, author the acceptance criteria that prove
+it, per those rules.
 
 ## Phase 3 — Decompose into tasks
 
 Cut the criteria into tasks — each one cohesive, testable unit of work that satisfies
 one or more requirements and carries their criteria. Every criterion lands in exactly
 one task; every requirement is fully covered across the task set.
+
+For each task, author its **complete** contract per `references/task-contract.md`:
+`files_to_touch`, the `testing_mandate` (unit positive + negative per target; an integration
+test per real seam — external dep or cross-component wiring), `out_of_scope`,
+`implementation_notes` (source patterns + governing ADRs), and `serves`.
+
+**Plan the slice's system test cases.** For each `SYS-TC-<n>` case wf-sa wrote, add an e2e
+task whose `system_tests` is that case. The case `Covers` a **capability**, so its
+`depends_on` names the tasks building the requirements **driven by that capability** (read
+the drivers off the slice's component requirements) — putting it downstream of the assembled
+path. It exercises (imports) the components without owning them; the build stamps
+`[SYS-TC:SYS-TC-<n>]` in the e2e test.
 
 **Sizing.** Keep a task to roughly **≤ 5 files** and **≤ 250 lines** of change. A task
 larger than that hides gaps and costs the build/review cycle its leverage — split it.
@@ -65,8 +75,8 @@ it by splitting a task or merging two.
 Halt and report with outcome `escalated` if:
 
 - `$DESIGN_SLICE` is absent (it is wf-sa's output).
-- A component's source directory does not exist at the path the brief names — the
-  structure has drifted (needs a discover re-run).
+- A component named in the slice cannot be located in the source — the structure has
+  drifted (needs a discover re-run).
 - A requirement cannot be made testable, or its criteria cannot be turned into a task
   without crossing a component boundary — flag to the SA.
 - The tasks form a dependency cycle that cannot be broken by splitting or merging.

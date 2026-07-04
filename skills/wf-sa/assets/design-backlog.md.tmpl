@@ -10,16 +10,22 @@
 
 # Design backlog
 
-<!-- One block per shaped change. Requirements carry REPO-UNIQUE ids (REQ-<n>; see
-     requirement-syntax). Remove a requirement when reconcile reports it built; remove
-     the design when its last requirement goes. -->
+<!-- One block per shaped change. Two draining id lanes, each REPO-UNIQUE:
+     - component requirements (REQ-<n>) — EARS, owned by ONE component, with its driver (CAP/L)
+       so a later slice can map it to its capability;
+     - system test cases (SYS-TC-<n>) — capability-level end-to-end proofs, each covering a CAP.
+     Remove an id when reconcile reports its tag built; remove the design when its last id goes. -->
 
 ## <design title> — serves CAP-NNN / L-NNN
 
 **Decisions:** ADR-NNN (new) · ADR-NNN (standing, already governs <component>)
 **Moves:** <split / merge / new component / changed edge> — recorded in ADR-NNN; re-run discover after build.
 
-- **REQ-12** — <EARS statement>  *(owner: <component>)*
-- **REQ-13** — <EARS statement>  *(owner: <component>)*
+**Component requirements:**
+- **REQ-12** — <EARS statement>  *(owner: <component> · CAP-NNN)*
+- **REQ-13** — <EARS statement>  *(owner: <component> · L-NNN)*
+
+**System test cases:**
+- **SYS-TC-1** — <end-to-end behaviour title>  *(covers CAP-NNN)*
 
 <!-- repeat one ## block per shaped change; delete this scaffold's example block -->

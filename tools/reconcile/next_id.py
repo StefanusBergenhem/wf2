@@ -16,11 +16,15 @@ never built (so never tagged), and removed from the backlog; reusing such an id 
 harmless because nothing references it.
 
 Usage:
-    next_id.py --scan <path> [--scan <path> ...] [--count N]
+    next_id.py --scan <path> [--scan <path> ...] [--count N] [--prefix REQ|SYS-TC]
 
 Each --scan is a file or a directory (walked recursively). Pass the live id homes — the
 test tree, the design backlog, the ADRs. Missing paths are skipped, not errors: minting
-the first id of a greenfield repo scans those (absent) paths and returns REQ-1.
+the first id of a greenfield repo scans those (absent) paths and returns <prefix>-1.
+
+--prefix names the id namespace: REQ (default) for component requirements, SYS-TC for
+system test cases. Each is monotonic in its own space, so the two lanes never collide;
+scan the same homes for either.
 
 Exit: 0 on success, 2 on input error (no --scan given, or --count < 1).
 """
@@ -29,9 +33,12 @@ import os
 import re
 import sys
 
-# Broad on purpose: any REQ-<n> mention, not only [REQ:...] tags. \b rejects a
-# letter-prefixed lookalike (PREQ-9, FREQ-5) without burning real ids.
-ID_RE = re.compile(r"\bREQ-(\d+)")
+# Broad on purpose: any <prefix>-<n> mention, not only [<prefix>:...] tags. \b rejects a
+# letter-prefixed lookalike (PREQ-9, FREQ-5) without burning real ids. The prefix names
+# the id namespace — REQ for component requirements, SYS-TC for system test cases — each
+# monotonic in its own space so the two lanes never collide.
+def id_re(prefix):
+    return re.compile(rf"\b{re.escape(prefix)}-(\d+)")
 
 
 def _files(path):
@@ -44,8 +51,8 @@ def _files(path):
     # missing path: contributes nothing (greenfield)
 
 
-def max_id(scan_paths):
-    """Highest n among REQ-<n> mentions across the given files/dirs (0 if none)."""
+def max_id(scan_paths, pattern):
+    """Highest n among <prefix>-<n> mentions across the given files/dirs (0 if none)."""
     highest = 0
     for p in scan_paths:
         for path in _files(p):
@@ -54,16 +61,18 @@ def max_id(scan_paths):
                     text = fh.read()
             except OSError:
                 continue
-            for match in ID_RE.finditer(text):
+            for match in pattern.finditer(text):
                 highest = max(highest, int(match.group(1)))
     return highest
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description="wf2 repo-unique REQ-id allocator")
+    ap = argparse.ArgumentParser(description="wf2 repo-unique id allocator")
     ap.add_argument("--scan", action="append", default=[], metavar="PATH",
-                    help="file or dir to scan for REQ-<n> (repeatable)")
+                    help="file or dir to scan for <prefix>-<n> (repeatable)")
     ap.add_argument("--count", type=int, default=1, help="how many ids to allocate")
+    ap.add_argument("--prefix", default="REQ",
+                    help="id namespace to allocate in (REQ | SYS-TC; default REQ)")
     args = ap.parse_args(argv)
 
     if not args.scan:
@@ -74,9 +83,9 @@ def main(argv=None):
         print(f"next_id: --count must be >= 1 (got {args.count})", file=sys.stderr)
         return 2
 
-    start = max_id(args.scan) + 1
+    start = max_id(args.scan, id_re(args.prefix)) + 1
     for n in range(start, start + args.count):
-        print(f"REQ-{n}")
+        print(f"{args.prefix}-{n}")
     return 0
 
 

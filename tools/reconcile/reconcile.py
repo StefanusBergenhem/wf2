@@ -10,11 +10,12 @@ released) when every slice is complete.
 
 Tag format (the contract the build/review writer must satisfy):
 
-    [REQ:<id>]
+    [REQ:<id>]      a component requirement, proven by its unit/integration test
+    [SYS-TC:<id>]   a system test case, proven by its capability-level e2e test
 
 A plain comment token — any language, any comment style (// , # , /* */ , <!-- -->).
 No hash: a reworded requirement does not invalidate its tag (completion is set
-membership, not content equality). <id> is a repo-unique requirement id (REQ-<n>,
+membership, not content equality). <id> is a repo-unique id (REQ-<n> or SYS-TC-<n>,
 monotonic over the whole repo, never reused — a design-local id would collide with a
 retired design's lingering tag). After a design retires, its tag stays in the test as a
 historical breadcrumb — such tags are reported as orphans, never as errors.
@@ -25,7 +26,10 @@ quality gate's job. Pair this with review/testing-anti-patterns.
 
 Usage:
     reconcile.py --slices <slices.json> --tests <test-root> [--json]
-    slices.json: {"slices": [{"id": "<slice>", "requirements": ["REQ-1", ...]}]}
+    slices.json: {"slices": [{"id": "<slice>",
+                              "requirements": ["REQ-1", ...],
+                              "system_tests": ["SYS-TC-1", ...]}]}
+    A slice is complete when every id in BOTH lists is covered by a tag.
 
 Exit: 0 on success (report produced), 2 on input error. The JSON `all_complete`
 field is the "backlog empty -> design releasable" signal.
@@ -36,11 +40,14 @@ import os
 import re
 import sys
 
-TAG_RE = re.compile(r"\[REQ:\s*([\w.:-]+)\s*\]")
+# Two proving-tag lanes share one harvester: [REQ:<id>] for component requirements and
+# [SYS-TC:<id>] for capability-level system tests. Both are plain comment tokens; the
+# captured id is namespaced (REQ-<n> vs SYS-TC-<n>) so the lanes never collide.
+TAG_RE = re.compile(r"\[(?:REQ|SYS-TC):\s*([\w.:-]+)\s*\]")
 
 
 def harvest(tests_root):
-    """Return {req_id: [relpath, ...]} for every [REQ:<id>] tag under tests_root."""
+    """Return {id: [relpath, ...]} for every [REQ:<id>] / [SYS-TC:<id>] tag under tests_root."""
     covered = {}
     for root, _dirs, files in os.walk(tests_root):
         for name in files:
@@ -57,18 +64,23 @@ def harvest(tests_root):
     return covered
 
 
+def _slice_ids(sl):
+    """Every proving id a slice must see built: component requirements + system tests."""
+    return list(sl.get("requirements", [])) + list(sl.get("system_tests", []))
+
+
 def reconcile(slices, covered_ids):
     out_slices = []
     for sl in slices:
-        reqs = list(sl.get("requirements", []))
-        missing = [r for r in reqs if r not in covered_ids]
+        ids = _slice_ids(sl)
+        missing = [r for r in ids if r not in covered_ids]
         out_slices.append({
             "id": sl.get("id"),
             "complete": not missing,
-            "covered": [r for r in reqs if r in covered_ids],
+            "covered": [r for r in ids if r in covered_ids],
             "missing": missing,
         })
-    expected = {r for sl in slices for r in sl.get("requirements", [])}
+    expected = {r for sl in slices for r in _slice_ids(sl)}
     orphans = sorted(covered_ids - expected)
     all_complete = all(s["complete"] for s in out_slices) if out_slices else True
     return {"all_complete": all_complete, "slices": out_slices, "orphans": orphans}
@@ -91,10 +103,10 @@ def main(argv=None):
     slices = data.get("slices", [])
     seen = {}
     for sl in slices:
-        for req in sl.get("requirements", []):
+        for req in _slice_ids(sl):
             if req in seen and seen[req] != sl.get("id"):
                 print(
-                    f"reconcile: requirement id {req!r} appears in two slices "
+                    f"reconcile: id {req!r} appears in two slices "
                     f"({seen[req]!r} and {sl.get('id')!r}); ids must be unique in the design",
                     file=sys.stderr,
                 )

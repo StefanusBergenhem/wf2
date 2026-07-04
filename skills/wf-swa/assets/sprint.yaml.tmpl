@@ -12,7 +12,7 @@ sprint:
 tasks:
   - id: T1
     title: "<imperative, one line>"
-    component: "<brief-named component>"
+    component: "<component the slice names>"
     depends_on: []
     covers: [REQ-1]
     serves: CAP-NNN
@@ -29,8 +29,32 @@ tasks:
               covers: REQ-1.AC-1
             - description: "<error input> → <expected error> [negative]"
               covers: REQ-1.AC-1
-      integration_tests: []     # required if files_to_touch crosses an external boundary
+      integration_tests: []     # real seam: external dep OR cross-component wiring; [] + justify if none
+      system_tests: []          # [] on a component task — see the e2e task below
     out_of_scope:
       - "<boundary the developer might cross>"
     implementation_notes:
       - "<code pattern from source; ADR-NNN to respect>"
+
+  # An e2e task — one per SA system test case. depends_on the tasks building the
+  # requirements DRIVEN BY the capability the case covers, so it runs the assembled path.
+  - id: T2
+    title: "System test: <the case's behaviour>"
+    component: "<the e2e test home — e.g. e2e/ ; establish one if none exists>"
+    depends_on: [T1]            # the tasks building the reqs driven by CAP-NNN
+    covers: []                  # an e2e task proves a SYS-TC (below), not a component requirement
+    serves: CAP-NNN
+    files_to_touch:
+      - "<the e2e test file>"
+    acceptance_criteria: []     # the system test case IS the acceptance; no REQ-N.AC here
+    testing_mandate:
+      unit_tests: []
+      integration_tests: []
+      system_tests:
+        - id: SYS-TC-1          # build stamps [SYS-TC:SYS-TC-1] in the e2e test
+          description: "<the SA's end-to-end scenario, over the real path> → <expected>"
+          covers: [CAP-NNN]     # the capability the case proves — never a component requirement
+    out_of_scope:
+      - "Any component logic — the e2e task only exercises the assembled path."
+    implementation_notes:
+      - "<the SA case verbatim from the slice; the existing e2e home + how it runs>"

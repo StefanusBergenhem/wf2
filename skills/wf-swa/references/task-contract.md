@@ -16,7 +16,7 @@ Contents:
 ```yaml
 - id: T1
   title: <imperative, one line>
-  component: <brief-named component this task belongs to>
+  component: <the component this task belongs to>
   depends_on: []                 # task ids that must land first
   covers: [REQ-1, REQ-2]         # the slice requirements this task satisfies
   serves: CAP-NNN                # or L-NNN — the driver behind those requirements
@@ -58,18 +58,28 @@ Bad: *"The system performs well under load."*
 
 ## Testing mandate
 
-State the tests the build phase must write — not "tests pass," but *which* tests.
+State the tests the build phase must write — not "tests pass," but *which* tests, at the
+right level. Mandate each level where it applies:
 
-- **Group by target** when a task touches 2+ distinct functions/files. A flat list
-  hides which function lacks coverage; grouped sections make each independently
-  auditable.
-- **Every target needs a positive and a negative case.** A target with only
-  happy-path tests is incomplete — add the error/boundary path.
-- **Integration tests are required** when `files_to_touch` includes code that
-  crosses an external boundary (database, network, filesystem, queue, cache) or
-  exposes a new interface. Specify at least one integration test per distinct
-  external interaction. If you genuinely believe none is needed, leave a one-line
-  justification in `implementation_notes` rather than an empty list with no reason.
+- **Unit** — a single target in isolation. **Group by target** when a task touches 2+
+  distinct functions/files (a flat list hides which function lacks coverage). **Every
+  target needs a positive and a negative case** — happy-path-only is incomplete.
+- **Integration** — a real seam the unit tests mock out. Required when `files_to_touch`
+  crosses an **external** boundary (database, network, filesystem, queue, cache), **exposes
+  a new interface**, or **wires in another component** (an orchestration / composition-root
+  task). Exercise the real seam, not a mock; at least one per distinct seam.
+- **System (end-to-end)** — comes from the **SA's `SYS-TC-<n>` system test case(s) in the
+  design slice**; you do not derive them. Plan each case as its **own e2e task**. The case
+  `Covers` a **capability** (`CAP-<n>`), not requirements — so the task `depends_on` the tasks
+  building **the requirements whose driver is that capability** (read the drivers off the
+  slice's component requirements), which puts it downstream of the assembled path. Its
+  `system_tests` is the case; its `files_to_touch` is the e2e test (it exercises — imports —
+  the components without owning them); the build stamps `[SYS-TC:SYS-TC-<n>]` in that test.
+  This is the level that catches a `nil`-wired dependency that compiles and silently does
+  nothing — per-component unit tests, which mock what they wire, never substitute for it.
+
+If a level genuinely does not apply, leave its list empty with a one-line justification in
+`implementation_notes` rather than an empty list with no reason.
 
 ```yaml
 testing_mandate:
@@ -80,6 +90,13 @@ testing_mandate:
           covers: REQ-1.AC-1
         - description: "<error input> → <expected error> [negative]"
           covers: REQ-1.AC-2
+  integration_tests:
+    - description: "<real seam exercised — external dep or cross-component wiring> → <expected>"
+      covers: REQ-1.AC-3
+  system_tests:                 # an e2e task only: the SA's system test case from the slice
+    - id: SYS-TC-1              # the case's repo-unique id; build stamps [SYS-TC:SYS-TC-1]
+      description: "<the SA's end-to-end scenario, over the real path> → <expected>"
+      covers: [CAP-NNN]         # the capability the case proves — never a component requirement
 ```
 
 ## Scope consistency

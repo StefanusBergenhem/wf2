@@ -22,6 +22,20 @@
 - **REQ-13** — <EARS statement>  *(owner: <component> · L-NNN)*
 - **REQ-14** — <EARS statement>  *(owner: <component> · CAP-NNN)*
 
+## System test cases
+
+<!-- The end-to-end behaviour(s) this slice delivers — YOU write these; wf-swa plans each
+     into the sprint as its own e2e task. Each is a Gherkin-light, black-box scenario that
+     proves the assembled path (no component-seam mocks) and COVERS A CAPABILITY (never a
+     component requirement). Ids are repo-unique SYS-TC-<n> from their own lane. Omit the
+     section for a single-component change with no observable end-to-end behaviour. -->
+
+- **SYS-TC-1:** <clear title of the end-to-end behaviour>
+  **Covers:** CAP-NNN            <!-- the capability this behaviour proves; never REQ-<n> -->
+  - **Given** <initial state / preconditions>
+  - **When** <the external trigger or action>
+  - **Then** <the observable, verifiable end state or output>
+
 ## Architecture moves
 
 <!-- Only if this change reshapes structure: split / merge / new component / changed

@@ -76,6 +76,19 @@ python3 "$SCRIPT" --count 1 >/dev/null 2>"$TMP/err6"; rc=$?
 python3 "$SCRIPT" --scan "$BACKLOG" --count 0 >/dev/null 2>"$TMP/err7"; rc=$?
 [ "$rc" -eq 2 ] && ok "--count 0 -> input error (exit 2)" || bad "--count 0 not rejected (rc=$rc)"
 
+# --- 8: --prefix SYS-TC allocates in its own namespace, blind to REQ ------
+# a slice with a SYS-TC-2 tag + a REQ mention; SYS-TC allocation must ignore REQ and
+# return SYS-TC-3, while REQ allocation on the same tree ignores SYS-TC.
+SYS="$TMP/sys"; mkdir -p "$SYS"
+cat > "$SYS/e2e_test.go" <<'GO'
+// [SYS-TC:SYS-TC-2] operator exports yesterday's memos end-to-end
+// [REQ:REQ-99] a component requirement in the same tree
+GO
+OUT8="$(python3 "$SCRIPT" --scan "$SYS" --prefix SYS-TC)"
+[ "$OUT8" = "SYS-TC-3" ] && ok "--prefix SYS-TC ignores REQ ids -> SYS-TC-3" || bad "sys-tc wrong: got '$OUT8', want SYS-TC-3"
+OUT8b="$(python3 "$SCRIPT" --scan "$SYS")"
+[ "$OUT8b" = "REQ-100" ] && ok "default REQ prefix ignores SYS-TC ids -> REQ-100" || bad "req-lane wrong: got '$OUT8b', want REQ-100"
+
 echo ""
 echo "  $pass passed, $fail failed"
 [ "$fail" -eq 0 ] && echo "ALL GREEN" || { echo "FAILURES"; exit 1; }

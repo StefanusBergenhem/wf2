@@ -49,11 +49,14 @@ Announce each phase.
 
 1. Write the test for every `testing_mandate` case: set up specific inputs, invoke the
    code under test, assert specific outputs.
-2. **Stamp the requirement tag.** In each test, place a plain comment `[REQ:<id>]` where
-   `<id>` is the parent requirement of the AC it covers — a test covering `REQ-1.AC-2`
-   carries `[REQ:REQ-1]`. No hash; any comment style. Every requirement in the contract's
-   `covers` must end with at least one tagged test: that tag is what the reconcile
-   harvester reads and the reviewer verifies.
+2. **Stamp the proving tag.** In each test, place a plain comment naming what it proves —
+   no hash, any comment style:
+   - a component task: `[REQ:<id>]` where `<id>` is the parent requirement of the AC it
+     covers — a test covering `REQ-1.AC-2` carries `[REQ:REQ-1]`. Every requirement in the
+     contract's `covers` must end with at least one tagged test.
+   - an e2e task: `[SYS-TC:<id>]` for each `system_tests[].id` — the end-to-end test proving
+     `SYS-TC-1` carries `[SYS-TC:SYS-TC-1]`.
+   That tag is what the reconcile harvester reads and the reviewer verifies.
 3. Check each test against the `wf-testing-anti-patterns` table. A match means restructure
    it before continuing.
 4. Run the project's test command for what you changed and **confirm the tests FAIL** for
