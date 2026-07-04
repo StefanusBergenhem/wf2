@@ -22,6 +22,22 @@ def last_seg(p):
     return p.rsplit("/", 1)[-1]
 
 
+# Conventional test-directory names. A component under one of these is test
+# infrastructure, not production code — it leaks into the read-view only because it
+# carries non-test helper files (e.g. a Go `package test` testcontainers harness, or a
+# JS `__tests__` dir), and pollutes the production graph it is filed under. Excluded
+# from the model. Discover maps the PRODUCTION graph; test topology is a separate
+# concern surfaced on demand by the planning roles' source reads, not by the spine.
+# Name-only helpers (e.g. `internal/testutil`) are NOT excluded — only a test-DIR
+# path segment does, since name matching alone would catch real production packages.
+_TEST_DIR_SEGMENTS = {"test", "tests", "testdata", "__tests__", "e2e"}
+
+
+def is_test_infra(cid):
+    """True if any path segment of the component id is a conventional test directory."""
+    return any(seg in _TEST_DIR_SEGMENTS for seg in cid.split("/"))
+
+
 def merge(irs):
     """Union the components of every IR into one model. Each node is tagged with its
     source language; ids are namespaced into a UID (lang:id). Intra-language
@@ -32,12 +48,16 @@ def merge(irs):
     by_id = defaultdict(dict)        # lang -> {id : uid}        (authoritative)
     by_name = defaultdict(dict)      # lang -> {name|lastseg : uid}  (fallback only)
     langs = []
+    dropped = []                     # excluded test-infra ids (reported, never silent)
 
     for ir in irs:
         lang = ir.get("language") or "unknown"
         if lang not in langs:
             langs.append(lang)
         for c in ir.get("components", []):
+            if is_test_infra(c["id"]):
+                dropped.append(f"{lang}:{c['id']}")
+                continue                 # test infra is not a production component
             uid = f"{lang}:{c['id']}"
             n = {
                 "uid": uid, "id": c["id"], "name": c.get("name") or last_seg(c["id"]),
@@ -64,6 +84,10 @@ def merge(irs):
             if t and t != uid and t not in seen:
                 deps.append(t); seen.add(t)
         n["deps"] = sorted(deps)
+
+    if dropped:
+        print(f"spine: excluded {len(dropped)} test-infra component(s) from the "
+              f"production graph: {', '.join(sorted(dropped))}", file=sys.stderr)
 
     return {"languages": sorted(langs), "nodes": nodes,
             "order": sorted(order, key=lambda u: (nodes[u]["lang"], nodes[u]["id"]))}
