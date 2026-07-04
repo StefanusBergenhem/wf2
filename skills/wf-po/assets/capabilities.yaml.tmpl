@@ -18,6 +18,8 @@
 # ID namespace — monotonic over the file's lifetime; never renumber, never reuse a
 # retired number (entries leave when the SA drains them, but their ids are not recycled):
 #   CAP-NNN   capabilities (what a user/operator/external system can do)
+# The authoritative high-water mark is `id_counters.cap` in .wf/config.yaml — the ids
+# present in this file alone are not sufficient, because entries drain.
 
 version: 1
 last_updated: ""

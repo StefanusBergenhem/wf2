@@ -23,7 +23,6 @@ sweep/dispatch verbs take a cwd-relative ``--config`` (default ``.wf/config.yaml
 """
 from __future__ import annotations
 
-import datetime
 import json
 import re
 import subprocess
@@ -403,6 +402,11 @@ def _preserve_uncommitted(rest):
 # 4. sweep-transients
 # ===========================================================================
 
+# A host-side handoff artifact is stale iff the task it names has already left the
+# build→review loop — its consumer can never come back for it.
+_SWEEP_STALE_STATUSES = {"approved", "completed", "blocked", "escalated", "design_issue"}
+
+
 def _sweep_transients(rest):
     config_path_str = ".wf/config.yaml"
     dry_run = False
@@ -441,95 +445,55 @@ def _sweep_transients(rest):
         return (project_root / rel).resolve()
 
     p_pipeline_state = resolve("pipeline_state", ".wf/transient/pipeline-state.yaml")
-    p_feedback = resolve("feedback", ".wf/transient/feedback.yaml")
-    p_review_ready = resolve("review_ready", ".wf/transient/review-ready.yaml")
-    p_build_blocked = resolve("build_blocked", ".wf/transient/build-blocked.yaml")
 
-    history = []
-    if p_pipeline_state.exists():
+    task_states = None  # None → no pipeline-state file → keep everything
+    if p_pipeline_state.is_file():
         try:
             doc = yaml.safe_load(p_pipeline_state.read_text()) or {}
         except yaml.YAMLError as e:
             return _err(f"error: parse {p_pipeline_state}: {e}")
-        history = doc.get("history", []) or []
-
-    def parse_ts(s):
-        if not isinstance(s, str):
-            return None
-        try:
-            if s.endswith("Z"):
-                s = s[:-1] + "+00:00"
-            dt = datetime.datetime.fromisoformat(s)
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=datetime.timezone.utc)
-            return dt
-        except ValueError:
-            return None
-
-    def mtime(p):
-        try:
-            return datetime.datetime.fromtimestamp(
-                p.stat().st_mtime, tz=datetime.timezone.utc
-            )
-        except FileNotFoundError:
-            return None
-
-    def has_event_after(events, after):
-        if after is None:
-            return False
-        for h in history:
-            if not isinstance(h, dict):
-                continue
-            if h.get("event") not in events:
-                continue
-            ts = parse_ts(h.get("ts"))
-            if ts is not None and ts > after:
-                return True
-        return False
+        task_states = doc.get("task_states") or {}
 
     deleted = []
     skipped = []
 
-    def consume(path, ok, reason_if_skipped):
+    def sweep(path):
         if not path.exists():
             return
-        if ok:
-            if dry_run:
-                deleted.append(str(path))
-            else:
-                try:
-                    path.unlink()
-                    deleted.append(str(path))
-                except OSError as e:
-                    skipped.append({"path": str(path), "reason": f"unlink failed: {e}"})
-        else:
-            skipped.append({"path": str(path), "reason": reason_if_skipped})
+        if task_states is None:
+            skipped.append({"path": str(path), "reason": "pipeline-state file not found"})
+            return
+        try:
+            artifact = _load_yaml_file(path)
+        except _MalformedYAML:
+            artifact = {}
+        task_id = artifact.get("task_id") if isinstance(artifact, dict) else None
+        if not task_id:
+            skipped.append({"path": str(path), "reason": "no readable task_id in artifact"})
+            return
+        task_id = str(task_id)
+        ts = task_states.get(task_id)
+        if not isinstance(ts, dict):
+            skipped.append({"path": str(path),
+                            "reason": f"task {task_id} not in task_states"})
+            return
+        status = ts.get("status") or "pending"
+        if status not in _SWEEP_STALE_STATUSES:
+            skipped.append({"path": str(path),
+                            "reason": f"task {task_id} is {status} — live handoff"})
+            return
+        if dry_run:
+            deleted.append(str(path))
+            return
+        try:
+            path.unlink()
+            deleted.append(str(path))
+        except OSError as e:
+            skipped.append({"path": str(path), "reason": f"unlink failed: {e}"})
 
-    # A transient is stale iff a history event recording its consumption landed AFTER
-    # the file's own mtime (the orchestrator returned past it). Otherwise it is a live
-    # handoff awaiting its consumer — keep it.
-    m = mtime(p_feedback)
-    consume(
-        p_feedback,
-        has_event_after({"build_returned", "task_redispatched_after_di_resolution"}, m),
-        "no build_returned or task_redispatched_after_di_resolution after mtime",
-    )
-
-    m = mtime(p_review_ready)
-    consume(
-        p_review_ready,
-        has_event_after({"review_returned", "task_redispatched_after_di_resolution"}, m),
-        "no review_returned or task_redispatched_after_di_resolution after mtime",
-    )
-
-    m = mtime(p_build_blocked)
-    consume(
-        p_build_blocked,
-        has_event_after(
-            {"scope_amendment_applied", "amendment_with_mechanical_follow_on", "escalated"}, m
-        ),
-        "no scope_amendment_applied / amendment_with_mechanical_follow_on / escalated after mtime",
-    )
+    sweep(resolve("feedback", ".wf/transient/feedback.yaml"))
+    sweep(resolve("review_ready", ".wf/transient/review-ready.yaml"))
+    sweep(resolve("build_blocked", ".wf/transient/build-blocked.yaml"))
 
     print(json.dumps({"deleted": deleted, "skipped": skipped}, sort_keys=False))
     return 0

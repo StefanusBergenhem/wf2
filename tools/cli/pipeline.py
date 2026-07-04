@@ -196,7 +196,6 @@ def _dispatch_entry(task, worktree_base, sprint_id):
     tid = task["id"]
     return {
         "task_id": tid,
-        "mode": "build",
         "component": task.get("component"),
         "worktree": f"{worktree_base}/{sprint_id}-{tid}",
     }
@@ -618,6 +617,36 @@ def _record_design_issue(rest):
     return 0
 
 
+def _resolve_design_issue(rest):
+    """Mark a recorded design issue resolved in pipeline_state so the stage boundary
+    stops re-routing it (the HOST design-issues artifact is the fix agent's record;
+    this is the run-state's)."""
+    p = common.base_parser("pipeline resolve-design-issue")
+    p.add_argument("di_id")
+    args = p.parse_args(rest)
+
+    doc = _load_state(args)
+    issues = doc.get("design_issues") or {}
+    if isinstance(issues, dict):
+        entry = issues.get(args.di_id)
+        if not isinstance(entry, dict):
+            entry = next((v for v in issues.values() if isinstance(v, dict)
+                          and (v.get("issue_id") == args.di_id or v.get("di_id") == args.di_id)),
+                         None)
+    else:
+        entry = next((v for v in issues if isinstance(v, dict)
+                      and (v.get("issue_id") == args.di_id or v.get("di_id") == args.di_id)),
+                     None)
+    if not isinstance(entry, dict):
+        common.die(f"unknown design issue: {args.di_id}")
+    entry["status"] = "resolved"
+    doc.setdefault("history", []).append({
+        "ts": _now(), "event": "design_issue_resolved", "di_id": args.di_id,
+    })
+    _save_state(args, doc)
+    return 0
+
+
 def _scope_amendment(rest):
     p = common.base_parser("pipeline scope-amendment")
     p.add_argument("task_id")
@@ -878,6 +907,7 @@ COMMANDS = {
     ("pipeline", "block-task"): _block_task,
     ("pipeline", "reclaim-stale"): _reclaim_stale,
     ("pipeline", "record-design-issue"): _record_design_issue,
+    ("pipeline", "resolve-design-issue"): _resolve_design_issue,
     ("pipeline", "scope-amendment"): _scope_amendment,
     # staged-model mutations
     ("pipeline", "advance-stage"): _advance_stage,

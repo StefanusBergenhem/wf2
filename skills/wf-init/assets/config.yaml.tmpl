@@ -11,9 +11,10 @@ version: 1
 project:
   name: "{{PROJECT_NAME}}"
   target: "{{TARGET}}"        # Agent harness(es) this project runs under:
-                              # claude | pi | opencode — a single value, or a list
-                              # when several are installed. Records which targets
-                              # install.sh rendered, for re-install.
+                              # claude | pi | opencode — a single value, or an inline
+                              # list (["claude", "pi"]) when several are installed.
+                              # install.sh reads it on a flagless re-install and
+                              # renders every listed target (a --target flag wins).
   base_branch: "main"         # Branch the orchestrator cuts sprint branches from and
                               # opens the ship PR against.
 
@@ -24,8 +25,8 @@ paths:
   discover: ".wf/transient/discover"          # wf-discover working dir (extractor --out; cleared each run).
   # wf-discover output files — each a whole path, so a downstream skill that reads
   # one (e.g. brief) follows a single config edit if it moves.
-  discover_model: ".wf/transient/discover/model.json"            # spine output (basename owned by discover.py)
-  discover_clusters: ".wf/transient/discover/clusters.json"      # cluster output (basename owned by discover.py)
+  discover_model: ".wf/transient/discover/model.json"            # spine output (passed to discover.py --model-out)
+  discover_clusters: ".wf/transient/discover/clusters.json"      # cluster output (passed to discover.py --clusters-out)
   discover_subsystems: ".wf/transient/discover/subsystems.json"  # scout output (semantic cache)
   discover_view: ".wf/transient/discover/view.html"              # human interactive map
   discover_brief: ".wf/transient/discover/brief.md"              # agent digest (consumed by planning skills)
@@ -44,7 +45,7 @@ paths:
   design_backlog: ".wf/design-backlog.md"      # wf-sa's designed-but-unbuilt work; drains as reconcile shows it built. Committed.
   design_slice: ".wf/transient/design-slice.md"   # wf-sa cuts this from the backlog for wf-swa; wf-swa clears it. Transient.
   design_view: ".wf/transient/design-view.html"   # wf-sa interactive design diagram (render_design.py). Transient.
-  drill_cache: ".wf/transient/drill-cache"        # Shared scout digests (wf-po/sa/swa append; all read). Transient dir.
+  drill_cache: ".wf/transient/drill-cache"        # Shared scout digests (wf-po/wf-sa dispatch wf-drill, which appends; both read). Transient dir.
   sprint: ".wf/transient/sprint.yaml"             # wf-swa task DAG the orchestrator executes. Transient.
 
   # Orchestration (the build pipeline). pipeline-state is the live run state the brain
@@ -81,6 +82,11 @@ closeout: [wf-retrospective, ship]   # ordered end-of-sprint steps; a wf-* entry
 
 orchestrate:
   history_cap: 50          # live pipeline-state history entries kept; older spill to pipeline_history.
+
+id_counters:            # high-water marks for draining id lanes — only ever increase.
+  cap: 0                # CAP-NNN (wf-po bumps)
+  learning: 0           # L-NNN in paths.learnings (wf-retrospective bumps)
+  wf_learning: 0        # L-NNN in paths.wf_learnings (wf-retrospective bumps)
 
 telemetry:
   enabled: true               # When false, skills skip the end-of-session record step.

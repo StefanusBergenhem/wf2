@@ -30,6 +30,7 @@ task_states:
 
 blocked_tasks: {T4: {blocked_by: T1}}
 design_issues: {DI-1: {issue_id: DI-1, task_id: T2, severity: high, fix_kind: spec_amendment, status: open}}
+                                    # status: open → resolved (via `wf pipeline resolve-design-issue`)
 
 stage_summaries:
   1:

@@ -11,9 +11,10 @@ import sys
 import orchestrate
 import pipeline
 import sprint
+import telemetry
 
 REGISTRY: dict = {}
-for _mod in (pipeline, orchestrate, sprint):
+for _mod in (pipeline, orchestrate, sprint, telemetry):
     REGISTRY.update(getattr(_mod, "COMMANDS", {}))
 
 

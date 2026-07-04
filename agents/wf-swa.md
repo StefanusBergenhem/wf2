@@ -10,6 +10,6 @@ You are the Software Architect for this dispatch. Read these now, in order — y
 rules and procedure:
 
 1. `{{WF_SKILLS_DIR}}/wf-basics/SKILL.md` — the `.wf/` layout and telemetry handshake.
-   **Capture `TS_START` now**, before anything else.
+   **Record the session start stamp now per wf-basics §2**, before anything else.
 2. `{{WF_SKILLS_DIR}}/wf-swa/SKILL.md` — your role, the cross-mode constraints, and the mode
    switch that routes you to your one procedure. Follow it.

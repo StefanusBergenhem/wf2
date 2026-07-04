@@ -60,10 +60,12 @@ the build to have done.
   find a test carrying its `[REQ:<id>]` tag that **genuinely exercises** the requirement (not
   a vacuous assertion); for every `system_tests[].id` on an e2e task, find an end-to-end test
   carrying its `[SYS-TC:<id>]` tag that runs the real assembled path (no component-seam
-  mocks). For every entry in `acceptance_criteria`, find a real test that proves it. A missing
-  tagged test, a tag on a vacuous test, an AC with no genuine test, or a system test that
-  mocks the seam it exists to exercise rejects. → `requirement_trace_missing` /
-  `acceptance_criteria_unmet`.
+  mocks). Each tag line must carry the id's statement verbatim from the contract
+  (`requirements[]` for `[REQ:]`, `system_tests[].description` for `[SYS-TC:]`) — missing or
+  differing text rejects. For every entry in `acceptance_criteria`, find a real test that
+  proves it. A missing tagged test, a tag on a vacuous test, an AC with no genuine test, or
+  a system test that mocks the seam it exists to exercise rejects. →
+  `requirement_trace_missing` / `acceptance_criteria_unmet`.
 
 **P1 — test & code quality:**
 

@@ -109,6 +109,55 @@ assert "REQ-1" in s["covered"] and "SYS-TC-1" in s["covered"], s
 assert "SYS-TC-2" in s["missing"] and s["complete"] is False, s
 ' && ok "system_tests drain via [SYS-TC:...] tags; missing SYS-TC reported" || bad "sys-tc lane wrong: $JOUT8"
 
+# --- 9a: statements — the tag line's trailing text rides the id ----------
+JOUT9A="$(python3 "$SCRIPT" --slices "$SLICES" --tests "$TESTS" --json 2>/dev/null)"
+echo "$JOUT9A" | python3 -c '
+import sys, json
+d = json.load(sys.stdin)
+assert d["statements"]["REQ-1"] == "imported rooms persist", d
+assert d["statements"]["REQ-2"] == "registry stays consistent", d
+assert d["warnings"] == [], d
+' && ok "statements harvested from tag lines (comment closers stripped)" || bad "statement harvest wrong: $JOUT9A"
+OUT9A="$(python3 "$SCRIPT" --slices "$SLICES" --tests "$TESTS" 2>/dev/null)"
+echo "$OUT9A" | grep -q "REQ-1: imported rooms persist" \
+  && ok "text report shows covered id with its statement" || bad "text report missing statement: $OUT9A"
+
+# --- 9b: bare tag (no trailing text) -> empty statement, never a failure --
+BARE="$TMP/bare"; mkdir -p "$BARE"
+cat > "$BARE/t.test.ts" <<'TS'
+// [REQ:REQ-1]
+TS
+JOUT9B="$(python3 "$SCRIPT" --slices "$SLICES" --tests "$BARE" --json 2>/dev/null)"
+echo "$JOUT9B" | python3 -c '
+import sys, json
+d = json.load(sys.stdin)
+assert d["statements"]["REQ-1"] == "", d
+assert d["warnings"] == [], d
+' && ok "bare tag -> empty statement allowed, no warning" || bad "bare tag handling wrong: $JOUT9B"
+
+# --- 9c: divergent non-empty texts on one id -> warning, never an error ---
+DIV="$TMP/div"; mkdir -p "$DIV"
+cat > "$DIV/a.test.ts" <<'TS'
+// [REQ:REQ-1] the system shall persist rooms
+TS
+cat > "$DIV/b.test.py" <<'PY'
+# [REQ:REQ-1] rooms persist across restart
+PY
+cat > "$DIV/c.test.ts" <<'TS'
+// [REQ:REQ-1]
+TS
+python3 "$SCRIPT" --slices "$SLICES" --tests "$DIV" --json > "$TMP/jout9c" 2>/dev/null; rc=$?
+[ "$rc" -eq 0 ] && ok "divergent texts still exit 0 (warning, never an error)" || bad "divergent texts errored (rc=$rc)"
+python3 -c '
+import sys, json
+d = json.load(open(sys.argv[1]))
+w = [x for x in d["warnings"] if x["id"] == "REQ-1"]
+assert len(w) == 1, d
+assert set(w[0]["statements"]) == {"the system shall persist rooms", "rooms persist across restart"}, d
+' "$TMP/jout9c" && ok "divergent-text warning carries the differing statements (empty ignored)" || bad "warning shape wrong: $(cat "$TMP/jout9c")"
+OUT9C="$(python3 "$SCRIPT" --slices "$SLICES" --tests "$DIV" 2>/dev/null)"
+echo "$OUT9C" | grep -qi "warning.*REQ-1" && ok "text mode surfaces the divergence warning" || bad "text warning missing: $OUT9C"
+
 # --- 9: a system-test id duplicated across slices is a design error -------
 SYSDUP="$TMP/sysdup.json"
 cat > "$SYSDUP" <<'JSON'

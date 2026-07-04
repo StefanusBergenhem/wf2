@@ -6,7 +6,7 @@ description: Solution Architect — turns capabilities and learnings into a shap
 # wf-sa
 
 **Read `wf-basics` first** for the `.wf/` layout and the telemetry handshake.
-Capture `TS_START` now. Resolve every path below from `.wf/config.yaml`:
+Record the session start stamp now per `wf-basics` §2. Resolve every path below from `.wf/config.yaml`:
 
 - `CAPABILITIES`   = `paths.capabilities`   (user-voice needs — read; **drain** what you design in)
 - `LEARNINGS`      = `paths.learnings`      (project learnings — read; **drain** what you design in)
@@ -76,10 +76,13 @@ the new change:
 2. Read `$BRIEF` for the current system shape. **HALT if it is absent** — ask the user
    to run `wf-discover` first, or to confirm the repo is greenfield (design from the
    drivers alone, no existing components to ground against).
-3. **Scout for the depth the brief lacks.** For any seam this change touches that you
-   do not yet understand, get a drill digest (see **Scouting & the drill-cache**).
-   Never design against the brief's one-liner alone for a component you are about to
-   change.
+3. **Ground every in-scope item in a drill digest before Phase 2.** For each in-scope
+   capability/learning that touches existing code, a drill digest covering the
+   components and seams it implicates MUST exist before you shape anything — from
+   `$DRILL_CACHE` or a fresh `wf-drill` dispatch (see **Scouting & the drill-cache**).
+   Skipping this means designing from the brief's one-liners alone. The only exemption
+   is scope that is genuinely greenfield — it introduces only new components, with
+   nothing existing to drill; state which items you exempted and why.
 
 Summarize what you found before shaping anything.
 

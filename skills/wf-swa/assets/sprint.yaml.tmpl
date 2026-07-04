@@ -4,10 +4,12 @@
 # build pipeline. Not hand-maintained, not committed, not read across changes.
 # One inline contract per task; see references/task-contract.md for the field rules.
 
+# sprint-<yyyymmdd>-<short-scope-slug> — filesystem- and branch-name-safe
+# ([a-z0-9-] only); names the task worktrees, task branches, and the archive file.
+sprint_id: "sprint-<yyyymmdd>-<short-scope-slug>"
+
 sprint:
   summary: "<one line: what this change delivers>"
-  serves: []            # CAP-NNN / L-NNN this sprint advances
-  from_slice: ".wf/transient/design-slice.md"   # the SA handover this derives from
 
 tasks:
   - id: T1
@@ -15,6 +17,9 @@ tasks:
     component: "<component the slice names>"
     depends_on: []
     covers: [REQ-1]
+    requirements:               # one entry per id in covers — statement verbatim from the slice
+      - id: REQ-1
+        statement: "<the requirement's full EARS statement, verbatim>"
     serves: CAP-NNN
     files_to_touch:
       - "<path>"
@@ -43,6 +48,7 @@ tasks:
     component: "<the e2e test home — e.g. e2e/ ; establish one if none exists>"
     depends_on: [T1]            # the tasks building the reqs driven by CAP-NNN
     covers: []                  # an e2e task proves a SYS-TC (below), not a component requirement
+    requirements: []            # empty like covers — the case's text lives in system_tests[].description
     serves: CAP-NNN
     files_to_touch:
       - "<the e2e test file>"

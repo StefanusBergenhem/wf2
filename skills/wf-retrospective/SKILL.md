@@ -6,7 +6,7 @@ description: Distils a run into actionable learnings — session telemetry feedb
 # wf-retrospective
 
 **Read `wf-basics` first** for the `.wf/` layout and the telemetry handshake.
-Capture `TS_START` now. Resolve every path below from `.wf/config.yaml`:
+Record the session start stamp now per `wf-basics` §2. Resolve every path below from `.wf/config.yaml`:
 
 - `TELEMETRY`      = `paths.telemetry`       (append-only session log — read)
 - `PIPELINE_STATE` = `paths.pipeline_state`  (the finished run's state — read if present)
@@ -30,6 +30,8 @@ Both files hold the same shape:
   statement: "<one actionable sentence naming a concrete artifact, field, or step>"
   sources: ["<session ended_at, or sprint:<sprint_id>>"]   # what this was distilled from
 ```
+
+Entries live under the file's `learnings:` key.
 
 You only ever **create and reinforce** entries — never remove one.
 
@@ -80,20 +82,25 @@ Turn each unprocessed observation and each cross-task pattern into a learning, h
 - **Dedup against the entries present in the file.** If an observation or pattern restates an
   existing learning, reinforce it: append its source (the session `ended_at`, or
   `sprint:<sprint_id>` for a run pattern) to that entry's `sources` and add no duplicate.
-- Mint ids monotonically per file (`L-NNN`); never reuse a retired number.
+- Mint each new `L-NNN` id from `max(<lane counter in .wf/config.yaml>, highest id in
+  the file) + 1` — `id_counters.learning` for `$LEARNINGS`, `id_counters.wf_learning`
+  for `$WF_LEARNINGS`; never renumber, never reuse a retired number.
 
 ### Phase 5 — Write, summarize & commit
 
 1. Append the new and reinforced entries to `$LEARNINGS` and `$WF_LEARNINGS`, creating either
    from its template (`assets/learnings.yaml.tmpl`, `assets/wf-learnings.yaml.tmpl`) if absent.
+   If you minted any id, bump its lane's counter in `.wf/config.yaml`
+   (`id_counters.learning` / `id_counters.wf_learning`) to the highest id minted.
 2. **Report the run in your return only — store nothing beyond the streams:** new entries per
    stream, reinforcements, the count dropped as non-actionable, and (when `$PIPELINE_STATE`
    was present) a one-glance execution summary — tasks completed/escalated/blocked, design
    issues by `fix_kind`, stage durations. This summary is transient; do not write it to a file.
 3. Commit the learnings files — they are durable, and leaving them uncommitted is one
-   `git clean` from gone. Stage explicit paths, never `git add .`:
+   `git clean` from gone. Stage explicit paths, never `git add .` (include
+   `.wf/config.yaml` only when you bumped a counter):
    ```sh
-   git add $LEARNINGS $WF_LEARNINGS
+   git add $LEARNINGS $WF_LEARNINGS .wf/config.yaml
    git commit -m "learnings: distil <sprint-id or session range>"
    ```
    If the commit fails (hook, identity), report the exact error and halt — never `--no-verify`.

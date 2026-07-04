@@ -19,6 +19,11 @@ Contents:
   component: <the component this task belongs to>
   depends_on: []                 # task ids that must land first
   covers: [REQ-1, REQ-2]         # the slice requirements this task satisfies
+  requirements:                  # one entry per id in covers — the requirement's text
+    - id: REQ-1
+      statement: "<the requirement's full EARS statement>"
+    - id: REQ-2
+      statement: "<...>"
   serves: CAP-NNN                # or L-NNN — the driver behind those requirements
   files_to_touch: [path, path]   # every file the build phase may write
   acceptance_criteria:           # YOU author these — one testable condition per entry
@@ -34,6 +39,9 @@ Contents:
   implementation_notes:
     - <code patterns found in the source; governing ADR-NNN to respect>
 ```
+
+`requirements` statements are copied **verbatim** from the design slice — never
+paraphrased, never summarized.
 
 ## Acceptance criteria
 

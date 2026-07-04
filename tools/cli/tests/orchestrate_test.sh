@@ -174,28 +174,51 @@ OUTU="$(wf orchestrate dispatch-fix DI-1 --config "$P/.wf/config.yaml" 2>/dev/nu
     && ok "dispatch-fix: unknown fix_kind → human gate (exit 1)" || bad "df unknown" "$OUTU rc=$RCU"
 
 # ── sweep-transients ─────────────────────────────────────────────────────────
+# Staleness routes on pipeline_state.task_states: the artifact names its task_id;
+# a terminal task status (approved/completed/blocked/escalated/design_issue) makes
+# the artifact stale; an active/unknown task — or no state at all — keeps it.
 
-mk_sweep() {  # mk_sweep <event-ts> → project dir with a feedback.yaml + a build_returned event at <ts>
+mk_sweep() {  # mk_sweep <task-status> → project dir with a feedback.yaml for T1
+              # (+ task_states.T1.status=<status>; empty <status> → no pipeline-state file)
     local p; p="$(mktemp -d)"; mkdir -p "$p/.wf/transient"
     cat > "$p/.wf/config.yaml" <<'YAML'
 version: 1
 paths:
   pipeline_state: ".wf/transient/pipeline-state.yaml"
   feedback: ".wf/transient/feedback.yaml"
+  review_ready: ".wf/transient/review-ready.yaml"
+  build_blocked: ".wf/transient/build-blocked.yaml"
 YAML
-    : > "$p/.wf/transient/feedback.yaml"
-    cat > "$p/.wf/transient/pipeline-state.yaml" <<YAML
-history:
-  - {ts: "$1", event: build_returned}
+    printf 'task_id: T1\nverdict: REJECTED\n' > "$p/.wf/transient/feedback.yaml"
+    if [ -n "$1" ]; then
+        cat > "$p/.wf/transient/pipeline-state.yaml" <<YAML
+task_states:
+  T1: {status: $1}
 YAML
+    fi
     echo "$p"
 }
-P="$(mk_sweep 2099-01-01T00:00:00Z)"   # event after the file mtime → stale → deleted
-[ "$(jget "$(wf orchestrate sweep-transients --config "$P/.wf/config.yaml")" "len(d['deleted'])")" = "1" ] \
-    && ok "sweep: consumed transient (event after mtime) → deleted" || bad "sweep deleted" ""
-P="$(mk_sweep 2000-01-01T00:00:00Z)"   # event before the file mtime → live → kept
-[ "$(jget "$(wf orchestrate sweep-transients --config "$P/.wf/config.yaml")" "len(d['skipped'])")" = "1" ] \
-    && ok "sweep: live transient (no event after mtime) → skipped" || bad "sweep skipped" ""
+P="$(mk_sweep approved)"
+SW="$(wf orchestrate sweep-transients --config "$P/.wf/config.yaml")"
+[ "$(jget "$SW" "len(d['deleted'])")" = "1" ] && [ ! -f "$P/.wf/transient/feedback.yaml" ] \
+    && ok "sweep: artifact for an approved task → deleted" || bad "sweep approved" "$SW"
+P="$(mk_sweep building)"
+SW="$(wf orchestrate sweep-transients --config "$P/.wf/config.yaml")"
+[ "$(jget "$SW" "len(d['skipped'])")" = "1" ] && [ -f "$P/.wf/transient/feedback.yaml" ] \
+    && ok "sweep: artifact for a building task → kept" || bad "sweep building" "$SW"
+P="$(mk_sweep "")"
+SW="$(wf orchestrate sweep-transients --config "$P/.wf/config.yaml")"
+[ "$(jget "$SW" "len(d['skipped'])")" = "1" ] && [ -f "$P/.wf/transient/feedback.yaml" ] \
+    && ok "sweep: no pipeline-state file → kept" || bad "sweep nostate" "$SW"
+P="$(mk_sweep approved)"
+printf 'verdict: REJECTED\n' > "$P/.wf/transient/feedback.yaml"   # no task_id in artifact
+SW="$(wf orchestrate sweep-transients --config "$P/.wf/config.yaml")"
+[ "$(jget "$SW" "len(d['skipped'])")" = "1" ] && [ -f "$P/.wf/transient/feedback.yaml" ] \
+    && ok "sweep: artifact without a readable task_id → kept" || bad "sweep no-task-id" "$SW"
+P="$(mk_sweep approved)"
+SW="$(wf orchestrate sweep-transients --config "$P/.wf/config.yaml" --dry-run)"
+[ "$(jget "$SW" "len(d['deleted'])")" = "1" ] && [ -f "$P/.wf/transient/feedback.yaml" ] \
+    && ok "sweep: --dry-run reports stale without deleting" || bad "sweep dry-run" "$SW"
 
 echo ""
 echo "  orchestrate helpers: $pass passed, $fail failed"

@@ -19,7 +19,7 @@ per-language extractor (own toolchain)  ─┐
                                           ┘                      │
                                        cluster.py → clusters.json (3 candidate clusterings)
                                                                   │
-                            ── LLM step (scout, see the `wf-discover` skill) ──
+                            ── LLM step (the `wf-scout` agent) ──
                                        scout reconciles → subsystems.json
                                                                   │
                           render.py → view.html (human)   brief.py → brief.md (agent)
@@ -50,6 +50,9 @@ dict keyed by uid** (not a list): `nodes["<uid>"] -> {uid, id, name, path, modul
 lang, loc, has_doc, has_tests, deps: [uid], synopsis, types: [...], functions: [{name,
 signature, doc}]}`. A uid is `<lang>:<path>` (e.g. `go:internal/auth`). Ground a
 component description in `synopsis` first, then the `types` / `functions` signatures.
+`discover.py` also stamps a top-level `meta` — `{generated_at, source_sha?}` (UTC time +
+short git HEAD; the sha is omitted when the repo is not a git checkout) — which
+`brief.py` renders as a provenance line in its header.
 
 **`clusters.json`** (cluster output) — `{candidates, depgraph_hubs, git_stats}`.
 `candidates` holds the three mechanical clusterings as `{folder, depgraph, gitcochange}`,
@@ -109,8 +112,8 @@ python3 discover.py --repo <REPO> --out <DIR> --name <NAME> \
 
 ## After the mechanical half
 
-The `wf-discover` skill dispatches the scout (the one LLM step) to reconcile
-`clusters.json` into `subsystems.json`, then renders:
+The `wf-discover` skill dispatches the `wf-scout` agent (the one LLM step) to
+reconcile `clusters.json` into `subsystems.json`, then renders:
 
 ```sh
 python3 render.py --model <MODEL> --subsystems <SUBSYSTEMS> --out <VIEW>  --title "<NAME>"

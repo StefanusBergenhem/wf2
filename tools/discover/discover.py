@@ -17,13 +17,36 @@ language; a Go dev has Go, a TS dev has Node — no wf-imposed toolchain beyond 
 
 Usage:
   discover.py --repo PATH --out DIR --name NAME \
+      [--model-out FILE] [--clusters-out FILE] \
       [--go-roots a,b --go-mod go.mod] \
       [--ts-roots src --ts-tsconfig tsconfig.json --ts-exclude 'glob,glob']
+
+--model-out / --clusters-out route the two output files explicitly (absolute or
+repo-relative paths); omitted, they default to model.json / clusters.json under --out.
 """
 import argparse, json, os, subprocess, sys
+from datetime import datetime, timezone
 
 TOOLS = os.path.dirname(os.path.abspath(__file__))
 PY = sys.executable  # the venv python running this script
+
+
+def stamp_model(model_path, repo):
+    """Embed provenance into model.json: meta.generated_at (UTC) always, plus
+    meta.source_sha (short git HEAD) when the repo is a git checkout — omitted
+    gracefully otherwise. brief.py renders the stamp in its header."""
+    meta = {"generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
+    try:
+        r = subprocess.run(["git", "-C", repo, "rev-parse", "--short", "HEAD"],
+                           capture_output=True, text=True)
+        if r.returncode == 0:
+            meta["source_sha"] = r.stdout.strip()
+    except OSError:
+        pass
+    m = json.load(open(model_path))
+    m["meta"] = meta
+    with open(model_path, "w") as f:
+        json.dump(m, f)
 
 
 def run(cmd, out_path=None, **kw):
@@ -43,6 +66,8 @@ def main():
     ap.add_argument("--repo", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--name", required=True)
+    ap.add_argument("--model-out", help="model.json path (default: <out>/model.json)")
+    ap.add_argument("--clusters-out", help="clusters.json path (default: <out>/clusters.json)")
     ap.add_argument("--go-roots"); ap.add_argument("--go-mod", default="go.mod")
     ap.add_argument("--ts-roots"); ap.add_argument("--ts-tsconfig"); ap.add_argument("--ts-exclude")
     ap.add_argument("--git-window", type=int, default=4000)
@@ -75,13 +100,16 @@ def main():
     if not irs:
         sys.exit("no languages configured (pass --go-roots and/or --ts-roots)")
 
-    model = os.path.join(a.out, "model.json")
+    model = a.model_out or os.path.join(a.out, "model.json")
+    os.makedirs(os.path.dirname(os.path.abspath(model)), exist_ok=True)
     run([PY, os.path.join(TOOLS, "spine.py"), "merge", *irs, "-o", model, "--title", a.name])
 
-    clusters = os.path.join(a.out, "clusters.json")
+    clusters = a.clusters_out or os.path.join(a.out, "clusters.json")
+    os.makedirs(os.path.dirname(os.path.abspath(clusters)), exist_ok=True)
     run([PY, os.path.join(TOOLS, "cluster.py"), "--model", model, "--repo", a.repo,
          "--out", clusters, "--git-window", str(a.git_window), "--cochange-min", str(a.cochange_min)])
 
+    stamp_model(model, a.repo)
     n = len(json.load(open(model))["nodes"])
     print(json.dumps({"name": a.name, "components": n, "model": model, "clusters": clusters,
                       "next": "scout reconcile → subsystems.json, then render.py"}, indent=2))

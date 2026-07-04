@@ -10,10 +10,14 @@ released) when every slice is complete.
 
 Tag format (the contract the build/review writer must satisfy):
 
-    [REQ:<id>]      a component requirement, proven by its unit/integration test
-    [SYS-TC:<id>]   a system test case, proven by its capability-level e2e test
+    [REQ:<id>] <full EARS statement>      a component requirement, proven by its test
+    [SYS-TC:<id>] <scenario description>  a system test case, proven by its e2e test
 
 A plain comment token — any language, any comment style (// , # , /* */ , <!-- -->).
+The text after the tag on the same line is the requirement's statement, carried so it
+survives the spec layer draining; the harvester captures it (empty is allowed for
+backward compatibility) and warns — never errors — when two occurrences of one id
+carry different non-empty texts.
 No hash: a reworded requirement does not invalidate its tag (completion is set
 membership, not content equality). <id> is a repo-unique id (REQ-<n> or SYS-TC-<n>,
 monotonic over the whole repo, never reused — a design-local id would collide with a
@@ -46,8 +50,23 @@ import sys
 TAG_RE = re.compile(r"\[(?:REQ|SYS-TC):\s*([\w.:-]+)\s*\]")
 
 
+# Comment closers a statement may drag along when the tag lives in a block comment
+# (/* ... */ or <!-- ... -->); stripped so the harvested text is the statement alone.
+_COMMENT_CLOSERS = ("*/", "-->")
+
+
+def _statement(line, tag_end):
+    """The trailing text after the tag on its line — the statement the tag carries."""
+    text = line[tag_end:].strip()
+    for closer in _COMMENT_CLOSERS:
+        if text.endswith(closer):
+            text = text[: -len(closer)].strip()
+    return text
+
+
 def harvest(tests_root):
-    """Return {id: [relpath, ...]} for every [REQ:<id>] / [SYS-TC:<id>] tag under tests_root."""
+    """Return {id: {"files": [relpath, ...], "statements": [text, ...]}} for every
+    [REQ:<id>] / [SYS-TC:<id>] tag under tests_root."""
     covered = {}
     for root, _dirs, files in os.walk(tests_root):
         for name in files:
@@ -57,10 +76,13 @@ def harvest(tests_root):
                     text = fh.read()
             except OSError:
                 continue
-            for match in TAG_RE.finditer(text):
-                covered.setdefault(match.group(1), []).append(
-                    os.path.relpath(path, tests_root)
-                )
+            for line in text.splitlines():
+                for match in TAG_RE.finditer(line):
+                    entry = covered.setdefault(
+                        match.group(1), {"files": [], "statements": []}
+                    )
+                    entry["files"].append(os.path.relpath(path, tests_root))
+                    entry["statements"].append(_statement(line, match.end()))
     return covered
 
 
@@ -69,7 +91,20 @@ def _slice_ids(sl):
     return list(sl.get("requirements", [])) + list(sl.get("system_tests", []))
 
 
-def reconcile(slices, covered_ids):
+def reconcile(slices, harvested):
+    covered_ids = set(harvested)
+    # Per harvested id: its statement (first non-empty text seen — empty tags are
+    # tolerated), plus a warning when occurrences disagree on non-empty text.
+    statements = {}
+    warnings = []
+    for rid in sorted(harvested):
+        distinct = []
+        for text in harvested[rid]["statements"]:
+            if text and text not in distinct:
+                distinct.append(text)
+        statements[rid] = distinct[0] if distinct else ""
+        if len(distinct) > 1:
+            warnings.append({"id": rid, "statements": distinct})
     out_slices = []
     for sl in slices:
         ids = _slice_ids(sl)
@@ -83,7 +118,13 @@ def reconcile(slices, covered_ids):
     expected = {r for sl in slices for r in _slice_ids(sl)}
     orphans = sorted(covered_ids - expected)
     all_complete = all(s["complete"] for s in out_slices) if out_slices else True
-    return {"all_complete": all_complete, "slices": out_slices, "orphans": orphans}
+    return {
+        "all_complete": all_complete,
+        "slices": out_slices,
+        "orphans": orphans,
+        "statements": statements,
+        "warnings": warnings,
+    }
 
 
 def main(argv=None):
@@ -117,7 +158,7 @@ def main(argv=None):
         print(f"reconcile: --tests {args.tests} is not a directory", file=sys.stderr)
         return 2
 
-    report = reconcile(slices, set(harvest(args.tests)))
+    report = reconcile(slices, harvest(args.tests))
 
     if args.json:
         print(json.dumps(report, indent=2))
@@ -130,11 +171,17 @@ def main(argv=None):
         if s["missing"]:
             line += f"  missing: {', '.join(s['missing'])}"
         print(line)
+        for rid in s["covered"]:
+            if report["statements"].get(rid):
+                print(f"  {rid}: {report['statements'][rid]}")
     done = sum(1 for s in report["slices"] if s["complete"])
     tail = "  -> backlog empty; design can be released" if report["all_complete"] and report["slices"] else ""
     print(f"backlog: {done}/{len(report['slices'])} slices complete{tail}")
     if report["orphans"]:
         print(f"historical/orphan tags (not in current design): {', '.join(report['orphans'])}")
+    for w in report["warnings"]:
+        texts = " | ".join(f'"{t}"' for t in w["statements"])
+        print(f"warning: {w['id']} carries divergent statements across its tags: {texts}")
     return 0
 
 

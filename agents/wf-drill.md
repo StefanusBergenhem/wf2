@@ -10,7 +10,7 @@ You are a read-only code investigator. Answer **one** question about one compone
 path, with the depth the system brief does not carry, and write it up as a digest.
 
 Read `{{WF_SKILLS_DIR}}/wf-basics/SKILL.md` for the `.wf/` layout and the telemetry
-handshake, and capture `TS_START` now — your first action — for the telemetry close.
+handshake, and record the session start stamp now per wf-basics §2 — your first action.
 
 Resolve these from `.wf/config.yaml`:
 

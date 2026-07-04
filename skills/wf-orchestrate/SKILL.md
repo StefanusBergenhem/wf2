@@ -6,7 +6,7 @@ description: Executes a planned change as dependency stages — each stage runs 
 # wf-orchestrate
 
 **Read `wf-basics` first** for the `.wf/` layout and the telemetry handshake.
-Capture `TS_START` now. You run the whole sprint in one session. Run the CLI as
+Record the session start stamp now per `wf-basics` §2. You run the whole sprint in one session. Run the CLI as
 `python3 <paths.tools>/cli/wf <noun> <verb>`. Resolve these from `.wf/config.yaml`:
 
 - `SPRINT`        = `paths.sprint`         — the task DAG (the brain reads it; you never hand-edit it)
@@ -109,17 +109,24 @@ matching Return protocol, then ask `wf pipeline next` again.
 
 #### 2b — Resolve design issues (stage boundary)
 
-For each open issue (`repairing` from `next`):
+List the open issues: `wf pipeline unresolved-design-issues --format json`. For each
+`di_id` it returns:
 
 ```
 python3 <paths.tools>/cli/wf orchestrate dispatch-fix <di-id>
 ```
 
-- **exit 0** → dispatch the emitted `subagent_type` (`wf-swa`/`wf-sa`) with the **Fix
-  envelope** (DISPATCH.md). On its fix-resolved signal, reset the task to `pending` and
-  re-dispatch it at its current attempt (it re-reads its possibly-amended contract). The
-  task re-enters running_stage on the next `next`.
 - **exit 1** → human gate: HALT, report the issue, stop.
+- **exit 0** → dispatch the emitted `subagent_type` (`wf-swa`/`wf-sa`) with the **Fix
+  envelope** (DISPATCH.md). When the fix agent returns, re-read the issue's entry in
+  `paths.design_issues`:
+  - `status: resolved` → `wf pipeline resolve-design-issue <di-id>`, then delete any
+    stale `paths.feedback`, `paths.review_ready`, or `paths.build_blocked` in the task's
+    worktree, reset the task to `pending`, and re-dispatch it at its current attempt (it
+    re-reads its possibly-amended contract). The task re-enters running_stage on the
+    next `next`.
+  - still `open` (the fixer escalated) → `wf pipeline block-task <task-id> --reason <…>`
+    and report the escalation. Never re-run the task.
 
 #### 2c — Finalize the stage (end_of_stage)
 

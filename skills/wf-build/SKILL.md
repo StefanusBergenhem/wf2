@@ -22,7 +22,8 @@ this task builds. Resolve every path and command from `.wf/config.yaml`:
 ## Step 1 — Load the contract
 
 1. Read `CONTRACT`. It carries `acceptance_criteria`, `testing_mandate`, `covers`,
-   `files_to_touch`, `out_of_scope`, and `implementation_notes`.
+   `requirements` (each covered id's full statement), `files_to_touch`, `out_of_scope`,
+   and `implementation_notes`.
 2. Read only the source the contract points at — the files in `files_to_touch` and any
    path named in `implementation_notes`. No wider exploration.
 3. A completed `depends_on` task is already merged into the branch your worktree was cut
@@ -49,14 +50,18 @@ Announce each phase.
 
 1. Write the test for every `testing_mandate` case: set up specific inputs, invoke the
    code under test, assert specific outputs.
-2. **Stamp the proving tag.** In each test, place a plain comment naming what it proves —
-   no hash, any comment style:
-   - a component task: `[REQ:<id>]` where `<id>` is the parent requirement of the AC it
-     covers — a test covering `REQ-1.AC-2` carries `[REQ:REQ-1]`. Every requirement in the
-     contract's `covers` must end with at least one tagged test.
-   - an e2e task: `[SYS-TC:<id>]` for each `system_tests[].id` — the end-to-end test proving
-     `SYS-TC-1` carries `[SYS-TC:SYS-TC-1]`.
-   That tag is what the reconcile harvester reads and the reviewer verifies.
+2. **Stamp the proving tag.** In each test, place a plain comment carrying the tag AND,
+   on the same line, the full statement it proves — verbatim from the contract, no hash,
+   any comment style:
+   - a component task: `[REQ:<id>] <statement>` where `<id>` is the parent requirement of
+     the AC it covers and `<statement>` is that id's entry in the contract's
+     `requirements` — a test covering `REQ-1.AC-2` carries
+     `// [REQ:REQ-1] When an operator submits credentials, the system shall return a session token within 200ms p95.`
+     Every requirement in the contract's `covers` must end with at least one tagged test.
+   - an e2e task: `[SYS-TC:<id>] <description>` for each `system_tests[].id`, the
+     description taken verbatim from that entry — the end-to-end test proving `SYS-TC-1`
+     carries `[SYS-TC:SYS-TC-1] <its system_tests[].description>`.
+   That tag line is what the reconcile harvester reads and the reviewer verifies.
 3. Check each test against the `wf-testing-anti-patterns` table. A match means restructure
    it before continuing.
 4. Run the project's test command for what you changed and **confirm the tests FAIL** for
@@ -118,8 +123,8 @@ pass — do not write `review_ready`.
    not rewrite, and do not touch anything it does not name.
 2. If a fix reveals a contract problem (Step 3b criteria), write the design issue and HALT.
 3. If a fix needs a file outside `files_to_touch`, HALT with a scope block (below).
-4. Re-run the gate (Step 4) and the verification checklist, re-commit, and overwrite
-   `paths.review_ready`.
+4. Re-run the gate (Step 4) and the verification checklist, re-commit, delete
+   `FEEDBACK`, then write `paths.review_ready` — in that order.
 
 ## Scope-expansion HALT (`paths.build_blocked`)
 

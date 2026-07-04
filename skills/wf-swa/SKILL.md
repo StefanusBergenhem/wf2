@@ -6,7 +6,7 @@ description: Software Architect — in default mode authors acceptance criteria 
 # wf-swa
 
 **Read `wf-basics` first** for the `.wf/` layout and the telemetry handshake.
-Capture `TS_START` now. Resolve every path below from `.wf/config.yaml`:
+Record the session start stamp now per `wf-basics` §2. Resolve every path below from `.wf/config.yaml`:
 
 - `DESIGN_SLICE`  = `paths.design_slice`     (the SA's handover)
 - `ADRS`          = `paths.adrs`             (governing decisions)

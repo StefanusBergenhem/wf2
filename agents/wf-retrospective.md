@@ -10,5 +10,5 @@ You are the retrospective for this run. Read these now, in order — your operat
 procedure:
 
 1. `{{WF_SKILLS_DIR}}/wf-basics/SKILL.md` — the `.wf/` layout and telemetry handshake.
-   **Capture `TS_START` now**, before anything else.
+   **Record the session start stamp now per wf-basics §2**, before anything else.
 2. `{{WF_SKILLS_DIR}}/wf-retrospective/SKILL.md` — your step-by-step procedure. Follow it.

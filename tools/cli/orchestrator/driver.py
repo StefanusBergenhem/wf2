@@ -149,11 +149,22 @@ class GitOps:
             ["git", *args], cwd=cwd or self.repo_root, capture_output=True, text=True
         )
 
-    def ensure_branch(self, branch: str) -> None:
-        if self._git("rev-parse", "--verify", branch).returncode != 0:
-            r = self._git("checkout", "-b", branch)
-            if r.returncode != 0:
-                raise Escalation(f"could not create sprint branch {branch}: {r.stderr.strip()}")
+    def ensure_branch(self, branch: str, base: str) -> None:
+        # Resume: the sprint branch already exists — no gates, no creation.
+        if self._git("rev-parse", "--verify", branch).returncode == 0:
+            return
+        # Gates (GIT_OPERATIONS.md § Sprint branch): clean tree, base not behind
+        # its remote — then create from the base, never from the current HEAD.
+        if (self._git("status", "--porcelain").stdout or "").strip():
+            raise Escalation(f"working tree not clean; cannot create sprint branch {branch}")
+        behind = self._git("rev-list", "--count", f"{base}..origin/{base}")
+        # A failing rev-list means no remote/upstream for the base — skip the gate.
+        if behind.returncode == 0 and int((behind.stdout or "0").strip() or 0) > 0:
+            raise Escalation(f"base branch {base} is behind its remote; "
+                             f"cannot create sprint branch {branch}")
+        r = self._git("checkout", "-b", branch, base)
+        if r.returncode != 0:
+            raise Escalation(f"could not create sprint branch {branch}: {r.stderr.strip()}")
 
     def add_worktree(self, worktree: str, branch: str, base: str) -> None:
         # Idempotent: a reclaimed task reuses a worktree that survived an interrupted
@@ -295,7 +306,8 @@ class Orchestrator:
         return str(self._worktree_artifact(worktree, "feedback"))
 
     def _build_envelope(self, tid: str, worktree: str) -> str:
-        return json.dumps({"mode": "build", "task_id": tid, "worktree": worktree})
+        # No mode field: wf-build derives build-vs-fix from paths.feedback presence.
+        return json.dumps({"task_id": tid, "worktree": worktree})
 
     def _review_envelope(self, tid: str, worktree: str, pass_agent: str, sprint_branch: str) -> str:
         # sprint_branch is review's diff base; it must travel in the envelope because the
@@ -309,6 +321,34 @@ class Orchestrator:
     # --- the staged scheduler loop ----------------------------------------
 
     async def run(self) -> RunResult:
+        """Drive the run and record exactly one telemetry session on every exit
+        path: completed when it ships, halted when it raises or returns halted,
+        escalated when it finished unshipped with escalations."""
+        try:
+            result = await self._run()
+        except Exception:
+            self._record_session("halted")
+            raise
+        if result.shipped:
+            outcome = "completed"
+        elif result.halted is not None:
+            outcome = "halted"
+        elif result.escalated:
+            outcome = "escalated"
+        else:
+            outcome = "completed"
+        self._record_session(outcome)
+        return result
+
+    def _record_session(self, outcome: str) -> None:
+        try:
+            self.state.run("record_session", "--agent", "wf-orchestrate",
+                           "--started-at", self._started_at, "--ended-at", _now_iso(),
+                           "--outcome", outcome, soft=True)
+        except Exception:  # noqa: BLE001 — telemetry never masks the run's outcome
+            pass
+
+    async def _run(self) -> RunResult:
         # Kickoff / resume safety (mirrors wf-orchestrate §0): sweep already-consumed
         # handoffs and reclaim orphaned building/reviewing slots left by an interrupted
         # run, before any preparing step — no attempt bump, an interruption is not a failure.
@@ -322,7 +362,7 @@ class Orchestrator:
             if not self.sprint_path.exists():
                 raise Escalation(f"wf-swa did not produce {self.sprint_path}; cannot execute a sprint")
         sprint_branch = self._sprint_branch()
-        self.git.ensure_branch(sprint_branch)
+        self.git.ensure_branch(sprint_branch, self._base_branch())
         self.state.run("compute_stages")
         self.state.run("transition", "--to", "running_stage", soft=True)
 
@@ -398,7 +438,7 @@ class Orchestrator:
 
     # --- the per-task build→review chain ----------------------------------
 
-    async def _run_task(self, entry: dict, sprint_branch: str) -> TaskOutcome:
+    async def _run_task(self, entry: dict, sprint_branch: str, start_attempt: int = 1) -> TaskOutcome:
         async with self.sem:
             tid = entry["task_id"]
             worktree = entry["worktree"]
@@ -406,13 +446,14 @@ class Orchestrator:
             try:
                 self.git.add_worktree(worktree, branch, sprint_branch)
                 self._write_task(tid, str(self._worktree_artifact(worktree, "current_task")))
-                return await self._build_pass_loop(tid, worktree, sprint_branch)
+                return await self._build_pass_loop(tid, worktree, sprint_branch, start_attempt)
             except Escalation as exc:
                 self.state.run("block_task", tid, "--reason", f"escalated: {exc.reason}", soft=True)
                 return TaskOutcome(tid, "escalated", exc.reason)
 
-    async def _build_pass_loop(self, tid: str, worktree: str, sprint_branch: str) -> TaskOutcome:
-        attempt = 1
+    async def _build_pass_loop(self, tid: str, worktree: str, sprint_branch: str,
+                               start_attempt: int = 1) -> TaskOutcome:
+        attempt = max(1, start_attempt)
         while True:
             # BUILD
             await asyncio.to_thread(self.dispatcher.dispatch, AGENT_BUILD,
@@ -508,8 +549,10 @@ class Orchestrator:
         return di_id
 
     async def _resolve_design_issues(self, frontier: dict, sprint_branch: str) -> None:
-        """At the stage boundary, route each open design issue via dispatch-fix and
-        re-run the task. A human-gated DI escalates the task."""
+        """At the stage boundary, route each open design issue via dispatch-fix. A
+        resolved fix marks the state DI resolved and re-runs the task; a fixer that
+        left the DI open escalated — block the task, never re-run it. A human-gated
+        DI escalates the task."""
         for di in self.state.json("unresolved_design_issues").get("issues", []):
             di_id, tid = di.get("di_id"), di.get("task_id")
             proc = await asyncio.to_thread(self.scripts.run, "dispatch-fix", di_id, "--config", self.config_path)
@@ -523,18 +566,51 @@ class Orchestrator:
             subagent = route.get("subagent_type")
             await asyncio.to_thread(self.dispatcher.dispatch, subagent,
                                     json.dumps(route.get("envelope") or {}), None)
-            # The fix agent amended the contract/spec; re-run the task from build.
-            entry = {"task_id": tid, "worktree": self._worktree_for(tid)}
-            self.state.run("dispatch", "--agent", AGENT_BUILD, "--task", tid, "--attempt", "1")
-            outcome = await self._run_task(entry, sprint_branch)
+            if not self._host_di_resolved(di_id):
+                # The fixer HALTed and left the DI open — re-running would reproduce it.
+                reason = f"design issue {di_id} fix escalated — needs spec change (wf-sa/human)"
+                self.state.run("block_task", tid, "--reason", reason, soft=True)
+                self.result.escalated.append((tid, reason))
+                continue
+            self.state.run("resolve_design_issue", di_id, soft=True)
+            # The fix agent amended the contract/spec; re-run the task from build, at
+            # its CURRENT attempt (review.max_attempts is per-task, not per-incarnation).
+            attempt = max(1, int(self.state.json("attempt_counter", tid).get("value") or 0))
+            worktree = self._worktree_for(tid)
+            # A fresh build must start in build mode against the amended contract —
+            # clear stale handoff artifacts left in the surviving worktree.
+            for key in ("feedback", "review_ready", "build_blocked"):
+                try:
+                    self._worktree_artifact(worktree, key).unlink()
+                except OSError:
+                    pass
+            entry = {"task_id": tid, "worktree": worktree}
+            self.state.run("dispatch", "--agent", AGENT_BUILD, "--task", tid,
+                           "--attempt", str(attempt))
+            outcome = await self._run_task(entry, sprint_branch, attempt)
             if outcome.status == "escalated":
                 self.result.escalated.append((outcome.task_id, outcome.reason or "escalated"))
+
+    def _host_di_resolved(self, di_id) -> bool:
+        """Re-read the HOST design-issues artifact after a fix dispatch: only the fix
+        agent flips its entry to resolved."""
+        host = common.load_yaml(
+            common.resolve_path(self.config_path, "design_issues", None), optional=True)
+        entry = next((i for i in (host.get("issues") or [])
+                      if isinstance(i, dict) and i.get("id") == di_id), None) or {}
+        return (entry.get("status") or "open") == "resolved"
 
     # --- scope amendment (build_blocked) ----------------------------------
 
     def _handle_build_blocked(self, tid: str, worktree: str) -> bool:
         bb = common.load_yaml(self._worktree_artifact(worktree, "build_blocked"), optional=True)
-        files = [r.get("path") for r in (bb.get("required_files") or []) if isinstance(r, dict) and r.get("path")]
+        # required_files entries are canonically plain strings; tolerate {path: …} dicts.
+        files = []
+        for r in bb.get("required_files") or []:
+            if isinstance(r, str) and r:
+                files.append(r)
+            elif isinstance(r, dict) and r.get("path"):
+                files.append(str(r["path"]))
         if not files:
             return False
         classification = (self.scripts.run(
@@ -666,20 +742,33 @@ class Orchestrator:
             self.git.remove_worktree(worktree)
 
     def _write_fix_contract(self, worktree: str, fix_id: str, cmd) -> None:
+        """Write the stage-fix task contract (task-contract.md shape) and the rejection
+        feedback (feedback.yaml.tmpl shape) the fix build addresses."""
         import yaml as _yaml
+        cmd_str = cmd if isinstance(cmd, str) else " ".join(map(str, cmd))
         ct = self._worktree_artifact(worktree, "current_task")
         fb = self._worktree_artifact(worktree, "feedback")
         ct.parent.mkdir(parents=True, exist_ok=True)
         ct.write_text(_yaml.safe_dump({
-            "task_id": fix_id, "type": "fix",
+            "id": fix_id,
             "title": "Fix the failing stage heavy-check",
-            "acceptance_criteria": ["The stage check passes on the sprint branch."],
+            "covers": [],
             "files_to_touch": [],
+            "acceptance_criteria": [
+                {"id": "STAGE-FIX.AC-1",
+                 "check": f"`{cmd_str}` exits 0 on the sprint branch"}],
+            "out_of_scope": ["any change not needed to make the stage check pass"],
+            "implementation_notes": [f"the failing stage check command: `{cmd_str}`"],
         }, sort_keys=False))
+        fb.parent.mkdir(parents=True, exist_ok=True)
         fb.write_text(_yaml.safe_dump({
-            "verdict": "REJECTED", "source": "stage_check",
-            "failures": [{"command": cmd}],
-            "required_fixes": ["Analyse and fix the failing check; ensure it passes."],
+            "task_id": fix_id,
+            "failures": [{
+                "type": "acceptance_criteria_unmet",
+                "file": "(repo-wide stage check)",
+                "detail": f"`{cmd_str}` exited non-zero on the sprint branch",
+                "required_action": "make the stage check pass",
+            }],
         }, sort_keys=False))
 
     async def _end_of_sprint(self, sprint_branch: str) -> None:
@@ -698,15 +787,27 @@ class Orchestrator:
     def _ship(self, sprint_branch: str) -> None:
         sprint_doc = common.load_yaml(self.sprint_path, optional=True)
         goal = (sprint_doc.get("sprint") or {}).get("summary") or self._sprint_id()
-        body = "\n".join(["Completed tasks:"] + [f"- {t}" for t in self.result.completed])
+        body = self._pr_body()
         self.git.push(sprint_branch)
         self.git.open_pr(title=f"{self._sprint_id()}: {goal}", body=body,
                          head=sprint_branch, base=self._base_branch())
-        self.state.run("record_session", "--agent", "wf-orchestrate",
-                       "--started-at", self._started_at, "--ended-at", _now_iso(),
-                       "--outcome", "completed", soft=True)
         self.state.run("complete_sprint", soft=True)
         self.result.shipped = True
+
+    def _pr_body(self) -> str:
+        """GIT_OPERATIONS.md § Ship: completed tasks, escalated/blocked tasks, and
+        open design issues — simple markdown lists, empty sections omitted."""
+        sections: list[list[str]] = []
+        if self.result.completed:
+            sections.append(["Completed tasks:"] + [f"- {t}" for t in self.result.completed])
+        if self.result.escalated:
+            sections.append(["Escalated/blocked tasks:"]
+                            + [f"- {t}: {r}" for t, r in self.result.escalated])
+        open_dis = self.state.json("unresolved_design_issues").get("issues") or []
+        if open_dis:
+            sections.append(["Design issues:"]
+                            + [f"- {d.get('di_id')} (task {d.get('task_id')})" for d in open_dis])
+        return "\n\n".join("\n".join(s) for s in sections)
 
 
 # ── CLI entrypoint — `wf pipeline run` routes here ────────────────────────────

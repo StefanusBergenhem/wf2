@@ -49,9 +49,9 @@ Most documents are transient handovers between roles. The durable set is small:
 - **`AGENTS.md` files, in a directory hierarchy** — borrowing the industry's
   best practice. Hold commands, gotchas, and conventions, co-located with the
   code they govern.
-- **Requirement tags in test cases** — each requirement's text lives as a
-  greppable tag inside the test that proves it. A script harvests them on demand
-  to produce a fresh requirements-and-coverage summary; nothing is maintained.
+- **Requirement tags in test cases** — every test proving a requirement carries its
+  greppable tag plus the full statement on the tag line. A script harvests ids,
+  statements, and coverage on demand into a fresh summary; nothing is maintained.
 - **Tooling** — config + scripts/CLI. Machinery, kept separate from intent.
 
 Everything else (the repo map, component descriptions, plans, contracts) is

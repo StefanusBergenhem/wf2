@@ -109,6 +109,9 @@ N1="$(wf "$PROJ1" pipeline next --format json)"
 [ "$(jget "$N1" "d['terminal']['stage_done']")" = "False" ] && ok "next: stage not done with pending work" || bad "stage_done" "$N1"
 [ "$(jget "$N1" "d['dispatch'][0]['worktree']")" = ".wf/transient/worktrees/sprint-T1" ] \
     && ok "next: dispatch carries the computed worktree path" || bad "worktree" "$N1"
+[ "$(jget "$N1" "'mode' in d['dispatch'][0]")" = "False" ] \
+    && ok "next: dispatch entry carries no mode field (wf-build derives its mode)" \
+    || bad "dispatch mode field" "$N1"
 
 # cap=1 → one dispatched, the other ready
 PROJ_CAP="$(echo "$DIAMOND" | new_proj)"
@@ -239,6 +242,19 @@ wf "$PROJ_M" pipeline record-design-issue DI-1 --task T4 --severity high --fix_k
     && ok "record-design-issue → design_issue" || bad "DI state" ""
 UDI="$(wf "$PROJ_M" pipeline unresolved-design-issues --format json)"
 [ "$(jget "$UDI" "d['count']")" = "1" ] && ok "unresolved-design-issues counts the open DI" || bad "DI count" "$UDI"
+
+# resolve-design-issue flips the entry to resolved; it drops out of unresolved
+wf "$PROJ_M" pipeline resolve-design-issue DI-1 >/dev/null
+UDR="$(wf "$PROJ_M" pipeline unresolved-design-issues --format json)"
+[ "$(jget "$UDR" "d['count']")" = "0" ] && ok "resolve-design-issue drops the DI from unresolved" || bad "DI resolve" "$UDR"
+HDR="$(wf "$PROJ_M" pipeline history-tail 5 --format json)"
+[ "$(jget "$HDR" "any(e.get('event')=='design_issue_resolved' and e.get('di_id')=='DI-1' for e in d)")" = "True" ] \
+    && ok "resolve-design-issue appends a design_issue_resolved history event" || bad "DI resolve history" "$HDR"
+if wf "$PROJ_M" pipeline resolve-design-issue DI-nope >/dev/null 2>&1; then
+    bad "resolve-design-issue unknown id should fail" "exited 0"
+else
+    ok "resolve-design-issue errors on an unknown id"
+fi
 
 # scope-amendment bumps the count
 wf "$PROJ_M" pipeline scope-amendment T2 --added "a.go,b.go" >/dev/null

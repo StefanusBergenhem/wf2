@@ -49,28 +49,19 @@ takes. Roots are repo-relative:
 
 ```sh
 python3 <paths.tools>/discover/discover.py --repo . --out "$DIR" --name "$NAME" \
+  --model-out "$MODEL" --clusters-out "$CLUSTERS" \
   [--go-roots cmd,internal --go-mod go.mod] \
   [--ts-roots src --ts-tsconfig tsconfig.json --ts-exclude 'src/generated/**']
 ```
 
 Writes `$MODEL` (component graph) and `$CLUSTERS` (three candidate clusterings:
-folder · depgraph · git-cochange) into `$DIR`.
+folder · depgraph · git-cochange).
 
 ## Step 4 — Scout augmentation (subagent)
 
-Dispatch ONE subagent with `$MODEL` + `$CLUSTERS` — `$MODEL`'s `nodes` is a dict keyed
-by uid; full artifact shapes are in `<paths.tools>/discover/README.md`:
-
-- **Reconcile, don't pick a winner.** Synthesize the three clusterings into ONE
-  partition (~6–10 subsystems; every uid in exactly one subsystem; a "Shared /
-  cross-cutting" bucket is fine). Surface where they disagree.
-- **Describe every component** in 1–2 grounded sentences — prefer its existing
-  `synopsis`, else its `types`/`functions` signatures; read source only when
-  signatures are insufficient.
-- **Write `$SUBSYSTEMS`** to the shape in `<paths.tools>/discover/subsystems.example.json`:
-  `system_summary`, `subsystems[]` (`name`, `summary`, `members`, `basis`),
-  `component_descriptions{uid}` for EVERY uid, and `disagreements[]` (each entry
-  `{finding, components}`). Verify the partition and full coverage before writing.
+Dispatch the **`wf-scout`** agent — it reads `$MODEL` + `$CLUSTERS` and writes
+`$SUBSYSTEMS`. After it returns, verify `$SUBSYSTEMS` exists on disk before Step 5 —
+absent → HALT and report.
 
 ## Step 5 — Render and report
 

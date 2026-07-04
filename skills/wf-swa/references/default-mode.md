@@ -39,7 +39,9 @@ one task; every requirement is fully covered across the task set.
 For each task, author its **complete** contract per `references/task-contract.md`:
 `files_to_touch`, the `testing_mandate` (unit positive + negative per target; an integration
 test per real seam — external dep or cross-component wiring), `out_of_scope`,
-`implementation_notes` (source patterns + governing ADRs), and `serves`.
+`implementation_notes` (source patterns + governing ADRs), and `serves`. Copy each covered
+requirement's EARS statement **verbatim** from the slice into the task's `requirements`
+(one `{id, statement}` entry per id in `covers`).
 
 **Plan the slice's system test cases.** For each `SYS-TC-<n>` case wf-sa wrote, add an e2e
 task whose `system_tests` is that case. The case `Covers` a **capability**, so its
@@ -63,9 +65,10 @@ it by splitting a task or merging two.
 
 ## Phase 5 — Write
 
-1. Write `$SPRINT` from `assets/sprint.yaml.tmpl`. It is transient and gitignored —
-   there is nothing to commit; the build pipeline consumes the working-tree file
-   directly.
+1. Write `$SPRINT` from `assets/sprint.yaml.tmpl`. Mint its top-level `sprint_id`
+   as `sprint-<yyyymmdd>-<short-scope-slug>` — today's date plus a short slug of the
+   sprint's scope, `[a-z0-9-]` only. The sprint is transient and gitignored — there
+   is nothing to commit; the build pipeline consumes the working-tree file directly.
 2. **Clear `$DESIGN_SLICE`.** You have refined it into the sprint, so drain your input —
    delete the slice (it is transient and gitignored; the backlog it was cut from persists).
 3. Return a summary: the task count and the dependency shape.

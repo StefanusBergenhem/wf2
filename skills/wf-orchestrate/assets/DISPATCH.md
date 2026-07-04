@@ -15,7 +15,6 @@ task_id:      <id>
 worktree:     <path>          # the agent's working directory
 contract:     <paths.current_task>   # already written by `sprint task --write`
 attempt:      <n>
-mode:         build | fix     # fix when paths.feedback is present (a prior review rejected)
 ```
 
 The build agent reads its contract, writes code + tests, runs `commands.preflight`, and
@@ -44,8 +43,9 @@ the current worktree HEAD.
 mode: default
 ```
 
-The swa agent resolves its inputs from config (design slice, brief, ADRs), authors the
-acceptance criteria, decomposes them into the task DAG, and writes `paths.sprint`. It runs
+The swa agent resolves its inputs from config (design slice, ADRs, and the components'
+source), authors the acceptance criteria, decomposes them into the task DAG, and writes
+`paths.sprint`. It runs
 autonomously; an unbuildable input (absent slice, untestable requirement) halts with outcome
 `escalated` instead of guessing.
 
@@ -61,9 +61,9 @@ di_artifact:     <path>       # the design issue to resolve
 sprint_artifact: <paths.sprint>
 ```
 
-The fix agent amends in isolation (contract for `wf-swa`, requirement/ADR/slice for
-`wf-sa`), commits, and signals fix-resolved. You then reset the task to `pending` and
-re-dispatch it.
+The fix agent amends in isolation — the task contract for `wf-swa` (no commit; the
+sprint file is transient), the requirement/ADR for `wf-sa` — and flips the issue's
+`status` to `resolved` in the DI artifact. Re-read that entry and route per SKILL.md §2b.
 
 ## Closeout — `wf-retrospective` (and any future `wf-*` closeout agent)
 

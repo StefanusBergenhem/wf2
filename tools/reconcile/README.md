@@ -20,16 +20,25 @@ grep.
 
 ## The tag contract — what the build/review *writer* must satisfy
 
-When a test proves a requirement, stamp the requirement's id in that test:
+When a test proves a requirement, stamp the requirement's id **and its full statement**
+in that test:
 
 ```
-[REQ:<id>]
+[REQ:<id>] <the requirement's full EARS statement, verbatim>
 ```
+
+(e2e tests likewise: `[SYS-TC:<id>] <the case's scenario description>`.)
 
 - A plain comment token — **any language, any comment style** (`//`, `#`, `/* */`,
   `<!-- -->`). The harvester greps text, so it is language-agnostic.
+- **Every tagged test carries the statement** on the tag's line — the tag is where the
+  requirement's text survives once the design backlog drains. The harvester captures it
+  and reports it per covered id (a bare tag with no text is tolerated for backward
+  compatibility); when two occurrences of one id carry **different non-empty texts**, it
+  emits a divergent-text **warning** — visibility, never an error.
 - **No hash.** wf2 verification is hash-free: a reworded requirement does not
-  invalidate its tag, because completion is set-membership, not content-equality.
+  invalidate its tag, because completion is set-membership, not content-equality —
+  the statement is carried and reported, never compared for completion.
   (This is the deliberate departure from wf1's basis-hash drift mechanism.)
 - `<id>` is a **repo-unique** requirement id (`REQ-<n>`, monotonic over the whole repo,
   never reused — a design-local id would collide with a retired design's lingering tag).
@@ -81,7 +90,9 @@ python3 reconcile.py --slices slices.json --tests <test-root> [--json]
 
 Exit `0` on success (report produced), `2` on input error. In `--json` mode the
 top-level `all_complete` field is the **"backlog empty → design releasable"** signal;
-each slice carries `complete`, `covered`, and `missing`.
+each slice carries `complete`, `covered`, and `missing`. The top level also carries
+`statements` (each harvested id → the statement its tags carry) and `warnings`
+(the divergent-text entries).
 
 ## What it drives
 

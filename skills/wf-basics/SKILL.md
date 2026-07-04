@@ -27,27 +27,34 @@ recorder command itself errors, continue anyway (telemetry is observability, not
 correctness). Skip the step entirely only when `telemetry.enabled: false` in
 config.
 
-**START — run this NOW**, before any other work (skip only if `TS_START` is
-already set this session):
+**START — run this NOW**, before any other work. Write the start stamp to a file
+— never to an environment variable. `<agent>` is the skill/agent name you will
+pass as `--agent` at END. Overwrite an existing file — a stale stamp from a
+crashed session must not survive:
 
 ```sh
-TS_START="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+mkdir -p <paths.transient>
+date -u +%Y-%m-%dT%H:%M:%SZ > <paths.transient>/ts-start-<agent>
 ```
 
 **END — every role skill runs this as its REQUIRED final action**, whether it
 completed, halted, or escalated. This is the canonical command; a role skill
 triggers it at its end with its own `--agent` and `--outcome`. Resolve the
-recorder from `paths.tools` and the sink from `paths.telemetry`:
+recorder from `paths.tools` and the sink from `paths.telemetry`. Read
+`--started-at` from the start-stamp file — if it is missing, pass the end stamp
+as start (degraded, never blocked) — then delete the file:
 
 ```sh
+TS_END="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 python3 <paths.tools>/telemetry/record_session.py \
-  --agent            <skill-name> \
-  --started-at       "$TS_START" \
-  --ended-at         "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  --agent            <agent> \
+  --started-at       "$(cat <paths.transient>/ts-start-<agent> 2>/dev/null || echo "$TS_END")" \
+  --ended-at         "$TS_END" \
   --outcome          <completed|halted|escalated> \
   --wf-friction      "<see below, or omit>" \
   --repo-observation "<see below, or omit>" \
   --sink             <paths.telemetry>
+rm -f <paths.transient>/ts-start-<agent>
 ```
 
 The sink file is created by `wf-init` at install, so this only ever appends.
