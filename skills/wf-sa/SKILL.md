@@ -127,11 +127,12 @@ the mismatch by renaming the capability.
 **Allocate the full delivery path.** A behavior that must be observable end-to-end
 traverses more than its core-logic component — its **orchestration** (the coordinating
 handler) and its **composition root** (where dependencies are wired) are first-class
-components too. Give a requirement to **each** component the change traverses, the
-composition root included — not only the core-logic one. An unallocated wiring step is how
-a feature ships half-built: a `nil`-wired dependency that compiles and silently does
-nothing. The Software Architect orders the resulting per-component requirements with task
-`depends_on`.
+components too (each project may name these "glue components" differently — do not invent
+new names, use what already exists). Give a requirement to **each** component the change
+traverses, the composition root included — not only the core-logic one. An unallocated
+wiring step is how a feature ships half-built: a `nil`-wired dependency that compiles and
+silently does nothing. The Software Architect orders the resulting per-component
+requirements with task `depends_on`.
 
 Give each requirement a **repo-unique id** (per `references/requirement-syntax.md`). Do not
 number them by hand — run the allocator for the whole set you derived:
