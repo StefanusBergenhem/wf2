@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """render_design.py — render an SA design-graph into ONE self-contained HTML page.
 
-The agent authors a small SEMANTIC design graph (components + dependencies + the
-moves this change makes + requirement allocation) and pipes it as JSON on stdin; this
-script translates it to a styled graph beside a details panel, on the shared graph-view
+The agent authors a small SEMANTIC graph and pipes it as JSON on stdin; this script
+translates it to a styled graph beside a details panel, on the shared graph-view
 chassis (offline, spacing, side panel). The output is TRANSIENT: a conversation aid
 regenerated as the design evolves, never a committed artifact.
 
-Input JSON (stdin):
+Two input shapes, detected from the JSON's top-level keys:
+
+Design mode — components + dependencies + the moves this change makes + allocation:
   {
     "title": "<change summary>",                         # optional
     "components": [                                       # required, >=1
@@ -23,7 +24,20 @@ Input JSON (stdin):
   component.state ∈ existing | new | split | merged | removed
   dependency.state ∈ existing | added | removed | changed
 
-Usage:  ... | render_design.py --out design-view.html
+Entity mode — the domain model: entities + labelled relationships:
+  {
+    "title": "<model summary>",                           # optional
+    "entities": [                                          # required, >=1
+      {"id": "Room", "label": "Room",
+       "attributes": ["name: string"], "note": "..."}      # attributes/note optional
+    ],
+    "relations": [                                         # optional; label REQUIRED
+      {"from": "Room", "to": "Boundary",
+       "label": "derived from", "cardinality": "1..*"}     # cardinality optional
+    ]
+  }
+
+Usage:  ... | render_design.py --out <view>.html
 """
 import argparse
 import json
@@ -113,6 +127,55 @@ showAll();
 """
 
 
+# --- entity mode: the domain model (labelled ER edges over the domain objects) ---
+
+ER_SUMMARY = ("The domain model — entities and the labelled relationships between "
+              "them. An edge label names the relationship; [n..m] is its cardinality. "
+              "Click an entity (or “All entities”) for its attributes and relations.")
+
+ER_BAR = """<button onclick="showAll()">▦ All entities</button>
+<span class="legend"><span>edge = <i>relationship label</i> · [n..m] = cardinality</span></span>"""
+
+ER_BODY_JS = r"""
+const N={}; DATA.nodes.forEach(n=>N[n.id]=n);
+const OUT={}, INC={};
+DATA.edges.forEach(e=>{(OUT[e.from]=OUT[e.from]||[]).push(e);(INC[e.to]=INC[e.to]||[]).push(e);});
+const vnodes=DATA.nodes.map(n=>({
+  id:n.id,
+  label:n.label+(n.attributes.length?"\n—\n"+n.attributes.join("\n"):""),
+  shape:"box", borderWidth:2,
+  color:{background:"#e3f2fd", border:"#1565c0"},
+  font:{size:13, align:"left"}}));
+const vedges=DATA.edges.map(e=>({
+  from:e.from, to:e.to,
+  label:e.label+(e.cardinality?"  ["+e.cardinality+"]":""),
+  arrows:"to", font:{size:11, color:"#64748b", strokeWidth:4},
+  color:{color:"#94a3b8"}, smooth:{type:"continuous"}}));
+WF.draw(vnodes, vedges);
+function showAll(){
+  WF.panelHead("All entities ("+DATA.nodes.length+")");
+  WF.panel("<table>"+DATA.nodes.map(n=>
+    `<tr class="row" onclick="showOne('${n.id}')"><td class="e">${n.label}</td>`+
+    `<td>${n.note||"<span class=empty>—</span>"}`+
+    `${n.attributes.length?`<div class="rq">${n.attributes.join("<br>")}</div>`:""}</td></tr>`).join("")+"</table>");
+}
+function showOne(id){const n=N[id]; if(!n) return;
+  WF.panelHead("Entity");
+  const rel=(arr,out)=>(arr||[]).map(e=>{const o=out?e.to:e.from;
+    const card=e.cardinality?` [${e.cardinality}]`:"";
+    return `<div class="rel">${out?"":"← "}<b>${N[o]?N[o].label:o}</b> <span class="lbl">${e.label}${card}</span></div>`;
+  }).join("")||"<div class=empty>none</div>";
+  WF.panel(`<div class="nm">${n.label}</div>`+
+    `<div class="desc">${n.note||"<span class=empty>no note</span>"}</div>`+
+    (n.attributes.length?`<div class="grp">Attributes</div><div class="rq">${n.attributes.join("<br>")}</div>`:"")+
+    `<div class="grp">Relations out</div>${rel(OUT[id],true)}`+
+    `<div class="grp">Relations in</div>${rel(INC[id],false)}`);
+}
+WF.onNode(showOne);
+showAll();
+"""
+
+
 def fail(msg):
     sys.stderr.write(f"render_design: {msg}\n")
     sys.exit(1)
@@ -128,9 +191,12 @@ def load_design():
         fail(f"invalid JSON on stdin: {e}")
     if not isinstance(d, dict):
         fail("design must be a JSON object")
-    comps = d.get("components")
-    if not isinstance(comps, list) or not comps:
-        fail("design needs a non-empty 'components' list")
+    comps, ents = d.get("components"), d.get("entities")
+    if comps is not None and ents is not None:
+        fail("give 'components' (design mode) OR 'entities' (entity mode), not both")
+    picked = ents if comps is None else comps
+    if not isinstance(picked, list) or not picked:
+        fail("design needs a non-empty 'components' or 'entities' list")
     return d
 
 
@@ -173,19 +239,52 @@ def build_data(design):
     }
 
 
+def build_er_data(design):
+    nodes = []
+    for e in design["entities"]:
+        eid = e.get("id") or e.get("label")
+        if not eid:
+            fail("every entity needs an 'id' or 'label'")
+        nodes.append({
+            "id": eid,
+            "label": e.get("label", eid),
+            "attributes": [a for a in (e.get("attributes") or []) if a],
+            "note": e.get("note", ""),
+        })
+
+    edges = []
+    for r in design.get("relations", []) or []:
+        if not r.get("from") or not r.get("to"):
+            fail("every relation needs 'from' and 'to'")
+        if not r.get("label"):
+            fail("every relation needs a 'label' — an unlabelled ER edge says nothing")
+        edges.append({
+            "from": r["from"], "to": r["to"],
+            "label": r["label"],
+            "cardinality": r.get("cardinality", ""),
+        })
+
+    return {"nodes": nodes, "edges": edges}
+
+
 def main():
     ap = argparse.ArgumentParser(description="Render an SA design graph to self-contained HTML.")
     ap.add_argument("--out", required=True, help="output HTML path")
     args = ap.parse_args()
 
     design = load_design()
-    data = build_data(design)
+    if "entities" in design:
+        data, summary, bar, body_js, kind = (
+            build_er_data(design), ER_SUMMARY, ER_BAR, ER_BODY_JS, "entities")
+    else:
+        data, summary, bar, body_js, kind = (
+            build_data(design), SUMMARY, BAR, BODY_JS, "components")
     page = chassis.render_page(
         title=design.get("title", "design"),
-        summary=SUMMARY,
-        bar_html=BAR,
+        summary=summary,
+        bar_html=bar,
         panel_html="",
-        body_js=BODY_JS,
+        body_js=body_js,
         data=data,
         extra_css=EXTRA_CSS,
     )
@@ -195,7 +294,7 @@ def main():
     with open(args.out, "w", encoding="utf-8") as fh:
         fh.write(page)
     print(f"render_design: wrote {args.out} "
-          f"({len(data['nodes'])} components, {len(data['edges'])} deps)")
+          f"({len(data['nodes'])} {kind}, {len(data['edges'])} edges)")
 
 
 if __name__ == "__main__":

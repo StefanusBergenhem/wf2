@@ -206,6 +206,11 @@ append-only graduation log. Pairs with **C11 (product description)** as its like
 host layer — both are the durable *external/record* tier sitting above the open
 work-set.
 
+**Update 2026-07-09:** the requirement-level readable view now exists —
+`tools/reconcile/register.py` derives a markdown register (REQ/SYS-TC id, statement,
+proving tests) from the tags on demand. Still missing for a full compliance trace: the
+capability → user-need apex, which graduation drops.
+
 **Trigger to act:** when a project with a real audit/traceability mandate adopts wf2
 (the user works in such industries and expects to need it — but no current run does).
 
@@ -261,6 +266,12 @@ interface-with-DbC declaration per component (wf1 carried this in the durable DE
 which wf2 killed). In wf2 the interface is re-derived (discover) or scouted (wf-drill), so
 the verbatim-quote would be sourced differently. Premature until the task-contract authoring
 (wf-swa → build) is the actual bottleneck and the interface source is settled.
+
+**Update 2026-07-09:** the **new/widened-seam half shipped** — the design-slice now carries
+an `## Interface contracts` section (SA-authored, for components/seams with no source to
+read yet) and the task contract an optional `interface_contract` field copied verbatim from
+it. What this entry still covers is the **existing-interface** case: quoting a dependency
+component's *current* interface (sourced from discover/drill) into a wiring task.
 
 **Trigger to act:** when wiring/integration tasks start failing review for guessed
 interface shapes — add a `parent_interface`-style verbatim quote to the task contract,
@@ -391,3 +402,42 @@ first producer of a `spec_amendment` DI, so it lands **with the `wf-sa` spec_ame
 
 **Trigger to act:** a real run hits a spec defect surfaced at the contract layer and the
 human round-trip is friction. Until then the halt-to-human path is correct and cheap.
+
+---
+
+## C20 — SA decomposition heuristic: factor out shared composition roots (dogfood-1 F-3)
+
+**Date:** 2026-07-09
+**Context:** dogfood run 1 (dems): the SA folded `cmd/server` route+adapter wiring into
+**each** endpoint task's acceptance criteria. Every handler task edited the same ~600-line
+composition root, so the SWA serialized four otherwise-parallel tasks (T13→T14→T15→T16) to
+avoid worktree-merge conflicts — defeating the worktree parallelism the build stage exists
+for. Derived, not directly reported: the surface observation was a `repo_observation`, the
+lever is the SA's decomposition pattern.
+
+**Likely shape when built:** an SA design-heuristic (and/or a wf-swa decomposition note):
+when many parallel tasks route through one shared file, factor the shared composition root
+into its own task (or stub the registration seam) so leaf tasks stay independent — the
+`files_to_touch` sets partition.
+
+**Trigger to act:** a second run reproduces the serialization (the dogfood-1 report's own
+threshold — one observation is an inference, not a pattern).
+
+---
+
+## C21 — Mechanical check: every dispatched role left a telemetry row
+
+**Date:** 2026-07-09
+**Context:** dogfood run 1 lost telemetry two ways — build/review appends resolved the
+relative sink against the worktree cwd and died with the worktree (fixed 2026-07-09:
+`record_session.py` now anchors a relative sink to the main checkout root), and nothing
+noticed the loss until a manual audit two days later. The fix removes the known loss
+vector; what remains unguarded is the *detection* gap — a silently skipped or misrouted
+telemetry write is invisible until someone reads the sink.
+
+**Likely shape when built:** the orchestrator records the sink's line count at
+`wf pipeline dispatch` and the return inspectors warn when it did not grow — a cheap
+baseline-compare in pipeline state, not a new subsystem.
+
+**Trigger to act:** a role's telemetry goes missing again *after* the root-anchor fix.
+Building the checker before a second loss mode shows up is machinery without evidence.

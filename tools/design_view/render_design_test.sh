@@ -79,9 +79,46 @@ grep -q '"title": *"state:' "$OUT" && bad "note still encoded as a hover tooltip
 echo "{ not json" | python3 "$SCRIPT" --out "$TMP/bad.html" >/dev/null 2>"$TMP/err10"
 [ $? -ne 0 ] && ok "malformed JSON exits non-zero" || bad "malformed JSON did not error"
 
-# 11 — missing required key (components) errors out
+# 11 — neither 'components' nor 'entities' errors out
 echo '{"title":"x"}' | python3 "$SCRIPT" --out "$TMP/n.html" >/dev/null 2>"$TMP/err11"
-[ $? -ne 0 ] && ok "missing 'components' exits non-zero" || bad "missing key did not error"
+[ $? -ne 0 ] && ok "missing 'components'/'entities' exits non-zero" || bad "missing key did not error"
+
+# --- ER mode: a domain model of entities + labelled relations ---------------
+
+ER_SAMPLE='{
+  "title": "dems domain model",
+  "entities": [
+    {"id": "Room", "label": "Room", "attributes": ["name: string", "boundary: Polygon"], "note": "a physical space"},
+    {"id": "Boundary", "label": "Boundary", "attributes": ["kind: wall|zone"]},
+    {"id": "Member", "label": "Member"}
+  ],
+  "relations": [
+    {"from": "Room", "to": "Boundary", "label": "derived from", "cardinality": "1..*"},
+    {"from": "Member", "to": "Room", "label": "assigned to"}
+  ]
+}'
+EROUT="$TMP/er.html"
+
+# 12 — ER input renders (exit 0, file written)
+echo "$ER_SAMPLE" | python3 "$SCRIPT" --out "$EROUT" >/dev/null 2>"$TMP/err12"
+[ $? -eq 0 ] && [ -f "$EROUT" ] && ok "ER: renders from entities+relations" \
+  || bad "ER render failed (see $TMP/err12: $(cat "$TMP/err12"))"
+
+# 13 — entity labels + attributes reach the output
+grep -q "Boundary" "$EROUT" && grep -q "boundary: Polygon" "$EROUT" \
+  && ok "ER: entity labels + attributes present" || bad "ER: labels/attributes missing"
+
+# 14 — the relationship label and cardinality reach the output (the F-1 gap)
+grep -q "derived from" "$EROUT" && grep -q "1\.\.\*" "$EROUT" \
+  && ok "ER: labelled relation + cardinality present" || bad "ER: relation label/cardinality missing"
+
+# 15 — ER side panel present
+grep -q "All entities" "$EROUT" && ok "ER: side panel lists entities" || bad "ER: panel missing"
+
+# 16 — a relation without a label is rejected (labelled edges are the point)
+echo '{"entities":[{"id":"A"},{"id":"B"}],"relations":[{"from":"A","to":"B"}]}' \
+  | python3 "$SCRIPT" --out "$TMP/er-bad.html" >/dev/null 2>&1
+[ $? -ne 0 ] && ok "ER: unlabelled relation exits non-zero" || bad "ER: unlabelled relation accepted"
 
 echo ""
 echo "  $pass passed, $fail failed"

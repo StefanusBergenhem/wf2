@@ -45,10 +45,44 @@
 
 - <move> — recorded in ADR-NNN; re-run discover after merge.
 
+## Interface contracts
+
+<!-- For each NEW component and each widened shared seam this slice introduces: the
+     concrete shape — signature / struct / endpoint request+response — agreed here,
+     because no source exists yet for wf-swa or the build to read it from. Behaviour
+     lives in the requirements; only the shape lives here. Omit the section when the
+     slice touches existing interfaces only. -->
+
+- **<component or seam>** — serves REQ-NNN; bound by ADR-NNN
+
+      <the signature / struct / endpoint request+response shape>
+
+## NFR & authz
+
+<!-- The slice-level pass over performance envelopes and authorization. Every entry is
+     either a requirement id or an explicit recorded deferral — never a silent absence.
+     Envelope: any trigger whose work scales with data volume carries a measurable bound
+     (requirement-syntax.md, five elements). Authz: any new or changed entry point
+     carries an authorization requirement. -->
+
+- **Envelope:** REQ-NNN bounds <the fan-out / latency>  — or **deferred:** <what · why · revisit when>
+- **Authz:** REQ-NNN guards <the new/changed entry points>  — or **deferred:** <what · why · revisit when>
+
 ## Decisions binding this change
 
 - **New:** ADR-NNN — <title>
 - **Standing:** ADR-NNN — <title> (already governs <component>)
+
+## Assumptions requiring confirmation
+
+<!-- Every interpretive leap made turning a driver into this design — a reading the
+     capability's/learning's wording does not force. Each is presented to the human at
+     alignment and recorded here with the reading chosen AND the reading rejected.
+     Mark it CONFIRMED only after the human ratifies it — `wf slice check` fails the
+     handover on any UNCONFIRMED entry. Omit the section when the drivers admitted
+     only one reading. -->
+
+- **A-1 · CONFIRMED** — CAP-NNN read as <the reading designed to>, not <the reading rejected>.
 
 ## Soundness
 

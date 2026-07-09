@@ -24,7 +24,9 @@ Contents:
       statement: "<the requirement's full EARS statement>"
     - id: REQ-2
       statement: "<...>"
-  serves: CAP-NNN                # or L-NNN — the driver behind those requirements
+  serves: [CAP-NNN, L-NNN]       # every distinct driver behind the covered requirements
+                                 # (read each requirement's driver off the slice; a task
+                                 # grouping requirements with different drivers lists them all)
   files_to_touch: [path, path]   # every file the build phase may write
   acceptance_criteria:           # YOU author these — one testable condition per entry
     - id: REQ-1.AC-1
@@ -38,10 +40,18 @@ Contents:
     - <boundary the developer might be tempted to cross>
   implementation_notes:
     - <code patterns found in the source; governing ADR-NNN to respect>
+  interface_contract: |         # ONLY when the task introduces a component or widens a
+    <signature / struct /       # shared seam: the concrete shape, verbatim from the
+     endpoint shape>            # slice's Interface contracts section. Omit otherwise.
 ```
 
 `requirements` statements are copied **verbatim** from the design slice — never
 paraphrased, never summarized.
+
+`interface_contract` is copied **verbatim** from the slice's Interface contracts section
+when the task builds the new component or widens the seam that contract fixes — the build
+implements that shape, not one it invents. A task touching only existing interfaces omits
+the field.
 
 ## Acceptance criteria
 

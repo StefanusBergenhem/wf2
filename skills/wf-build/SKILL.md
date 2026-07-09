@@ -23,7 +23,9 @@ this task builds. Resolve every path and command from `.wf/config.yaml`:
 
 1. Read `CONTRACT`. It carries `acceptance_criteria`, `testing_mandate`, `covers`,
    `requirements` (each covered id's full statement), `files_to_touch`, `out_of_scope`,
-   and `implementation_notes`.
+   and `implementation_notes` — plus, when the task introduces a component or widens a
+   shared seam, `interface_contract`: the exact signature/struct/endpoint shape to
+   implement. Deviating from it is a contract problem (Step 3b), not a judgement call.
 2. Read only the source the contract points at — the files in `files_to_touch` and any
    path named in `implementation_notes`. No wider exploration.
 3. A completed `depends_on` task is already merged into the branch your worktree was cut

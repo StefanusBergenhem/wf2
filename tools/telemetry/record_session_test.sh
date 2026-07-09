@@ -51,6 +51,43 @@ else
     fail "feedback default"
 fi
 
+echo "== relative sink from a linked worktree lands in the main checkout =="
+REPO="$WORK/repo"
+git init -q "$REPO"
+git -C "$REPO" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+git -C "$REPO" worktree add -q "$WORK/wt" -b task/t1
+( cd "$WORK/wt" && python3 "$REC" --agent wf-review --started-at 2026-01-01T00:00:00Z \
+    --ended-at 2026-01-01T00:00:02Z --outcome completed \
+    --sink ".wf/telemetry/sessions.jsonl" > /dev/null 2>&1 )
+if [ -f "$REPO/.wf/telemetry/sessions.jsonl" ]; then
+    pass "append landed in the main checkout's sink"
+else
+    fail "main checkout sink not written from worktree"
+fi
+if [ -e "$WORK/wt/.wf/telemetry/sessions.jsonl" ]; then
+    fail "record leaked into the worktree (lost on worktree close)"
+else
+    pass "nothing written into the worktree"
+fi
+
+echo "== relative sink from the main checkout resolves to its root =="
+mkdir -p "$REPO/sub"
+( cd "$REPO/sub" && python3 "$REC" --agent wf-build --started-at 2026-01-01T00:00:00Z \
+    --ended-at 2026-01-01T00:00:01Z --outcome completed \
+    --sink ".wf/telemetry/sessions.jsonl" > /dev/null 2>&1 )
+[ "$(wc -l < "$REPO/.wf/telemetry/sessions.jsonl")" -eq 2 ] \
+    && pass "appended to the repo-root sink from a subdir" \
+    || fail "subdir invocation missed the repo-root sink"
+
+echo "== relative sink outside any git repo falls back to cwd =="
+mkdir -p "$WORK/nogit"
+( cd "$WORK/nogit" && python3 "$REC" --agent wf-discover --started-at 2026-01-01T00:00:00Z \
+    --ended-at 2026-01-01T00:00:01Z --outcome completed \
+    --sink "tel/sessions.jsonl" > /dev/null 2>&1 )
+[ -f "$WORK/nogit/tel/sessions.jsonl" ] \
+    && pass "cwd-relative fallback outside git" \
+    || fail "cwd-relative fallback missing"
+
 echo "== invalid outcome rejected =="
 if python3 "$REC" --agent x --started-at 2026-01-01T00:00:00Z --ended-at 2026-01-01T00:00:01Z \
         --outcome banana --sink "$SINK" > /dev/null 2>&1; then

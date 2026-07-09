@@ -104,3 +104,13 @@ the codebase's, re-derived by `discover`.
 It does **not** drive capability removal. A capability leaves `CAPABILITIES.yaml` when the
 SA *designs* it (drains it into the backlog) — upstream of any test, so that transition is
 the SA's, not reconcile's.
+
+## register.py — the derived requirement register
+
+`register.py --tests <test-root> [--out <path>]` renders the same harvested tags as a
+read-only markdown register — per lane (`REQ`, `SYS-TC`): id, the statement its tag
+lines carry, and every proving test file. It answers "what does the system require,
+in total, right now?" for a human reader (a new engineer, an auditor) without
+reintroducing a hand-maintained spec: the register is derived on demand and never
+edited — regenerate it when you need it, and treat a stale copy as disposable.
+Divergent statements across one id's tags are flagged on the row.

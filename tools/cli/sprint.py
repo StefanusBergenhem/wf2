@@ -16,6 +16,7 @@ import re
 from pathlib import Path
 
 import common
+import slice as slice_checks
 
 _AC_RE = re.compile(r"^(REQ-\d+)\.AC-\d+$")          # AC id -> owning REQ
 _SLICE_REQ_RE = re.compile(r"\*\*(REQ-\d+)\*\*")     # slice "Component requirements" bullets
@@ -206,6 +207,11 @@ def _check(rest):
             err("A1", f"slice {req} is not covered by any task (dropped requirement)")
         for tc in sorted(slice_tcs - systc_ids):
             err("A2", f"slice {tc} has no e2e task carrying it")
+        # A3 — every interpretive assumption the SA recorded must be human-confirmed
+        # before build (backstop; `wf slice check` gates it earlier, at the SA's own
+        # handoff).
+        for msg in slice_checks.unconfirmed_assumptions(text):
+            err("A3", msg)
     else:
         warn("A0", "slice not found; ran intra-sprint checks only (B/C)")
 

@@ -57,7 +57,9 @@ python3 <paths.tools>/telemetry/record_session.py \
 rm -f <paths.transient>/ts-start-<agent>
 ```
 
-The sink file is created by `wf-init` at install, so this only ever appends.
+The sink file is created by `wf-init` at install, so this only ever appends. The
+recorder anchors a relative sink to the main checkout root, so run the command
+unchanged inside a task worktree — never rewrite the sink path.
 
 ### Session feedback — the two questions
 

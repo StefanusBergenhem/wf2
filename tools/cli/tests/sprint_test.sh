@@ -98,7 +98,7 @@ tasks:
         statement: "the widget does X"
       - id: REQ-2
         statement: "the widget rejects Y"
-    serves: CAP-1
+    serves: [CAP-1, CAP-2]
     files_to_touch: ["core/widget.go"]
     acceptance_criteria:
       - id: REQ-1.AC-1
@@ -124,7 +124,7 @@ tasks:
     depends_on: [T1]
     covers: []
     requirements: []
-    serves: CAP-1
+    serves: [CAP-1]
     files_to_touch: ["e2e/widget_test.go"]
     acceptance_criteria: []
     testing_mandate:
@@ -252,6 +252,28 @@ PY
 OUT="$(wf sprint check --format json)"
 [ "$(has "$OUT" C6)" = "True" ] && ok "check: C6 flags a task with no serves" || bad "C6" "$OUT"
 
+# C6 — a legacy scalar serves is still accepted
+write_clean_sprint
+"$PYTHON" - "$SPRINT" <<'PY'
+import sys, yaml
+p=sys.argv[1]; d=yaml.safe_load(open(p))
+d['tasks'][0]['serves']='CAP-1'
+open(p,'w').write(yaml.safe_dump(d, sort_keys=False))
+PY
+OUT="$(wf sprint check --format json)"
+[ "$(has "$OUT" C6)" = "False" ] && ok "check: C6 accepts a scalar serves (legacy)" || bad "C6-scalar" "$OUT"
+
+# C6 — an empty serves list is as absent as a missing one
+write_clean_sprint
+"$PYTHON" - "$SPRINT" <<'PY'
+import sys, yaml
+p=sys.argv[1]; d=yaml.safe_load(open(p))
+d['tasks'][0]['serves']=[]
+open(p,'w').write(yaml.safe_dump(d, sort_keys=False))
+PY
+OUT="$(wf sprint check --format json)"
+[ "$(has "$OUT" C6)" = "True" ] && ok "check: C6 flags an empty serves list" || bad "C6-empty" "$OUT"
+
 # C7 — an AC claimed by two tasks
 write_clean_sprint
 "$PYTHON" - "$SPRINT" <<'PY'
@@ -263,6 +285,31 @@ open(p,'w').write(yaml.safe_dump(d, sort_keys=False))
 PY
 OUT="$(wf sprint check --format json)"
 [ "$(has "$OUT" C7)" = "True" ] && ok "check: C7 flags an AC claimed by two tasks" || bad "C7" "$OUT"
+
+# A3 — an UNCONFIRMED assumption in the slice blocks the gate
+write_clean_slice; write_clean_sprint
+cat >> "$SLICE" <<'MD'
+
+## Assumptions requiring confirmation
+
+- **A-1 · CONFIRMED** — CAP-1 read as widget-per-user, not widget-per-team.
+- **A-2 · UNCONFIRMED** — "driven" read as manual trigger only.
+MD
+OUT="$(wf sprint check --format json)"; RC=$?
+[ "$RC" -eq 1 ] && ok "check: A3 unconfirmed assumption -> exit 1" || bad "A3 exit" "rc=$RC $OUT"
+[ "$(has "$OUT" A3)" = "True" ] && ok "check: A3 flags the UNCONFIRMED assumption" || bad "A3" "$OUT"
+[ "$(jget "$OUT" "any('A-2' in f['msg'] for f in d['errors'])")" = "True" ] && ok "check: A3 names the assumption id" || bad "A3 id" "$OUT"
+
+# A3 — all-CONFIRMED assumptions pass clean
+write_clean_slice; write_clean_sprint
+cat >> "$SLICE" <<'MD'
+
+## Assumptions requiring confirmation
+
+- **A-1 · CONFIRMED** — CAP-1 read as widget-per-user, not widget-per-team.
+MD
+OUT="$(wf sprint check --format json)"; RC=$?
+[ "$RC" -eq 0 ] && ok "check: A3 confirmed-only assumptions exit 0" || bad "A3 clean" "rc=$RC $OUT"
 
 # slice absent -> A0 warning, intra-sprint checks still run, no errors -> exit 0
 write_clean_sprint; rm -f "$SLICE"

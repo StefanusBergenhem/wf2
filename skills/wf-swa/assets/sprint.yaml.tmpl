@@ -20,7 +20,7 @@ tasks:
     requirements:               # one entry per id in covers — statement verbatim from the slice
       - id: REQ-1
         statement: "<the requirement's full EARS statement, verbatim>"
-    serves: CAP-NNN
+    serves: [CAP-NNN]           # every distinct driver of the covered requirements — never just a "primary"
     files_to_touch:
       - "<path>"
     acceptance_criteria:
@@ -40,6 +40,8 @@ tasks:
       - "<boundary the developer might cross>"
     implementation_notes:
       - "<code pattern from source; ADR-NNN to respect>"
+    # interface_contract: |    # only when the task introduces a component / widens a shared
+    #   <shape>                # seam — the slice's contract for it, verbatim. Omit otherwise.
 
   # An e2e task — one per SA system test case. depends_on the tasks building the
   # requirements DRIVEN BY the capability the case covers, so it runs the assembled path.
@@ -49,7 +51,7 @@ tasks:
     depends_on: [T1]            # the tasks building the reqs driven by CAP-NNN
     covers: []                  # an e2e task proves a SYS-TC (below), not a component requirement
     requirements: []            # empty like covers — the case's text lives in system_tests[].description
-    serves: CAP-NNN
+    serves: [CAP-NNN]           # the capability the SYS-TC covers
     files_to_touch:
       - "<the e2e test file>"
     acceptance_criteria: []     # the system test case IS the acceptance; no REQ-N.AC here

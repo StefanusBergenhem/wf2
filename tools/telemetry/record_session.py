@@ -19,8 +19,29 @@ Usage:
 import argparse
 import json
 import os
+import subprocess
 import sys
 from datetime import datetime
+
+
+def _resolve_sink(sink):
+    """Anchor a relative sink to the main checkout root — the parent of
+    ``git rev-parse --git-common-dir`` — so an append from inside a per-task git
+    worktree lands in the main repo's sink instead of dying with the worktree.
+    Outside a git repo the sink stays cwd-relative."""
+    if os.path.isabs(sink):
+        return sink
+    try:
+        out = subprocess.run(
+            ["git", "rev-parse", "--git-common-dir"],
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+        return sink
+    if not out:
+        return sink
+    common_dir = out if os.path.isabs(out) else os.path.join(os.getcwd(), out)
+    return os.path.join(os.path.dirname(common_dir), sink)
 
 
 def _parse_iso(s):
@@ -60,12 +81,13 @@ def main(argv=None):
         },
     }
 
-    parent = os.path.dirname(args.sink)
+    sink = _resolve_sink(args.sink)
+    parent = os.path.dirname(sink)
     if parent:
         os.makedirs(parent, exist_ok=True)
-    with open(args.sink, "a", encoding="utf-8") as f:
+    with open(sink, "a", encoding="utf-8") as f:
         f.write(json.dumps(record) + "\n")
-    print(args.sink)
+    print(sink)
     return 0
 
 

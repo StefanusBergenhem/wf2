@@ -16,6 +16,7 @@ Record the session start stamp now per `wf-basics` §2. Resolve every path below
 - `DESIGN_BACKLOG` = `paths.design_backlog` (your designed-but-unbuilt work — append designs, drain built ones; committed)
 - `DESIGN_SLICE`   = `paths.design_slice`   (the cut you hand wf-swa — transient; drained at sprint close)
 - `DESIGN_VIEW`    = `paths.design_view`    (the design diagram you render — transient)
+- `DOMAIN_VIEW`    = `paths.domain_view`    (the entity/domain-model diagram — transient)
 - `ARCHIVE`        = `paths.archive`         (maintainer research archive — you snapshot drained inputs into it; committed)
 
 You are the Solution Architect. You take the capabilities and learnings in scope and
@@ -125,6 +126,12 @@ something else, the requirement is where you **map** user-voice to structure —
 capability's words in the trace, name your component in the requirement; do not reconcile
 the mismatch by renaming the capability.
 
+**Mark every interpretive leap as an assumption.** Where a driver's wording admits more
+than one reading, the reading you design to is an assumption, not a fact. Record it —
+the reading chosen and the reading rejected — for ratification at Phase 4. Never silently
+recast a capability's meaning; an unrecorded recast propagates through every requirement
+it drove before anything can catch it.
+
 **Allocate the full delivery path.** A behavior that must be observable end-to-end
 traverses more than its core-logic component — its **orchestration** (the coordinating
 handler) and its **composition root** (where dependencies are wired) are first-class
@@ -147,6 +154,22 @@ Assign the printed ids in order. If alignment (Phase 4) adds a requirement, cont
 from the highest you have already assigned this session — re-running the allocator before you
 commit hands back the same base, so two requirements would take the same id.
 **Self-check each against the INCOSE checklist** in the reference.
+
+**Write the interface contract for every new component and widened shared seam.** A
+behaviour requirement names what a seam must do; it does not fix the seam's shape. For
+each component this change introduces, and each shared interface it widens, write the
+concrete shape — signature, struct, endpoint request/response — into the slice's
+**Interface contracts** section. No source exists yet for a downstream role to read the
+shape from; leaving it unwritten hands the decision to the build, where a mis-wired seam
+compiles and silently does nothing.
+
+**Run the NFR & authz pass over the finished set.** Two checks, each ending in a
+requirement or an explicit recorded deferral — never a silent absence:
+- any trigger whose work **scales with data volume** (a re-evaluate-all, a startup sweep,
+  an unbounded fan-out) gets a measurable envelope per the reference's five NFR elements;
+- any **new or changed entry point** gets an authorization requirement.
+Record the outcome in the slice's **NFR & authz** section — a deferral names what was
+deferred, why, and when to revisit.
 
 Deriving requirements often exposes a missing owner or a mis-scoped boundary — when it
 does, return to Phase 2 and reshape. Architecture and requirements settle together.
@@ -187,10 +210,18 @@ JSON
 `state` marks the move — components `existing | new | split | merged | removed`,
 dependencies `existing | added | removed | changed`.
 
+When the domain model itself is under discussion (or the human asks for an entity
+view), author it the same way and render it with the same tool to `$DOMAIN_VIEW`:
+entities (`{"id", "label", "attributes": [...]}`) plus labelled relations
+(`{"from", "to", "label", "cardinality"}`) instead of components. Never hand-author
+diagram HTML — a hand-built artifact cannot be regenerated and rots.
+
 With the picture up, walk the human through the shape and the requirements. Present
 each non-obvious decision in the **decision format** (below) — one at a time,
 alternatives + recommendation + risk — and **WAIT for the human** to ratify or redirect
-before the next. The back-and-forth is the point; do not dump every decision in one
+before the next. Present each **assumption** recorded in Phase 3 the same way — the
+chosen reading against the rejected one — and **WAIT for the human to confirm or
+correct it**; only a ratified assumption may be marked CONFIRMED in the slice. The back-and-forth is the point; do not dump every decision in one
 wall of text. When a redirection changes the shape or a requirement, fold it back into
 Phase 2 or 3 and re-present.
 
@@ -233,8 +264,13 @@ The judgement already happened; this is capture.
 4. **Cut the design-slice.** Fill `$DESIGN_SLICE` from `assets/design-slice.md.tmpl` with a
    **buildable increment** of the backlog — the whole backlog if it fits one slice, else a
    coherent subset along the dependency spine: its requirements (with owners and drivers), the
-   **system test cases** for its end-to-end behaviours, the moves, the binding ADRs (new +
-   standing), the Phase 5 soundness verdicts, and any risk for wf-swa.
+   **system test cases** for its end-to-end behaviours, the moves, the **interface contracts**
+   for its new/widened seams, the **NFR & authz** outcomes, the binding ADRs (new + standing),
+   the **assumptions requiring confirmation** (each ratified at Phase 4 and marked CONFIRMED),
+   the Phase 5 soundness verdicts, and any risk for wf-swa.
+   **Gate: run `python3 <paths.tools>/cli/wf slice check`. Do not proceed to step 5 until it
+   reports `verdict: pass` (exit 0)** — a failure names an assumption the human never
+   ratified; return to Phase 4 and close it, never edit the marker to silence the gate.
    Point at the backlog/brief/drill-cache by path; restate no structure.
 5. **Confirm before commit.** Present a brief summary of the decisions and ADRs the alignment
    settled, reopen `$DESIGN_VIEW`, and ask for the go-ahead to commit. If the human declines,
