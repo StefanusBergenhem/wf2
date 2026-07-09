@@ -63,15 +63,21 @@ interface, a migration, a type another task imports). Tasks with no edge between
 run in parallel. The graph must be acyclic — a cycle is a decomposition error; resolve
 it by splitting a task or merging two.
 
-## Phase 5 — Write
+## Phase 5 — Write and gate
 
 1. Write `$SPRINT` from `assets/sprint.yaml.tmpl`. Mint its top-level `sprint_id`
    as `sprint-<yyyymmdd>-<short-scope-slug>` — today's date plus a short slug of the
    sprint's scope, `[a-z0-9-]` only. The sprint is transient and gitignored — there
    is nothing to commit; the build pipeline consumes the working-tree file directly.
-2. **Clear `$DESIGN_SLICE`.** You have refined it into the sprint, so drain your input —
-   delete the slice (it is transient and gitignored; the backlog it was cut from persists).
-3. Return a summary: the task count and the dependency shape.
+2. **Gate: run `python3 <paths.tools>/cli/wf sprint check`. Do not proceed until it
+   reports `verdict: pass` (exit 0).** It checks the sprint against the slice — every
+   slice requirement covered, every criterion carried by exactly one task and referenced
+   by a test, every SYS-TC carried by an e2e task, an acyclic DAG. On an error finding,
+   fix the decomposition in `$SPRINT` and re-run. A finding you cannot resolve without
+   minting or changing a requirement is a spec defect — halt and escalate to the SA (see
+   Halt conditions), never invent a criterion to silence it.
+3. Return a summary: the task count, the dependency shape, and the gate verdict. Leave
+   `$DESIGN_SLICE` in place — it is drained at sprint close, not here.
 
 ## Halt conditions
 

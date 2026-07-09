@@ -43,16 +43,24 @@ paths:
   # regenerated per change, consumed by the next role, never hand-maintained.
   adrs: ".wf/adrs"                             # Durable architecture decision records (wf-sa). Committed dir, one .md per ADR.
   design_backlog: ".wf/design-backlog.md"      # wf-sa's designed-but-unbuilt work; drains as reconcile shows it built. Committed.
-  design_slice: ".wf/transient/design-slice.md"   # wf-sa cuts this from the backlog for wf-swa; wf-swa clears it. Transient.
+  design_slice: ".wf/transient/design-slice.md"   # wf-sa cuts this from the backlog for wf-swa; retained through build, drained at complete-sprint. Transient.
   design_view: ".wf/transient/design-view.html"   # wf-sa interactive design diagram (render_design.py). Transient.
   drill_cache: ".wf/transient/drill-cache"        # Shared scout digests (wf-po/wf-sa dispatch wf-drill, which appends; both read). Transient dir.
   sprint: ".wf/transient/sprint.yaml"             # wf-swa task DAG the orchestrator executes. Transient.
 
+  # Maintainer research archive (committed). WRITE-ONLY: the drain sites snapshot each
+  # artifact here as it leaves the working set (capabilities/learnings at wf-sa design;
+  # slice + sprint + shipped backlog at complete-sprint). NO wf role is ever instructed to
+  # read it — it exists solely so the wf2 maintainer can study run quality offline. It is
+  # OUTSIDE the governed working set, so the governor's derive-don't-store rule does not
+  # apply: nothing consumes it as truth, so it cannot rot.
+  archive: ".wf/archive"
+
   # Orchestration (the build pipeline). pipeline-state is the live run state the brain
   # and the orchestrator read/write on every transition; pipeline-history is its spilled
   # audit tail. Both transient (machine-owned, gitignored) — completion is derived from
-  # [REQ] tags, never stored here. (Optional override paths.archive_sprints, when set,
-  # makes complete-sprint archive the shipped plan + final state instead of discarding it.)
+  # [REQ] tags, never stored here. complete-sprint snapshots the shipped plan + final state
+  # to paths.archive before resetting.
   pipeline_state: ".wf/transient/pipeline-state.yaml"      # live run state: stages, task_states, design_issues, history. Transient.
   pipeline_history: ".wf/transient/pipeline-history.yaml"  # archived history overflow. Transient.
 

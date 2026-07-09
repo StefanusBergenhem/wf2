@@ -23,6 +23,7 @@ from __future__ import annotations
 import datetime
 from pathlib import Path
 
+import archive
 import common
 
 # Effective task status → bucket. Live state (pipeline_state.task_states[id].status)
@@ -847,9 +848,13 @@ def _archive_history(rest):
 
 def _complete_sprint(rest):
     """Close a shipped sprint and reset the pipeline for the next one. Run at the end
-    of ship: archive the sprint plan + its final run state under paths.archive_sprints
-    (when configured), then reset pipeline_state to a bare ``idle`` so the next run
-    starts clean instead of overlaying the shipped sprint's all-completed task states.
+    of ship. When paths.archive is set, snapshot the sprint's working set into
+    paths.archive/<sprint_id>/ as it drains — the sprint and the design-slice are moved
+    out (drained), the design-backlog and final run state are copied (reconcile drains
+    the backlog on its own). The archive is a write-only maintainer sink; no role reads
+    it. Then reset pipeline_state to a bare ``idle`` so the next run starts clean instead
+    of overlaying the shipped sprint's all-completed task states. When paths.archive is
+    unset, the sprint slot is simply cleared (no archive).
 
     Git is intentionally NOT touched — a pure file/state mutation both drivers share."""
     args = common.base_parser("pipeline complete-sprint").parse_args(rest)
@@ -859,27 +864,30 @@ def _complete_sprint(rest):
     sprint_doc = common.load_yaml(sprint_path, optional=True)
     sprint_id = sprint_doc.get("sprint_id") or doc.get("sprint_id") or "sprint"
 
-    rel = (common.config_doc(args.config).get("paths") or {}).get("archive_sprints")
-    archived = archived_state = None
-    if rel:
-        archive_dir = common.project_root(args.config) / rel
-        archive_dir.mkdir(parents=True, exist_ok=True)
+    paths = common.config_doc(args.config).get("paths") or {}
+    archived = {}
+    if paths.get("archive"):
+        root = common.resolve_path(args.config, "archive", None)
+        # sprint + slice drain out of the working set; backlog + run-state are snapshots.
         if sprint_path.exists():
-            dest = archive_dir / f"{sprint_id}.yaml"
-            sprint_path.replace(dest)
-            archived = str(dest)
-        if doc:
-            state_dest = archive_dir / f"{sprint_id}.pipeline_state.yaml"
-            _write_yaml(state_dest, doc)
-            archived_state = str(state_dest)
+            archived["sprint"] = str(archive.snapshot(root, sprint_id, sprint_path, move=True))
+        if paths.get("design_slice"):
+            sp = common.resolve_path(args.config, "design_slice", None)
+            if sp.exists():
+                archived["slice"] = str(archive.snapshot(root, sprint_id, sp, move=True))
+        if paths.get("design_backlog"):
+            bp = common.resolve_path(args.config, "design_backlog", None)
+            if bp.exists():
+                archived["backlog"] = str(archive.snapshot(root, sprint_id, bp, move=False))
+        if _state_path(args).exists():
+            archived["pipeline_state"] = str(archive.snapshot(root, sprint_id, _state_path(args), move=False))
     elif sprint_path.exists():
         sprint_path.unlink()  # no archive configured — clear the active slot
 
     _save_state(args, {"current_phase": "idle"})
     common.emit({
         "sprint_id": sprint_id,
-        "archived_sprint": archived,
-        "archived_pipeline_state": archived_state,
+        "archived": archived,
         "pipeline_state_reset": str(_state_path(args)),
     }, args.format)
     return 0

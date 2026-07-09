@@ -57,6 +57,16 @@ Most documents are transient handovers between roles. The durable set is small:
 Everything else (the repo map, component descriptions, plans, contracts) is
 derived on demand or discarded after the step that produced it.
 
+**The maintainer archive is outside all of this.** As each transient drains from the
+working set (capabilities/learnings at SA-design; slice + sprint + backlog snapshot at
+sprint close), a copy is written to `paths.archive` — a **write-only** sink for the wf2
+maintainer to study run quality offline. It is *not* part of the durable working set and
+**no wf role is ever instructed to read it**. The governor forbids storing what code can
+re-derive because a role would consume it as truth and it would rot; the archive is exempt
+because nothing consumes it — it is research exhaust, peer to the telemetry log, never a
+source of truth. Do not wire any role to read it, and do not "governor-police" it as a
+stored-what-code-reports violation.
+
 ## Ground rules (for building wf2)
 
 These govern how wf2 itself is built. They exist for one reason: keep wf2 from

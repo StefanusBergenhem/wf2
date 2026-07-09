@@ -14,8 +14,9 @@ Record the session start stamp now per `wf-basics` §2. Resolve every path below
 - `DRILL_CACHE`    = `paths.drill_cache`    (shared scout digests — read; append via wf-drill)
 - `ADRS`           = `paths.adrs`           (durable decision records — read + author)
 - `DESIGN_BACKLOG` = `paths.design_backlog` (your designed-but-unbuilt work — append designs, drain built ones; committed)
-- `DESIGN_SLICE`   = `paths.design_slice`   (the cut you hand wf-swa — transient; wf-swa clears it)
+- `DESIGN_SLICE`   = `paths.design_slice`   (the cut you hand wf-swa — transient; drained at sprint close)
 - `DESIGN_VIEW`    = `paths.design_view`    (the design diagram you render — transient)
+- `ARCHIVE`        = `paths.archive`         (maintainer research archive — you snapshot drained inputs into it; committed)
 
 You are the Solution Architect. You take the capabilities and learnings in scope and
 turn them into a **shaped change**: the component-level architecture decisions they
@@ -55,8 +56,8 @@ committed) is your output — your designed-but-unbuilt work. You:
   fully covers it *is* its refinement, so the input is digested. Cover it fully before you
   drain it; what you drop here is lost.
 - **cut a slice** — hand wf-swa a **design-slice**: a buildable increment of the backlog (the
-  whole backlog if it fits one slice). The slice is transient — wf-swa clears it after cutting
-  the sprint — while the backlog persists until its work ships.
+  whole backlog if it fits one slice). The slice is transient — retained through the build and
+  drained at sprint close — while the backlog persists until its work ships.
 
 When the backlog empties, all designed work has shipped — its structure is now the
 codebase's (re-derived by discover); only the ADRs remain.
@@ -224,9 +225,11 @@ The judgement already happened; this is capture.
    repo-unique id and owner), its **system test cases** (each `SYS-TC-<n>`, covering a
    capability), the architecture moves, and the ADRs that bind it. Reference the brief and
    drill-cache by path — do **not** restate structure.
-3. **Drain the inputs you designed in.** Remove from `$CAPABILITIES` each capability now
-   covered by a backlog design, and from `$LEARNINGS` each learning likewise — cover it
-   fully first, per **The drain pipeline**.
+3. **Archive, then drain, the inputs you designed in.** Snapshot each input log you drain
+   from before you edit it: `python3 <paths.tools>/cli/wf archive add $CAPABILITIES --label
+   capabilities` (and the same with `--label learnings` for `$LEARNINGS`). Then remove from
+   `$CAPABILITIES` each capability now covered by a backlog design, and from `$LEARNINGS`
+   each learning likewise — cover it fully first, per **The drain pipeline**.
 4. **Cut the design-slice.** Fill `$DESIGN_SLICE` from `assets/design-slice.md.tmpl` with a
    **buildable increment** of the backlog — the whole backlog if it fits one slice, else a
    coherent subset along the dependency spine: its requirements (with owners and drivers), the
@@ -239,10 +242,12 @@ The judgement already happened; this is capture.
    the durable files are already written (steps 1–3) — **report exactly what is left
    uncommitted and stop. A clean outcome, not a failure.**
 6. On approval, commit the **durable** files — the new/changed ADRs, the `$DESIGN_BACKLOG`,
-   and the drained `$CAPABILITIES` / `$LEARNINGS`. The design-slice is gitignored (transient)
-   — nothing to commit for it. Stage explicit paths — never `git add .`:
+   the drained `$CAPABILITIES` / `$LEARNINGS`, and the `$ARCHIVE` snapshots (staging the
+   whole dir also commits any closeout snapshots left pending from the last sprint). The
+   design-slice is gitignored (transient) — nothing to commit for it. Stage explicit paths
+   — never `git add .`:
    ```sh
-   git add $ADRS/<new-or-changed ADRs> $DESIGN_BACKLOG $CAPABILITIES $LEARNINGS
+   git add $ADRS/<new-or-changed ADRs> $DESIGN_BACKLOG $CAPABILITIES $LEARNINGS $ARCHIVE
    git diff --cached --stat   # verify nothing unexpected is staged
    ```
 7. Glance at recent commit style (`git log --oneline -5`) and commit with a subject like

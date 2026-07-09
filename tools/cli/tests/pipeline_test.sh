@@ -324,6 +324,31 @@ wf "$PROJ_CS" pipeline complete-sprint >/dev/null
     && ok "complete-sprint resets phase to idle" || bad "complete-sprint phase" ""
 [ ! -f "$PROJ_CS/.wf/sprint.yaml" ] && ok "complete-sprint clears the sprint slot" || bad "complete-sprint sprint" "still present"
 
+# complete-sprint with paths.archive set: drains sprint+slice into the archive, snapshots the backlog
+PROJ_A="$(mktemp -d)"; mkdir -p "$PROJ_A/.wf/transient"
+cat > "$PROJ_A/.wf/config.yaml" <<'YAML'
+version: 1
+paths:
+  sprint: ".wf/transient/sprint.yaml"
+  design_slice: ".wf/transient/design-slice.md"
+  design_backlog: ".wf/design-backlog.md"
+  pipeline_state: ".wf/transient/pipeline-state.yaml"
+  archive: ".wf/archive"
+YAML
+printf 'sprint_id: sprint-xyz\ntasks: []\n' > "$PROJ_A/.wf/transient/sprint.yaml"
+printf '# slice body\n'                     > "$PROJ_A/.wf/transient/design-slice.md"
+printf '# backlog body\n'                   > "$PROJ_A/.wf/design-backlog.md"
+printf 'current_phase: running_stage\n'     > "$PROJ_A/.wf/transient/pipeline-state.yaml"
+CA="$("$PYTHON" "$WF" pipeline complete-sprint --config "$PROJ_A/.wf/config.yaml" --format json)"
+[ "$(jget "$CA" "d['sprint_id']")" = "sprint-xyz" ] && ok "complete-sprint(archive): reports sprint_id" || bad "archive sprint_id" "$CA"
+[ ! -f "$PROJ_A/.wf/transient/sprint.yaml" ] && ok "complete-sprint(archive): drains the sprint" || bad "archive drain sprint" "still present"
+[ ! -f "$PROJ_A/.wf/transient/design-slice.md" ] && ok "complete-sprint(archive): drains the slice" || bad "archive drain slice" "still present"
+[ -f "$PROJ_A/.wf/design-backlog.md" ] && ok "complete-sprint(archive): leaves the backlog (snapshot only)" || bad "archive backlog kept" "backlog gone"
+ls "$PROJ_A/.wf/archive/sprint-xyz/"*__sprint.yaml >/dev/null 2>&1 && ok "complete-sprint(archive): sprint snapshot under <archive>/<sprint_id>/" || bad "archive sprint snap" "$(ls -R "$PROJ_A/.wf/archive" 2>&1)"
+ls "$PROJ_A/.wf/archive/sprint-xyz/"*__design-slice.md >/dev/null 2>&1 && ok "complete-sprint(archive): slice snapshot present" || bad "archive slice snap" "$(ls "$PROJ_A/.wf/archive/sprint-xyz" 2>&1)"
+ls "$PROJ_A/.wf/archive/sprint-xyz/"*__design-backlog.md >/dev/null 2>&1 && ok "complete-sprint(archive): backlog snapshot present" || bad "archive backlog snap" "$(ls "$PROJ_A/.wf/archive/sprint-xyz" 2>&1)"
+[ "$(jget "$(wf "$PROJ_A" pipeline current-phase --format json)" "d['phase']")" = "idle" ] && ok "complete-sprint(archive): resets phase to idle" || bad "archive phase idle" "$CA"
+
 # archive-history spills the overflow past the cap
 PROJ_H="$(echo "$DIAMOND" | new_proj)"
 "$PYTHON" - "$PROJ_H/.wf/transient/pipeline-state.yaml" <<'PY'
