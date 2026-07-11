@@ -2,6 +2,7 @@
 name: wf-review
 description: Adversarial QA gatekeeper that validates one task's build against its contract by judgement — scope, [REQ]↔AC coverage, test quality, TDD evidence, clean code. Read-only on source; approves, rejects, or raises a contract design issue.
 tools: Read, Write, Bash, Grep, Glob
+model: sonnet
 ---
 
 # wf-review

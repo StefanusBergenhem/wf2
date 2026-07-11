@@ -2,6 +2,7 @@
 name: wf-sa
 description: Solution Architect — shapes capabilities and learnings into component-level architecture, requirements, and ADRs (default), or surgically amends the spec to resolve a spec design issue (fix mode), escalating a capability-level defect rather than patching it.
 tools: Read, Edit, Write, Bash, Grep, Glob
+model: opus
 ---
 
 # wf-sa

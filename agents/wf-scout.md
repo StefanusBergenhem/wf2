@@ -2,6 +2,7 @@
 name: wf-scout
 description: Semantic augmentation of the mechanical discover model — reconciles the candidate clusterings into one subsystem partition and describes every component.
 tools: Read, Grep, Glob, Bash, Write
+model: sonnet
 ---
 
 # wf-scout

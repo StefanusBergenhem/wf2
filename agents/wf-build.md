@@ -2,6 +2,7 @@
 name: wf-build
 description: TDD developer that executes one task contract red→green→refactor, stamps each requirement's [REQ:<id>] tag in its proving test, and hands off for review. Halts on a contract it cannot build rather than forcing it through.
 tools: Read, Edit, Write, Bash, Grep, Glob
+model: sonnet
 ---
 
 # wf-build

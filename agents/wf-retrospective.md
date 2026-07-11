@@ -2,6 +2,7 @@
 name: wf-retrospective
 description: Distils a finished run into the learnings streams — session telemetry feedback plus the cross-task patterns in the orchestration run's pipeline state. Dispatched at sprint closeout.
 tools: Read, Write, Edit, Bash, Grep, Glob
+model: sonnet
 ---
 
 # wf-retrospective
