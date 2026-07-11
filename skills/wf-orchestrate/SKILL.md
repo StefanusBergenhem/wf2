@@ -9,9 +9,9 @@ description: Executes a planned change as dependency stages — each stage runs 
 Record the session start stamp now per `wf-basics` §2. You run the whole sprint in one session. Run the CLI as
 `python3 <paths.tools>/cli/wf <noun> <verb>`. Resolve these from `.wf/config.yaml`:
 
-- `SPRINT`        = `paths.sprint`         — the task DAG (the brain reads it; you never hand-edit it)
+- `SPRINT`        = `paths.sprint`         — the task DAG (you never edit it)
 - `CURRENT_TASK`  = `paths.current_task`   — the per-worktree contract you extract for each build
-- `commands.preflight` — baseline + per-task gate; `commands.stage_check` — the **heavy checks** run only at a stage boundary (empty → skip)
+- `commands.stage_check` — the **heavy checks** run only at a stage boundary (empty → skip)
 - `review.passes`      — the ordered build→review chain (e.g. `[wf-review]`); `review.max_attempts`; `review.max_scope_amendments`
 - `closeout`           — the ordered end-of-sprint steps (e.g. `[wf-retrospective, ship]`)
 - `orchestrate.history_cap` — keep at most this many live history entries
@@ -20,50 +20,36 @@ You are the **pipeline controller** — a thin state-machine executor. You do NO
 plan, build, or review. The brain (`wf pipeline …`) decides what is next; the helpers
 (`wf orchestrate …`) return a verdict from on-disk artifacts; you dispatch the right
 agent and route that verdict. **Route on the helper's verdict, never on a sub-agent's
-prose.** Pipe every sub-agent's output to `/tmp/wf-orch-<task>.log` and read only the
+prose.** Pipe every sub-agent's output to `/tmp/wf-orch-<task-id>.log` and read only the
 verdict the helper emits — never echo a diff or test output into your own context.
-
-## The machine
-
-```
-idle
-  └─ kickoff ─► preparing ─────► [ STAGE LOOP ] ─────► end_of_sprint ─► idle
-                (swa→branch→         ▲      │ sprint_done   (closeout list)
-                 compute-stages)     └──────┘ advance-stage
-
-  STAGE LOOP, one iteration:
-    start_of_stage ─► running_stage ─► end_of_stage
-      (stage-start)    build→review.passes      resolve DIs ─► batch-merge approved
-                       per task, parallel        ─► heavy checks ─► advance-stage
-                       (DIs park here)
-```
 
 ## Hard constraints
 
-- **Thin controller.** Drive the loop and assemble envelopes — nothing else.
-- **The CLI owns scheduling.** Never compute eligibility, order, or the cap yourself — read `wf pipeline next`.
-- **Minimal context.** Each sub-agent gets only its envelope (see DISPATCH.md). Sub-agent output goes to `/tmp`; you retain only verdicts.
-- **State is on disk.** You are stateless between dispatches; resume by re-entering the loop — the brain recomputes from `paths.pipeline_state`.
-- **Concurrency cap is binding.** Dispatch exactly what `wf pipeline next` returns in `dispatch[]`.
-- **Design issues never retry the task.** Park them; resolve at the stage boundary.
-- **Merge only at the stage boundary, only the `approved` set.** Never auto-resolve a conflict — HALT.
-- **Max `review.max_attempts` build→review cycles per task** — escalate beyond.
-- **Append-only history; worktree cleanup is mandatory; one push, at ship.**
+- **The CLI decides; you route.** Never compute eligibility, order, or the concurrency
+  cap yourself — dispatch exactly what `wf pipeline next` returns in `dispatch[]`, and
+  re-ask `next` rather than tracking position yourself. Never read or edit
+  `paths.pipeline_state` directly, and never re-inspect a worktree or `$SPRINT` to
+  second-guess a helper's verdict — read an artifact only where a protocol below
+  names the field, and treat the verbs' output as authoritative.
+- **You never widen scope.** Never edit `$SPRINT`, a task's contract, or its
+  `files_to_touch` on your own judgement — the single permitted contract edit is the
+  classifier-gated § Scope amendment; every other scope or design problem routes through
+  `dispatch-fix` (§2b). An inline widening bypasses classification and review — the
+  amendment ships unaudited.
+- **Minimal context.** Each sub-agent gets only its envelope (DISPATCH.md).
 
 ## Process
 
 ### 0 — Kickoff / resume
 
-Resume safety, every kickoff — an interrupted run leaves orphan state:
+Run both, every kickoff:
 
 ```
 python3 <paths.tools>/cli/wf orchestrate sweep-transients
 python3 <paths.tools>/cli/wf pipeline reclaim-stale
 ```
 
-`sweep-transients` deletes already-consumed handoffs; `reclaim-stale` flips orphaned
-`building`/`reviewing` slots back to `pending` (no attempt bump — an interruption is not
-a failure). Then read `wf pipeline current-phase` and resume from where it points:
+Then read `wf pipeline current-phase` and resume from where it points:
 
 - **`idle` / unset** → fresh start: `wf pipeline transition --to preparing`, then preparing (§1).
 - **`preparing`** → re-run preparing (§1; all idempotent).
@@ -76,7 +62,7 @@ a failure). Then read `wf pipeline current-phase` and resume from where it point
    agent with the **Preparing envelope** (DISPATCH.md) to build the sprint from the design
    slice, then re-check `$SPRINT` on disk: still absent → **HALT and report** (wf-swa could
    not build a sprint from the slice). Never run compute-stages without `$SPRINT` present.
-2. **Ensure the sprint branch** — see [GIT_OPERATIONS.md](assets/GIT_OPERATIONS.md) § Sprint branch. Record it in state.
+2. **Ensure the sprint branch** — see [GIT_OPERATIONS.md](assets/GIT_OPERATIONS.md) § Sprint branch.
 3. `wf pipeline compute-stages` (idempotent; HALTs on a dependency cycle).
 4. `wf pipeline transition --to running_stage`, then enter the stage loop (§2).
 
@@ -96,13 +82,13 @@ python3 <paths.tools>/cli/wf pipeline next --format json
 
 #### 2a — Dispatch the frontier (running_stage)
 
-For each entry in `dispatch[]` (already capped to free slots — dispatch exactly these):
+For each entry in `dispatch[]`:
 
-1. Ensure the entry's `worktree` exists — see [GIT_OPERATIONS.md](assets/GIT_OPERATIONS.md) § Worktree.
+1. Ensure the entry's `worktree` exists and is usable — see
+   [GIT_OPERATIONS.md](assets/GIT_OPERATIONS.md) § Worktree.
 2. `wf sprint task <task_id> --write <worktree>/$CURRENT_TASK` — extract its contract.
-3. Run `commands.preflight` in the worktree (baseline; pipe to `/tmp`).
-4. `wf pipeline dispatch --agent wf-build --task <task_id> --attempt <n>`.
-5. Spawn the `wf-build` agent with the **Build envelope** (DISPATCH.md).
+3. `wf pipeline dispatch --agent wf-build --task <task_id> --attempt <n>`.
+4. Spawn the `wf-build` agent with the **Build envelope** (DISPATCH.md).
 
 Tasks run concurrently in their own worktrees. As each agent returns, apply the
 matching Return protocol, then ask `wf pipeline next` again.
@@ -120,13 +106,22 @@ python3 <paths.tools>/cli/wf orchestrate dispatch-fix <di-id>
 - **exit 0** → dispatch the emitted `subagent_type` (`wf-swa`/`wf-sa`) with the **Fix
   envelope** (DISPATCH.md). When the fix agent returns, re-read the issue's entry in
   `paths.design_issues`:
-  - `status: resolved` → `wf pipeline resolve-design-issue <di-id>`, then delete any
-    stale `paths.feedback`, `paths.review_ready`, or `paths.build_blocked` in the task's
-    worktree, reset the task to `pending`, and re-dispatch it at its current attempt (it
-    re-reads its possibly-amended contract). The task re-enters running_stage on the
-    next `next`.
-  - still `open` (the fixer escalated) → `wf pipeline block-task <task-id> --reason <…>`
-    and report the escalation. Never re-run the task.
+  - `status: resolved` → `wf pipeline resolve-design-issue <di-id>` (it also resets the
+    parked task to `pending`), then delete any stale `paths.feedback`,
+    `paths.review_ready`, `paths.build_blocked`, or `paths.design_issues` in the task's
+    worktree. Then route on the entry's final `fix_kind`:
+    - `component_defect` → the fixer appended a follow-up task the parked task now
+      depends on: `wf pipeline compute-stages --force`, then return to the stage loop —
+      the follow-up dispatches first; the repaired task re-enters in a later stage,
+      after the follow-up merges.
+    - anything else → re-dispatch the task at its current attempt (it re-reads its
+      possibly-amended contract). The task re-enters running_stage on the next `next`.
+  - still `open` with a **changed** `fix_kind` (the fixer reclassified the issue) →
+    re-run `dispatch-fix <di-id>` and dispatch the route it emits — **at most one such
+    re-route per issue**; if the issue is still open after it, treat that as escalated
+    (below).
+  - still `open`, `fix_kind` unchanged (the fixer escalated) → `wf pipeline block-task
+    <task-id> --reason <…>` and report the escalation. Never re-run the task.
 
 #### 2c — Finalize the stage (end_of_stage)
 
@@ -159,14 +154,14 @@ Report the sprint summary and the PR URL.
 
 Your last action, always: run the `wf-basics` §2 `record_session.py` command with
 `--agent wf-orchestrate`, this run's `--outcome` (`completed`, or `halted`/`escalated`),
-and the two feedback answers (omit a flag when there is nothing concrete). The dispatched
+and the session-feedback flags (omit a flag when there is nothing concrete). The dispatched
 sub-agents record their own sessions. If the command errors, continue — telemetry never
 blocks.
 
 ## Return protocols
 
-After every sub-agent returns, run the helper in order and route on its verdict. The
-verdicts and their exact meanings are the helper's contract; the routes are below.
+After every build/review agent returns, run the helpers below in order and route on the
+JSON `verdict` they print — never on the sub-agent's prose or the worktree's contents.
 
 ### Build return
 
@@ -182,12 +177,19 @@ python3 <paths.tools>/cli/wf orchestrate inspect-build-return <worktree> <task-i
 | `build_blocked` | scope-amendment (below). |
 | `escalate_no_artifacts` | escalate; `wf pipeline block-task <id> --reason <…>`. |
 
-**Scope amendment** (`build_blocked`): read the artifact; classify it with
-`wf orchestrate classify-amendment --task-id <id> --diff <diff> [--claim <kind>]`.
-`mechanical_follow_on` is free; `feature` consumes one of `review.max_scope_amendments`;
-`reject` escalates. Within budget and reasonable → add the files, `wf pipeline
-scope-amendment <id> --added <files>`, delete the artifact, re-dispatch build at the
-**same** attempt. Otherwise escalate.
+**Scope amendment** (`build_blocked`) — the one contract edit you may ever make, and
+only with the classifier's verdict; widening on your own judgement bypasses
+classification and review, so the amendment ships unaudited. Read `required_files` from
+the artifact; write the worktree diff (`git -C <worktree> diff HEAD`) to a file; run
+`wf orchestrate classify-amendment --task-id <id> --diff <diff-file> [--claim <kind>]`
+and route on the bare word it prints:
+
+- `reject` → escalate: `wf pipeline block-task <id> --reason <…>`.
+- `feature` → consumes one of `review.max_scope_amendments`; over budget → escalate.
+  Within budget: append the `required_files` to `files_to_touch` in the **worktree's**
+  `$CURRENT_TASK` (never in `$SPRINT`), `wf pipeline scope-amendment <id> --added
+  <files>`, delete the artifact, re-dispatch build at the **same** attempt.
+- `mechanical_follow_on` → free: same as `feature` but skip `wf pipeline scope-amendment`.
 
 ### Review-pass return
 
@@ -207,18 +209,20 @@ python3 <paths.tools>/cli/wf orchestrate inspect-review-return <worktree> <task-
 
 ### Design issues
 
-A build or review writes its design issue to the worktree `design_issues` artifact;
-the return inspector surfaces it directly as a **`design_issue` verdict** carrying its
-`di_id` — a design-issued build never goes on to review. On that verdict do **not** retry
-the task: `wf pipeline record-design-issue <di_id> --task <id> --severity <s> --fix_kind <k>`
-(parks the task) and continue other tasks. The issue is resolved at the stage boundary (§2b).
+On a `design_issue` verdict (build or review), do **not** retry the task:
+
+1. Copy the open entry the verdict's `di_id` names from the **worktree**
+   `paths.design_issues` into the **host** `paths.design_issues` (append to its
+   `issues:` list; create the file if absent) — `dispatch-fix` reads only the host file.
+2. `wf pipeline record-design-issue <di_id> --task <id> --severity <s> --fix_kind <k>`
+   using that entry's values (parks the task).
+
+Continue the other tasks; the issue is resolved at the stage boundary (§2b).
 
 ## Dispatch & envelopes
 
-See [DISPATCH.md](assets/DISPATCH.md) for the per-agent context envelopes. Each
-sub-agent gets ONLY its envelope — never another agent's definition, pipeline internals,
-or out-of-scope files. The pipeline-state shape these verbs read and write is in
-[SCHEMAS.md](assets/SCHEMAS.md).
+Read [DISPATCH.md](assets/DISPATCH.md) before your first dispatch — it defines the
+envelope each agent gets, and the envelope is all it gets.
 
 ## Halt conditions
 

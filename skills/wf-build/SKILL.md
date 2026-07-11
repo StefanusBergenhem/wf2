@@ -71,7 +71,12 @@ Announce each phase.
    elsewhere.
 
 A test that passes before any implementation exists is testing the wrong thing —
-investigate, do not proceed.
+investigate, do not proceed. **Exception — e2e task over merged dependencies:** when the
+task is an e2e/system-test task and the behaviour under test is built by already-merged
+`depends_on` tasks, a new test may correctly pass on first run. Do not treat that pass as
+a Red failure — instead prove the test is not vacuous: temporarily break the asserted
+behaviour (or mutate the expected value), confirm the test fails, then restore it and
+confirm it passes. A test you cannot make fail this way is vacuous — restructure it.
 
 ### Green
 
@@ -85,24 +90,27 @@ investigate, do not proceed.
 With tests green: no dead code, no debug output, no `TODO`/`HACK`/`FIXME`, no
 commented-out code, no suppression directive.
 
-### Step 3b — Contract design issue
+### Step 3b — Design issue (contract or merged code)
 
-If the blocker is the **contract, not the code** — an AC contradicts the source, a
-requirement is self-inconsistent, `files_to_touch` cannot satisfy an AC, or the contract
-asks for something the source makes impossible — do not retry or work around it. Write
+If the blocker is **not your own code** — an AC contradicts the source, a requirement is
+self-inconsistent, `files_to_touch` cannot satisfy an AC, the contract asks for something
+the source makes impossible, or an AC fails because **already-merged code** (a dependency
+task's work, not this task's diff) is defective — do not retry or work around it. Write
 `paths.design_issues` from `assets/design_issues.yaml.tmpl`:
 
-- `fix_kind: contract_amendment` — always. You are a code-layer agent; you never judge
-  the spec layer. A wrong requirement upstream surfaces when the contract-fixer it routes
-  to escalates.
-- one open entry, `task_id` your task, a `summary` of what is unbuildable.
+- `fix_kind: component_defect` when the defect lives in already-merged code;
+  `contract_amendment` otherwise — never anything else. You are a code-layer agent; you
+  never judge the spec layer. A wrong requirement upstream surfaces when the fixer it
+  routes to escalates.
+- one open entry, `task_id` your task, a `summary` of what is unbuildable (for a
+  component defect: which merged behaviour violates which requirement).
 
 Remove any stale `paths.review_ready`, then HALT and report. The return inspector reads
 the open entry and parks the task — you never go on to review.
 
 ## Step 4 — Gate
 
-Run `commands.preflight` (pipe to `/tmp/wf-build-preflight.log`, read the log). It must
+Run `commands.preflight` (pipe to `/tmp/wf-build-<task-id>-preflight.log`, read the log). It must
 exit clean. A gate that cannot run because its environment is unavailable is a HALT, not a
 pass — do not write `review_ready`.
 

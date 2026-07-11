@@ -168,11 +168,18 @@ class GitOps:
 
     def add_worktree(self, worktree: str, branch: str, base: str) -> None:
         # Idempotent: a reclaimed task reuses a worktree that survived an interrupted
-        # run. A re-dispatched build restarts from zero (it re-reads its contract), so the
-        # surviving worktree is just the place it runs — there is no resume breadcrumb to
-        # honour. Create only when absent.
+        # run — but only after the staleness check (GIT_OPERATIONS.md § Worktree). The
+        # sprint branch must be an ancestor of the surviving worktree's HEAD; non-zero
+        # exit means the sprint branch moved past its base → remove the worktree and
+        # its task branch, then re-add fresh off the sprint branch. A re-dispatched
+        # build restarts from zero (it re-reads its contract), so nothing in the stale
+        # worktree is worth keeping.
         if Path(worktree).exists():
-            return
+            if self._git("merge-base", "--is-ancestor", base, "HEAD",
+                         cwd=worktree).returncode == 0:
+                return  # same base → reuse as-is
+            self._git("worktree", "remove", "--force", worktree)
+            self._git("branch", "-D", branch)
         Path(worktree).parent.mkdir(parents=True, exist_ok=True)
         r = self._git("worktree", "add", worktree, "-b", branch, base)
         if r.returncode != 0:
@@ -550,40 +557,68 @@ class Orchestrator:
 
     async def _resolve_design_issues(self, frontier: dict, sprint_branch: str) -> None:
         """At the stage boundary, route each open design issue via dispatch-fix. A
-        resolved fix marks the state DI resolved and re-runs the task; a fixer that
-        left the DI open escalated — block the task, never re-run it. A human-gated
-        DI escalates the task."""
+        resolved fix marks the state DI resolved and re-runs the task — inline for an
+        amended contract/spec, via a stage re-layer when the fixer authored a follow-up
+        task (component_defect). A fixer that left the DI open but CHANGED its fix_kind
+        reclassified it: re-route once to the new kind's subagent. Still open after
+        that (or open with an unchanged kind) — block the task, never re-run it. A
+        human-gated DI escalates the task."""
         for di in self.state.json("unresolved_design_issues").get("issues", []):
             di_id, tid = di.get("di_id"), di.get("task_id")
-            proc = await asyncio.to_thread(self.scripts.run, "dispatch-fix", di_id, "--config", self.config_path)
-            if proc.returncode == 1:
-                self.state.run("block_task", tid, "--reason", f"design issue {di_id} needs a human", soft=True)
-                self.result.escalated.append((tid, f"design issue {di_id} human gate"))
-                continue
-            if proc.returncode != 0:
-                raise Escalation(f"dispatch-fix failed for {di_id}: {proc.stderr.strip()}", tid)
-            route = self._script_json(proc)
-            subagent = route.get("subagent_type")
-            await asyncio.to_thread(self.dispatcher.dispatch, subagent,
-                                    json.dumps(route.get("envelope") or {}), None)
-            if not self._host_di_resolved(di_id):
+            resolved = False
+            routed_kind = None
+            for hop in range(2):  # the initial route + at most ONE re-route per DI
+                proc = await asyncio.to_thread(self.scripts.run, "dispatch-fix", di_id, "--config", self.config_path)
+                if proc.returncode == 1:
+                    self.state.run("block_task", tid, "--reason", f"design issue {di_id} needs a human", soft=True)
+                    self.result.escalated.append((tid, f"design issue {di_id} human gate"))
+                    break
+                if proc.returncode != 0:
+                    raise Escalation(f"dispatch-fix failed for {di_id}: {proc.stderr.strip()}", tid)
+                route = self._script_json(proc)
+                routed_kind = route.get("fix_kind")
+                await asyncio.to_thread(self.dispatcher.dispatch, route.get("subagent_type"),
+                                        json.dumps(route.get("envelope") or {}), None)
+                if (self._host_di(di_id).get("status") or "open") == "resolved":
+                    resolved = True
+                    break
+                new_kind = self._host_di(di_id).get("fix_kind")
+                if hop == 0 and new_kind and new_kind != routed_kind:
+                    # The fixer reclassified (flipped fix_kind, left the DI open):
+                    # re-run dispatch-fix so the new kind's subagent gets it.
+                    continue
                 # The fixer HALTed and left the DI open — re-running would reproduce it.
-                reason = f"design issue {di_id} fix escalated — needs spec change (wf-sa/human)"
+                reason = f"design issue {di_id} fix escalated — left open by the fixer"
                 self.state.run("block_task", tid, "--reason", reason, soft=True)
                 self.result.escalated.append((tid, reason))
+                break
+            if not resolved:
                 continue
-            self.state.run("resolve_design_issue", di_id, soft=True)
-            # The fix agent amended the contract/spec; re-run the task from build, at
-            # its CURRENT attempt (review.max_attempts is per-task, not per-incarnation).
-            attempt = max(1, int(self.state.json("attempt_counter", tid).get("value") or 0))
+            # Route the resolved branch on the FINAL fix_kind: a fixer may correct the
+            # entry's kind (e.g. contract_amendment → component_defect) and act on its
+            # own classification in the same dispatch.
+            final_kind = self._host_di(di_id).get("fix_kind") or routed_kind
+            self.state.run("resolve_design_issue", di_id, soft=True)  # also un-parks the task
             worktree = self._worktree_for(tid)
             # A fresh build must start in build mode against the amended contract —
-            # clear stale handoff artifacts left in the surviving worktree.
-            for key in ("feedback", "review_ready", "build_blocked"):
+            # clear stale handoff artifacts left in the surviving worktree. The worktree
+            # DI copy is still `open` (the fixer edits the HOST file); left in place it
+            # would re-park the re-run at inspect-build-return.
+            for key in ("feedback", "review_ready", "build_blocked", "design_issues"):
                 try:
                     self._worktree_artifact(worktree, key).unlink()
                 except OSError:
                     pass
+            if final_kind == "component_defect":
+                # The fixer authored a follow-up task in the sprint DAG (the repaired
+                # task now depends on it). Re-layer the remaining tasks and return to
+                # the loop: the follow-up dispatches first, and the repaired task
+                # re-enters in a later stage — after the follow-up merges.
+                self.state.run("compute_stages", "--force")
+                continue
+            # The fix agent amended the contract/spec; re-run the task from build, at
+            # its CURRENT attempt (review.max_attempts is per-task, not per-incarnation).
+            attempt = max(1, int(self.state.json("attempt_counter", tid).get("value") or 0))
             entry = {"task_id": tid, "worktree": worktree}
             self.state.run("dispatch", "--agent", AGENT_BUILD, "--task", tid,
                            "--attempt", str(attempt))
@@ -591,14 +626,13 @@ class Orchestrator:
             if outcome.status == "escalated":
                 self.result.escalated.append((outcome.task_id, outcome.reason or "escalated"))
 
-    def _host_di_resolved(self, di_id) -> bool:
-        """Re-read the HOST design-issues artifact after a fix dispatch: only the fix
-        agent flips its entry to resolved."""
+    def _host_di(self, di_id) -> dict:
+        """Re-read this DI's entry in the HOST design-issues artifact after a fix
+        dispatch: only the fix agent flips its status / fix_kind there."""
         host = common.load_yaml(
             common.resolve_path(self.config_path, "design_issues", None), optional=True)
-        entry = next((i for i in (host.get("issues") or [])
-                      if isinstance(i, dict) and i.get("id") == di_id), None) or {}
-        return (entry.get("status") or "open") == "resolved"
+        return next((i for i in (host.get("issues") or [])
+                     if isinstance(i, dict) and i.get("id") == di_id), None) or {}
 
     # --- scope amendment (build_blocked) ----------------------------------
 

@@ -148,6 +148,21 @@ for T in "${TARGETS[@]}"; do
             echo "  rendered: $(basename "$agent_file" .md)"
         done
     fi
+
+    # Claude only: register the telemetry usage hook (Stop + SubagentStop) in the
+    # target's .claude/settings.json — created or merged idempotently, never
+    # clobbering user settings (a malformed file is left untouched with a warning).
+    if [ "$T" = "claude" ]; then
+        echo ""
+        echo "Registering telemetry usage hook (claude)..."
+        if python3 "$WF_DIR/tools/telemetry/claude_hook_register.py" \
+                "$HARNESS_DIR/settings.json" \
+                'python3 "$CLAUDE_PROJECT_DIR"/.wf/tools/telemetry/claude_usage_hook.py'; then
+            echo "  registered: Stop + SubagentStop -> .wf/tools/telemetry/claude_usage_hook.py"
+        else
+            echo "  WARN: could not update $HARNESS_DIR/settings.json — register the telemetry hook manually" >&2
+        fi
+    fi
     echo ""
 done
 
@@ -171,6 +186,12 @@ strip_tests "$WF_TOOLS_DEST"
 # ship. Add a narrower guard here only if a regenerable vendor/ dir ever appears.
 find "$WF_TOOLS_DEST" -type d \( -name '.venv' -o -name '__pycache__' -o -name 'node_modules' \
     -o -name 'dist' \) -prune -exec rm -rf {} + 2>/dev/null || true
+# The claude telemetry adapter (usage hook + its registrar) is the one
+# harness-coupled tool — ship it only when claude is a rendered target.
+case " ${TARGETS[*]} " in
+    *" claude "*) : ;;
+    *) rm -f "$WF_TOOLS_DEST"/telemetry/claude_*.py ;;
+esac
 echo "  installed: .wf/tools/ (toolkit machinery)"
 
 echo ""

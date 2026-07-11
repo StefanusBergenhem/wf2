@@ -5,15 +5,19 @@ Telemetry is observability, not correctness: one JSON line per wf session. The
 caller (a skill, per wf-basics) resolves the sink from config `paths.telemetry`
 and passes it as --sink. Stdlib only; runs on the target's system python3.
 
-The session record carries a structured `feedback` block (the two
+The session record carries a structured `feedback` block (the
 continuous-improvement questions, see wf-basics) that the retrospective later
-distils into durable lessons. Both feedback fields are optional — empty is the
-expected value for a clean session.
+distils into durable lessons. All feedback fields are optional — empty (and
+`friction_kind: none`) is the expected value for a clean session. `friction_kind`
+is a closed enum classifying the `wf_friction` prose so the retrospective can
+cluster mechanically; `gotcha` is a repo setup/env/convention trap destined for
+an AGENTS.md proposal, not the learnings streams.
 
 Usage:
   record_session.py --agent <name> --started-at <iso> --ended-at <iso> \
                     --outcome <completed|halted|escalated> \
-                    [--wf-friction <text>] [--repo-observation <text>] \
+                    [--wf-friction <text>] [--friction-kind <enum>] \
+                    [--repo-observation <text>] [--gotcha <text>] \
                     --sink <path>
 """
 import argparse
@@ -24,23 +28,26 @@ import sys
 from datetime import datetime
 
 
-def _resolve_sink(sink):
+def resolve_sink(sink, cwd=None):
     """Anchor a relative sink to the main checkout root — the parent of
     ``git rev-parse --git-common-dir`` — so an append from inside a per-task git
     worktree lands in the main repo's sink instead of dying with the worktree.
-    Outside a git repo the sink stays cwd-relative."""
+    Outside a git repo the sink stays relative to ``cwd`` (the process cwd when
+    omitted). Shared with claude_usage_hook.py, which anchors from the hook
+    payload's cwd rather than its own."""
     if os.path.isabs(sink):
         return sink
+    fallback = sink if cwd is None else os.path.join(cwd, sink)
     try:
         out = subprocess.run(
             ["git", "rev-parse", "--git-common-dir"],
-            capture_output=True, text=True, check=True,
+            capture_output=True, text=True, check=True, cwd=cwd,
         ).stdout.strip()
     except (subprocess.CalledProcessError, FileNotFoundError, OSError):
-        return sink
+        return fallback
     if not out:
-        return sink
-    common_dir = out if os.path.isabs(out) else os.path.join(os.getcwd(), out)
+        return fallback
+    common_dir = out if os.path.isabs(out) else os.path.join(cwd or os.getcwd(), out)
     return os.path.join(os.path.dirname(common_dir), sink)
 
 
@@ -61,8 +68,14 @@ def main(argv=None):
                    choices=["completed", "halted", "escalated"])
     p.add_argument("--wf-friction", dest="wf_friction", default="",
                    help="concrete wf-instruction friction, or empty (-> wf_learnings)")
+    p.add_argument("--friction-kind", dest="friction_kind", default="none",
+                   choices=["contract_defect", "skill_gap", "tooling_bug",
+                            "env_setup", "none"],
+                   help="closed classification of --wf-friction (default: none)")
     p.add_argument("--repo-observation", dest="repo_observation", default="",
                    help="concrete codebase observation, or empty (-> learnings)")
+    p.add_argument("--gotcha", default="",
+                   help="repo env/setup/convention trap, or empty (-> AGENTS.md proposal)")
     p.add_argument("--sink", required=True)
     args = p.parse_args(argv)
 
@@ -77,11 +90,13 @@ def main(argv=None):
         "outcome": args.outcome,
         "feedback": {
             "wf_friction": args.wf_friction,
+            "friction_kind": args.friction_kind,
             "repo_observation": args.repo_observation,
+            "gotcha": args.gotcha,
         },
     }
 
-    sink = _resolve_sink(args.sink)
+    sink = resolve_sink(args.sink)
     parent = os.path.dirname(sink)
     if parent:
         os.makedirs(parent, exist_ok=True)

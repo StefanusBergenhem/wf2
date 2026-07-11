@@ -604,16 +604,18 @@ def _classify_amendment(rest):
 # ===========================================================================
 
 # fix_kind → (subagent, human_gate). Build/review classify a design issue from their
-# task-scoped context; the orchestrator routes it at the stage boundary. Two autonomous
-# kinds — the task contract is wrong (wf-swa), or a requirement/ADR is wrong (wf-sa, who
-# also owns the slice cut, so re-cutting the slice folds into the spec fix) — plus
-# unknown → human for anything bigger than one task. wf1's `recut → wf-po` is dropped:
-# wf2's PO owns capabilities, not sprint cutting. (The prose taxonomy lands in
-# wf-skill-spec-references with the build/review DI-writers; this table is its executable
-# form — add a new fix_kind here.)
+# task-scoped context; the orchestrator routes it at the stage boundary. Three autonomous
+# kinds — the task contract is wrong (wf-swa amends it), a requirement/ADR is wrong
+# (wf-sa, who also owns the slice cut, so re-cutting the slice folds into the spec fix),
+# or ALREADY-MERGED component code violates a correct contract+spec (wf-swa authors a
+# follow-up task) — plus unknown → human for anything bigger than one task. wf1's
+# `recut → wf-po` is dropped: wf2's PO owns capabilities, not sprint cutting. (The prose
+# taxonomy lands in wf-skill-spec-references with the build/review DI-writers; this table
+# is its executable form — add a new fix_kind here.)
 _ROUTING = {
     "contract_amendment": {"subagent_type": "wf-swa", "human_gate": False},
     "spec_amendment": {"subagent_type": "wf-sa", "human_gate": False},
+    "component_defect": {"subagent_type": "wf-swa", "human_gate": False},
     "unknown": {"subagent_type": None, "human_gate": True},
 }
 

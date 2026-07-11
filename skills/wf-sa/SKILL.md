@@ -1,6 +1,6 @@
 ---
 name: wf-sa
-description: Solution Architect — turns capabilities and learnings into a shaped change: makes the component-level architecture decisions, derives the component requirements, authors ADRs, and hands an ephemeral design-slice to the Software Architect.
+description: Solution Architect — turns capabilities and learnings into a shaped change (component-level architecture decisions, component requirements, ADRs) handed to the Software Architect as a design-slice; in fix mode surgically amends the spec to resolve one design issue.
 ---
 
 # wf-sa
@@ -29,6 +29,13 @@ pipeline**).
 You work at the **component altitude** — which component owns what, how they depend on
 each other, and what each must do. You do **not** write system-level requirements:
 that altitude is the capability, and a system requirement only restates it.
+
+## Mode
+
+When your dispatch envelope names `mode: fix` (it carries a `di_id`), you resolve **one**
+spec design issue: read `references/fix-mode.md` and follow it, then record telemetry per
+Phase 7 — no other section below applies, and you work autonomously (no human alignment).
+Otherwise you are in **default mode**: everything below applies.
 
 ## Scouting & the drill-cache
 
@@ -69,8 +76,17 @@ codebase's (re-derived by discover); only the ADRs remain.
 
 **First, drain the backlog of what shipped.** Reconcile `$DESIGN_BACKLOG` against the test
 tree (see **The drain pipeline**) and remove every now-built requirement and any emptied
-design, committing the trim. Then ground
-the new change:
+design, committing the trim. When a design you drain carries a **Supersedes** list, sweep
+its ids before removing the design:
+
+```sh
+python3 <paths.tools>/reconcile/retired.py --ids <the superseded ids> \
+  --tests <the test tree you reconcile against>
+```
+
+A non-zero exit lists superseded tags still in the test tree — the build failed to remove
+them. Record each survivor as a finding and fold its removal into the next slice; never
+drain past it silently. Then ground the new change:
 
 1. Read `$CAPABILITIES` and `$LEARNINGS` — your inputs. Both are first-class drivers; a
    change may be motivated by a capability, a learning, or both. Identify what this run
@@ -78,7 +94,17 @@ the new change:
 2. Read `$BRIEF` for the current system shape. **HALT if it is absent** — ask the user
    to run `wf-discover` first, or to confirm the repo is greenfield (design from the
    drivers alone, no existing components to ground against).
-3. **Ground every in-scope item in a drill digest before Phase 2.** For each in-scope
+3. **Derive the requirement register and read its in-scope entries** — what the system
+   already promises today, the peer of the brief:
+
+   ```sh
+   python3 <paths.tools>/reconcile/register.py --tests <the test tree you reconcile against>
+   ```
+
+   Read only the entries touching the components in scope (the register covers the whole
+   repo); you triage every new requirement against them in Phase 3. On a greenfield repo
+   with no test tree yet, skip this — nothing is shipped to triage against.
+4. **Ground every in-scope item in a drill digest before Phase 2.** For each in-scope
    capability/learning that touches existing code, a drill digest covering the
    components and seams it implicates MUST exist before you shape anything — from
    `$DRILL_CACHE` or a fresh `wf-drill` dispatch (see **Scouting & the drill-cache**).
@@ -125,6 +151,16 @@ learning that drove it. Where a capability names a concept your components call
 something else, the requirement is where you **map** user-voice to structure — keep the
 capability's words in the trace, name your component in the requirement; do not reconcile
 the mismatch by renaming the capability.
+
+**Triage every requirement against the in-scope register entries** (Phase 1):
+- **unrelated** — no shipped requirement overlaps: new id, proceed;
+- **extends** — it builds on a shipped requirement: new id, and note the existing id in
+  its trace;
+- **supersedes** — it invalidates a shipped requirement: record the superseded id (REQ or
+  SYS-TC), a one-line reason, and the successor id. A shipped behavior this change removes
+  outright is also a supersession — record it with no successor ("retired, no successor").
+Every supersession is presented at Phase 4 like an assumption: the human ratifies that
+shipped behavior is being changed or retired.
 
 **Mark every interpretive leap as an assumption.** Where a driver's wording admits more
 than one reading, the reading you design to is an assumption, not a fact. Record it —
@@ -221,7 +257,10 @@ each non-obvious decision in the **decision format** (below) — one at a time,
 alternatives + recommendation + risk — and **WAIT for the human** to ratify or redirect
 before the next. Present each **assumption** recorded in Phase 3 the same way — the
 chosen reading against the rejected one — and **WAIT for the human to confirm or
-correct it**; only a ratified assumption may be marked CONFIRMED in the slice. The back-and-forth is the point; do not dump every decision in one
+correct it**; only a ratified assumption may be marked CONFIRMED in the slice. Present each
+**supersession** likewise — the shipped requirement being invalidated, the reason, and its
+successor (or that it retires with none) — and **WAIT for ratification**; only a ratified
+supersession enters the slice. The back-and-forth is the point; do not dump every decision in one
 wall of text. When a redirection changes the shape or a requirement, fold it back into
 Phase 2 or 3 and re-present.
 
@@ -254,8 +293,9 @@ The judgement already happened; this is capture.
 2. **Append the design to the backlog.** Add a block to `$DESIGN_BACKLOG` (shape per
    `assets/design-backlog.md.tmpl`): the design's component requirements (each with its
    repo-unique id and owner), its **system test cases** (each `SYS-TC-<n>`, covering a
-   capability), the architecture moves, and the ADRs that bind it. Reference the brief and
-   drill-cache by path — do **not** restate structure.
+   capability), its **Supersedes** list (each superseded id with its one-line reason and
+   successor id, or "retired, no successor"), the architecture moves, and the ADRs that
+   bind it. Reference the brief and drill-cache by path — do **not** restate structure.
 3. **Archive, then drain, the inputs you designed in.** Snapshot each input log you drain
    from before you edit it: `python3 <paths.tools>/cli/wf archive add $CAPABILITIES --label
    capabilities` (and the same with `--label learnings` for `$LEARNINGS`). Then remove from
@@ -265,7 +305,8 @@ The judgement already happened; this is capture.
    **buildable increment** of the backlog — the whole backlog if it fits one slice, else a
    coherent subset along the dependency spine: its requirements (with owners and drivers), the
    **system test cases** for its end-to-end behaviours, the moves, the **interface contracts**
-   for its new/widened seams, the **NFR & authz** outcomes, the binding ADRs (new + standing),
+   for its new/widened seams, the **NFR & authz** outcomes, the **Supersedes** list (each
+   entry ratified at Phase 4), the binding ADRs (new + standing),
    the **assumptions requiring confirmation** (each ratified at Phase 4 and marked CONFIRMED),
    the Phase 5 soundness verdicts, and any risk for wf-swa.
    **Gate: run `python3 <paths.tools>/cli/wf slice check`. Do not proceed to step 5 until it
@@ -298,7 +339,7 @@ The judgement already happened; this is capture.
 
 Your last action, always. Run the `wf-basics` §2 `record_session.py` command with
 `--agent wf-sa`, this run's `--outcome` (`completed`, or `halted`/`escalated`), and the
-two feedback answers (omit a flag when there is nothing concrete). If the command
+session-feedback flags (omit a flag when there is nothing concrete). If the command
 errors, continue — telemetry never blocks.
 
 ## Decision format

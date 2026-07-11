@@ -84,7 +84,7 @@ The full digest lives in the file — the return is a pointer to it, not a copy.
 Your final action, always — even on a low-confidence or halted drill. Record one
 session line per **wf-basics §2** (`record_session.py`, resolved from `$TOOLS`,
 sink `$TELEMETRY`) with `--agent wf-drill`, your `--outcome` (`completed`, or
-`halted` if you could not investigate), and the two feedback answers. You read real
+`halted` if you could not investigate), and the session-feedback flags. You read real
 source this drill, so `--repo-observation` is high-value — report any concrete smell
 or blocker you hit in the code you touched. If the recorder command errors,
 continue; telemetry never blocks.

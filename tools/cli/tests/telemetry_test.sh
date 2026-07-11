@@ -53,6 +53,25 @@ else
     ok "missing required flags rejected"
 fi
 
+# --friction-kind and --gotcha pass through to the recorder
+wf telemetry record-session --agent wf-build \
+    --started-at 2026-01-01T00:00:00Z --ended-at 2026-01-01T00:00:01Z \
+    --outcome halted --wf-friction "contract contradicts itself" \
+    --friction-kind contract_defect --gotcha "pin COMPOSE_PROJECT_NAME or :5432 collides" \
+    --sink "$P/fk.jsonl" --config "$P/.wf/config.yaml" >/dev/null 2>&1
+"$PYTHON" -c "import json;d=json.loads(open('$P/fk.jsonl').readline());assert d['feedback']['friction_kind']=='contract_defect';assert d['feedback']['gotcha'].startswith('pin COMPOSE')" 2>/dev/null \
+    && ok "record-session forwards --friction-kind and --gotcha" || bad "friction/gotcha pass-through" "$(cat "$P/fk.jsonl" 2>/dev/null)"
+
+# an invalid --friction-kind is rejected non-zero
+if wf telemetry record-session --agent wf-build \
+        --started-at 2026-01-01T00:00:00Z --ended-at 2026-01-01T00:00:01Z \
+        --outcome halted --friction-kind not_a_kind \
+        --sink "$P/fk2.jsonl" --config "$P/.wf/config.yaml" >/dev/null 2>&1; then
+    bad "invalid friction-kind should fail" "exited 0"
+else
+    ok "invalid --friction-kind rejected"
+fi
+
 echo ""
 echo "  telemetry verbs: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

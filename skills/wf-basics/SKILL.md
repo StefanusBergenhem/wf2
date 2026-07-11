@@ -52,7 +52,9 @@ python3 <paths.tools>/telemetry/record_session.py \
   --ended-at         "$TS_END" \
   --outcome          <completed|halted|escalated> \
   --wf-friction      "<see below, or omit>" \
+  --friction-kind    <contract_defect|skill_gap|tooling_bug|env_setup|none — omit when no friction> \
   --repo-observation "<see below, or omit>" \
+  --gotcha           "<see below, or omit>" \
   --sink             <paths.telemetry>
 rm -f <paths.transient>/ts-start-<agent>
 ```
@@ -61,7 +63,7 @@ The sink file is created by `wf-init` at install, so this only ever appends. The
 recorder anchors a relative sink to the main checkout root, so run the command
 unchanged inside a task worktree — never rewrite the sink path.
 
-### Session feedback — the two questions
+### Session feedback — the questions
 
 These seed the continuous-improvement loop; a later retrospective distils them
 into durable lessons. Answer from what you actually did this session.
@@ -74,6 +76,17 @@ at a real artifact, field, or step; a vague "could be clearer" is noise — omit
 - **`--wf-friction`** — Did any wf instruction, input, or output you were given
   contradict itself, mislead you, or leave you guessing? Name the exact skill,
   field, or step. *(Feeds wf-toolkit improvement.)*
+- **`--friction-kind`** — Whenever you pass `--wf-friction`, also classify it with
+  exactly one value: `contract_defect` (a handover/contract field was wrong,
+  missing, or contradictory), `skill_gap` (a skill instruction misled you or was
+  absent), `tooling_bug` (a wf script or command misbehaved), `env_setup`
+  (environment or setup blocked the work). No friction → omit the flag (it
+  defaults to `none`).
 - **`--repo-observation`** — In the code you actually touched, did you hit a
   blocker, a surprise, or a smell a future task should address? Tie it to what you
   worked on. *(Feeds the project backlog.)*
+- **`--gotcha`** — Did you hit a non-obvious trap in *working with* this repo —
+  an env, setup, or convention snag a future agent will hit again (e.g. a port
+  collision unless a variable is pinned)? State it as one self-contained sentence
+  with the exact fix. Code smells belong in `--repo-observation`, not here.
+  *(Feeds a proposed AGENTS.md edit.)*

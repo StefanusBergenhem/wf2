@@ -86,9 +86,12 @@ class FakeState:
         self.attempt_counters = {}   # task_id -> recorded attempt (bumped on reject)
         self.stage = 1
         self.total_stages = 1
+        self.on_compute_stages = None  # test hook: a compute_stages call re-layers
 
     def run(self, subcmd, *args, soft=False):
         self.calls.append((subcmd, args))
+        if subcmd == "compute_stages" and self.on_compute_stages:
+            self.on_compute_stages(args)
         if subcmd == "approve_task":
             self.approved.add(args[0])
         elif subcmd == "complete_task":
@@ -151,7 +154,11 @@ class FakeScripts:
     """Returns scripted helper verdicts. ``build[tid]`` / ``review[tid]`` are per-task
     verdict queues; each entry is a bare verdict string or a dict ``{verdict, di_id}``.
     They default to a steady 'ready_for_review' / 'approved'. ``classify`` is the
-    classify-amendment verdict; dispatch-fix routes every DI to wf-swa (exit 0)."""
+    classify-amendment verdict; dispatch-fix routes by the HOST entry's fix_kind
+    (the real _ROUTING table, exit 0 for the autonomous kinds)."""
+
+    _ROUTING = {"contract_amendment": "wf-swa", "spec_amendment": "wf-sa",
+                "component_defect": "wf-swa"}
 
     def __init__(self, review=None, build=None, classify="feature"):
         self.review = review or {}
@@ -186,8 +193,10 @@ class FakeScripts:
             return _proc(self.classify + "\n")
         if verb == "dispatch-fix":
             # Faithful to the real helper: an unknown or already-resolved DI in the
-            # HOST design-issues artifact is exit 2 (no routing decision to make).
+            # HOST design-issues artifact is exit 2 (no routing decision to make);
+            # otherwise route by the entry's CURRENT fix_kind, unknown → human (exit 1).
             di_id = args[0]
+            fix_kind = "contract_amendment"
             if "--config" in args:
                 cfg = Path(args[args.index("--config") + 1])
                 host = cfg.parent / "transient" / "design-issues.yaml"
@@ -196,9 +205,13 @@ class FakeScripts:
                               if i.get("id") == di_id), None)
                 if entry is None or entry.get("status") in ("resolved", "overridden"):
                     return _proc("", rc=2)
-            return _proc(json.dumps({"di_id": di_id, "subagent_type": "wf-swa",
-                                     "human_gate": False,
-                                     "envelope": {"mode": "fix", "di_id": di_id}}))
+                fix_kind = entry.get("fix_kind") or "unknown"
+            subagent = self._ROUTING.get(fix_kind)
+            out = {"di_id": di_id, "task_id": (entry or {}).get("task_id") if "--config" in args else None,
+                   "fix_kind": fix_kind, "subagent_type": subagent,
+                   "human_gate": subagent is None,
+                   "envelope": {"mode": "fix", "di_id": di_id}}
+            return _proc(json.dumps(out), rc=1 if subagent is None else 0)
         return _proc()
 
 
@@ -236,15 +249,18 @@ class FakeGit:
 
 class ScriptedGit(driver.GitOps):
     """Real GitOps logic over a scripted `_git`: the first matching command prefix
-    returns its CompletedProcess; anything unscripted succeeds empty. Records calls."""
+    returns its CompletedProcess; anything unscripted succeeds empty. Records calls
+    (args in ``calls``, the matching cwd in ``cwds``)."""
 
     def __init__(self, script):
         super().__init__("/nonexistent")
         self.script = script  # list of (args_prefix_tuple, CompletedProcess)
         self.calls = []
+        self.cwds = []
 
     def _git(self, *args, cwd=None):
         self.calls.append(args)
+        self.cwds.append(cwd)
         for prefix, proc in self.script:
             if args[: len(prefix)] == prefix:
                 return proc
@@ -645,6 +661,60 @@ def test_ensure_branch_gates():
         bad("ensure_branch clean create", g.calls)
 
 
+def test_add_worktree_stale_base():
+    # GIT_OPERATIONS.md § Worktree: a surviving worktree is verified before reuse.
+    # Same base (sprint branch is an ancestor of the worktree HEAD) → reuse as-is;
+    # stale base (merge-base --is-ancestor non-zero) → remove worktree + task branch,
+    # then re-add fresh off the sprint branch.
+    wt = tempfile.mkdtemp()  # the worktree path already exists
+
+    # Same base → reuse: only the merge-base check runs, in the worktree.
+    g = ScriptedGit([(("merge-base", "--is-ancestor", "sprint/s1", "HEAD"), _proc(rc=0))])
+    g.add_worktree(wt, "task-T1", "sprint/s1")
+    if g.calls == [("merge-base", "--is-ancestor", "sprint/s1", "HEAD")]:
+        ok("add_worktree: same base → reused as-is (no remove/branch/add)")
+    else:
+        bad("add_worktree reuse", g.calls)
+    if g.cwds == [wt]:
+        ok("add_worktree: staleness checked with the worktree as cwd")
+    else:
+        bad("add_worktree check cwd", g.cwds)
+
+    # Stale base → remove --force, branch -D, re-add off the sprint branch.
+    g = ScriptedGit([(("merge-base", "--is-ancestor", "sprint/s1", "HEAD"), _proc(rc=1))])
+    g.add_worktree(wt, "task-T1", "sprint/s1")
+    expected = [
+        ("merge-base", "--is-ancestor", "sprint/s1", "HEAD"),
+        ("worktree", "remove", "--force", wt),
+        ("branch", "-D", "task-T1"),
+        ("worktree", "add", wt, "-b", "task-T1", "sprint/s1"),
+    ]
+    if g.calls == expected:
+        ok("add_worktree: stale base → removed + branch deleted + re-added fresh")
+    else:
+        bad("add_worktree stale recreate", g.calls)
+
+    # Stale base, but the re-add fails → Escalation (same as a plain add failure).
+    g = ScriptedGit([
+        (("merge-base", "--is-ancestor"), _proc(rc=1)),
+        (("worktree", "add"), _proc(rc=1)),
+    ])
+    try:
+        g.add_worktree(wt, "task-T1", "sprint/s1")
+        bad("add_worktree stale re-add failure", "no Escalation raised")
+    except driver.Escalation:
+        ok("add_worktree: failed re-add after stale removal → Escalation")
+
+    # Absent path → no staleness check, straight add (existing behavior).
+    missing = str(Path(wt) / "not-there")
+    g = ScriptedGit([])
+    g.add_worktree(missing, "task-T1", "sprint/s1")
+    if g.calls == [("worktree", "add", missing, "-b", "task-T1", "sprint/s1")]:
+        ok("add_worktree: absent path → created without a merge-base check")
+    else:
+        bad("add_worktree absent path", g.calls)
+
+
 def test_di_rerun_at_current_attempt():
     # A fix-resolved task re-runs at its CURRENT attempt (review.max_attempts is
     # per-task, not per-incarnation) — never restarted at 1.
@@ -690,9 +760,13 @@ def test_di_rerun_clears_stale_worktree_artifacts():
         "feedback": wt1 / ".wf" / "transient" / "feedback.yaml",
         "review_ready": wt1 / ".wf" / "transient" / "review-ready.yaml",
         "build_blocked": wt1 / ".wf" / "transient" / "build-blocked.yaml",
+        # the worktree DI copy stays `open` (the fixer edits the HOST file); left in
+        # place it would re-park the re-run at inspect-build-return
+        "design_issues": wt1 / ".wf" / "transient" / "design-issues.yaml",
     }
-    for p in stale.values():
-        p.write_text("task_id: T1\n")
+    for key, p in stale.items():
+        if key != "design_issues":  # seeded above with the open DI entry
+            p.write_text("task_id: T1\n")
     orch, state, git, dispatcher = make_orch(
         proj, ["T1"],
         build={"T1": [{"verdict": "design_issue", "di_id": "DI-1"}]},
@@ -711,6 +785,182 @@ def test_di_rerun_clears_stale_worktree_artifacts():
         ok("DI re-run: task completes after the cleanup")
     else:
         bad("DI re-run completion", result.as_dict())
+
+
+def _host_di_edit(proj, di_id, **updates):
+    host = proj / ".wf" / "transient" / "design-issues.yaml"
+    doc = yaml.safe_load(host.read_text()) or {}
+    for issue in doc.get("issues") or []:
+        if issue.get("id") == di_id:
+            issue.update(updates)
+    host.write_text(yaml.safe_dump(doc))
+
+
+def test_component_defect_follow_up_reruns_after_merge():
+    # A component_defect DI: the fixer authors a FOLLOW-UP task in the sprint DAG and
+    # resolves the DI. The driver must re-layer the stages (compute-stages --force) and
+    # let the loop run the follow-up FIRST; the originally-blocked task re-runs in a
+    # later stage, after the follow-up merges — never inline at the boundary.
+    proj = make_project(["T1"])
+    wt1 = seed_worktree(proj, "sprint-T1", di={"issues": [
+        {"id": "DI-1", "task_id": "T1", "fix_kind": "component_defect",
+         "severity": "high", "status": "open"}]})
+    wt9 = seed_worktree(proj, "sprint-T9")
+    wts = {"T1": str(wt1), "T9": str(wt9)}
+    orch, state, git, dispatcher = make_orch(
+        proj, ["T1"],
+        build={"T1": [{"verdict": "design_issue", "di_id": "DI-1"}]},
+        brain=lambda st: StagedDIBrain(st, [["T1"]], wts),
+        dispatcher=FakeDispatcher(on_dispatch=_resolving_fixer(proj)))
+    orch.cfg.setdefault("parallel", {})["worktree_base"] = str(proj / "worktrees")
+
+    def relayer(args):  # the sprint-DAG change: T9 lands before the repaired T1
+        if "--force" in args:
+            orch.brain.stages = [["T9"], ["T1"]]
+            state.stage = 1
+            state.total_stages = 2
+    state.on_compute_stages = relayer
+    result = asyncio.run(orch.run())
+
+    if result.completed == ["T9", "T1"] and not result.escalated:
+        ok("component_defect: follow-up merges first, blocked task re-runs after")
+    else:
+        bad("component_defect completion", result.as_dict())
+    if ("compute_stages", ("--force",)) in state.calls:
+        ok("component_defect: stages re-layered (compute_stages --force)")
+    else:
+        bad("component_defect re-layer", state.calls)
+    builds = [json.loads(c.envelope)["task_id"] for c in dispatcher.calls_for_agent("wf-build")]
+    if builds == ["T1", "T9", "T1"]:
+        ok("component_defect: no inline re-run at the boundary — T9 built before T1's re-run")
+    else:
+        bad("component_defect build order", builds)
+    if not (wt1 / ".wf" / "transient" / "design-issues.yaml").exists():
+        ok("component_defect: stale worktree DI artifact cleared before the re-run")
+    else:
+        bad("component_defect stale DI artifact", "still present")
+
+
+def test_component_defect_reclassified_in_same_dispatch():
+    # A DI that ARRIVES as contract_amendment but is a component defect: the fixer
+    # corrects the entry's fix_kind, authors the follow-up, and resolves — in one
+    # dispatch. The driver must route the resolved branch on the FINAL fix_kind
+    # (re-layer), not the routed one (which would inline re-run before the fix merges).
+    proj = make_project(["T1"])
+    wt1 = seed_worktree(proj, "sprint-T1", di={"issues": [
+        {"id": "DI-1", "task_id": "T1", "fix_kind": "contract_amendment",
+         "severity": "high", "status": "open"}]})
+    wt9 = seed_worktree(proj, "sprint-T9")
+    wts = {"T1": str(wt1), "T9": str(wt9)}
+
+    def fixer(call):
+        env = json.loads(call.envelope or "{}")
+        if env.get("mode") != "fix" or call.agent_name != "wf-swa":
+            return
+        _host_di_edit(proj, env["di_id"], fix_kind="component_defect", status="resolved")
+
+    orch, state, git, dispatcher = make_orch(
+        proj, ["T1"],
+        build={"T1": [{"verdict": "design_issue", "di_id": "DI-1"}]},
+        brain=lambda st: StagedDIBrain(st, [["T1"]], wts),
+        dispatcher=FakeDispatcher(on_dispatch=fixer))
+    orch.cfg.setdefault("parallel", {})["worktree_base"] = str(proj / "worktrees")
+
+    def relayer(args):
+        if "--force" in args:
+            orch.brain.stages = [["T9"], ["T1"]]
+            state.stage = 1
+            state.total_stages = 2
+    state.on_compute_stages = relayer
+    result = asyncio.run(orch.run())
+
+    builds = [json.loads(c.envelope)["task_id"] for c in dispatcher.calls_for_agent("wf-build")]
+    if builds == ["T1", "T9", "T1"] and result.completed == ["T9", "T1"]:
+        ok("component_defect reclassified in-dispatch: routed on the final fix_kind (re-layer)")
+    else:
+        bad("component_defect final-kind route", f"builds={builds} {result.as_dict()}")
+
+
+def test_reclassified_di_rerouted_to_new_kind():
+    # C19: a fixer that leaves the DI open BUT flips its fix_kind was a re-classification,
+    # not an escalation — the driver re-runs dispatch-fix and dispatches the new kind's
+    # subagent instead of blocking.
+    proj = make_project(["T1"])
+    wt1 = seed_worktree(proj, "sprint-T1", di={"issues": [
+        {"id": "DI-1", "task_id": "T1", "fix_kind": "contract_amendment",
+         "severity": "high", "status": "open"}]})
+
+    def fixer(call):
+        env = json.loads(call.envelope or "{}")
+        if env.get("mode") != "fix":
+            return
+        if call.agent_name == "wf-swa":   # reclassify: spec defect, leave open
+            _host_di_edit(proj, env["di_id"], fix_kind="spec_amendment")
+        elif call.agent_name == "wf-sa":  # the spec fixer resolves it
+            _host_di_edit(proj, env["di_id"], status="resolved")
+
+    orch, state, git, dispatcher = make_orch(
+        proj, ["T1"],
+        build={"T1": [{"verdict": "design_issue", "di_id": "DI-1"}]},
+        brain=lambda st: StagedDIBrain(st, [["T1"]], {"T1": str(wt1)}),
+        dispatcher=FakeDispatcher(on_dispatch=fixer))
+    orch.cfg.setdefault("parallel", {})["worktree_base"] = str(proj / "worktrees")
+    result = asyncio.run(orch.run())
+
+    fixers = [c.agent_name for c in dispatcher.calls
+              if json.loads(c.envelope or "{}").get("mode") == "fix"]
+    if fixers == ["wf-swa", "wf-sa"]:
+        ok("reclassified DI: re-routed to the new kind's subagent (wf-swa → wf-sa)")
+    else:
+        bad("reclassified DI route", fixers)
+    if result.completed == ["T1"] and not result.escalated:
+        ok("reclassified DI: task re-runs and completes after the wf-sa fix")
+    else:
+        bad("reclassified DI completion", result.as_dict())
+    if state.resolved_dis == ["DI-1"]:
+        ok("reclassified DI: state DI marked resolved once")
+    else:
+        bad("reclassified DI resolve", state.resolved_dis)
+
+
+def test_reroute_loop_guard_max_one():
+    # The guard: at most ONE re-route per DI. Fixers that keep flipping the kind and
+    # leaving the DI open must not ping-pong — after the second still-open return the
+    # task blocks and escalates.
+    proj = make_project(["T1"])
+    wt1 = seed_worktree(proj, "sprint-T1", di={"issues": [
+        {"id": "DI-1", "task_id": "T1", "fix_kind": "contract_amendment",
+         "severity": "high", "status": "open"}]})
+
+    def fixer(call):
+        env = json.loads(call.envelope or "{}")
+        if env.get("mode") != "fix":
+            return
+        flip = {"wf-swa": "spec_amendment", "wf-sa": "contract_amendment"}
+        if call.agent_name in flip:  # always reclassify, never resolve
+            _host_di_edit(proj, env["di_id"], fix_kind=flip[call.agent_name])
+
+    orch, state, git, dispatcher = make_orch(
+        proj, ["T1"],
+        build={"T1": [{"verdict": "design_issue", "di_id": "DI-1"}]},
+        brain=lambda st: StagedDIBrain(st, [["T1"]], {"T1": str(wt1)}),
+        dispatcher=FakeDispatcher(on_dispatch=fixer))
+    result = asyncio.run(orch.run())
+
+    fixers = [c.agent_name for c in dispatcher.calls
+              if json.loads(c.envelope or "{}").get("mode") == "fix"]
+    if fixers == ["wf-swa", "wf-sa"]:
+        ok("re-route guard: exactly two fix dispatches (one re-route), no ping-pong")
+    else:
+        bad("re-route guard dispatches", fixers)
+    if "T1" in state.blocked and any(t == "T1" for t, _ in result.escalated):
+        ok("re-route guard: still-open DI after the re-route blocks + escalates")
+    else:
+        bad("re-route guard escalation", f"blocked={state.blocked} escalated={result.escalated}")
+    if dispatcher.agents_dispatched().count("wf-build") == 1:
+        ok("re-route guard: task never re-dispatched")
+    else:
+        bad("re-route guard re-dispatch", dispatcher.agents_dispatched())
 
 
 def test_ship_pr_body_sections():
@@ -833,7 +1083,12 @@ if __name__ == "__main__":
     test_build_blocked_reject_escalates()
     test_design_issues_across_two_stages()
     test_fixer_leaves_di_open_escalates()
+    test_component_defect_follow_up_reruns_after_merge()
+    test_component_defect_reclassified_in_same_dispatch()
+    test_reclassified_di_rerouted_to_new_kind()
+    test_reroute_loop_guard_max_one()
     test_ensure_branch_gates()
+    test_add_worktree_stale_base()
     test_di_rerun_at_current_attempt()
     test_di_rerun_clears_stale_worktree_artifacts()
     test_ship_pr_body_sections()

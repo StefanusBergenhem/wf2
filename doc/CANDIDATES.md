@@ -7,131 +7,6 @@ fires; delete it when resolved.
 
 ---
 
-## C3 — Telemetry: capture tokens + tool counts via per-harness hooks
-
-**Date:** 2026-06-14
-**Context:** Telemetry records time + outcome + structured feedback (skill-written,
-harness-agnostic). It does **not** capture token cost or tool-call counts, which
-was the originally-intended "main purpose." Three harnesses were researched
-(Claude Code, pi, opencode) to find how.
-
-**Finding — capture is irreducibly harness-specific.** Every harness keeps
-token/tool data in a per-session transcript/store, **none exposes that store to an
-in-session bash command** (so the skill-invoked recorder structurally cannot read
-it), and there is no cumulative total anywhere (always aggregate). The native
-capture point differs per harness:
-
-- **Claude Code** — `Stop` / `SubagentStop` hook receives `transcript_path` on
-  stdin; parse the JSONL, sum `usage.{input,output,cache_read}` tokens, count
-  `tool_use` blocks. Subagents get their own `agent_transcript_path`.
-- **pi** (earendil-works) — `session_shutdown` extension aggregates in-process
-  (`ctx.sessionManager.getEntries()`), **or** post-run parse of the session JSONL
-  under `~/.pi/agent/sessions/` (`usage.totalTokens`, `toolCall` blocks) with the
-  session pinned via `--session` / `PI_CODING_AGENT_SESSION_DIR`. No in-session env
-  var. (Confirm pi identity: earendil Pi vs oh-my-pi — they differ.)
-- **opencode** — read the on-disk store (`~/.local/share/opencode`; JSON tree
-  pre-1.2, SQLite `opencode.db` 1.2+) keyed by a session id pinned via
-  `opencode run --session <id>`; sum `tokens.{input,output,reasoning,cache.*}`,
-  count `type:"tool"` parts. `OPENCODE_SESSION_ID` in tool env is unmerged — do not
-  rely on it.
-
-Even wf1 never solved this from the skill: its telemetry left token columns
-`(hook)` / null, "fill via an optional host Stop hook."
-
-**Recommended shape when built — two layers:** (1) the skill writes the
-agnostic record it already does (agent/time/outcome/feedback); (2) a small
-**per-harness adapter** (Claude Stop hook · pi `session_shutdown` · opencode
-store-reader), installed per target, enriches with tokens+tools. This is the one
-genuinely harness-coupled piece of wf2 — keep it isolated in the adapters.
-
-**Trigger to act:** when token cost actually needs measuring (e.g. a dogfood run
-where context budget or per-agent cost is the question being asked). Until then its
-absence does not hurt — defer. Build the Claude adapter first (the dogfood harness).
-
----
-
-## C4 — Fix-mode subagents (wf-swa contract_amendment BUILT; wf-sa spec_amendment deferred)
-
-**Date:** 2026-06-14 (updated 2026-06-22)
-**Context:** the orchestration layer now ships the **routing half** — `wf orchestrate
-dispatch-fix` reads a design issue's `fix_kind` and routes it: `contract_amendment →
-wf-swa`, `spec_amendment → wf-sa`, `unknown → human`. What is NOT built is the **fix
-MODE** in each subagent: today `wf-swa` / `wf-sa` ship default-mode only. wf1's SWA/SA
-had a second mode the orchestrator dispatched to surgically resolve a DI mid-execution
-(amend in isolation, commit, flip the DI to resolved; the orchestrator re-dispatches the
-original task at the same attempt count). The lifecycle reason SA|SWA stay split (SWA is
-the re-dispatched, surgical contract-fixer) still holds; only the mechanism is unbuilt.
-
-**Reconciliation (absorbs the dropped C12 — taxonomy + routing now built):** the
-taxonomy is two autonomous kinds plus unknown. wf1's `recut → wf-po` is **dropped** —
-wf2's PO owns capabilities, not sprint cutting; SA owns the slice cut, so a needed
-re-cut folds into a `spec_amendment` (SA decides the fix scope). The planning-time
-"infeasible cut" case is the `preparing` swa→sa escalation, not a stage-execution DI a
-task-scoped build/review agent could classify.
-
-**Status (2026-06-22):** the **`wf-swa` contract_amendment fix-mode is BUILT** — agent
-wrapper + a mode-split skill (classify → minimum-amend one task contract, no commit since the
-sprint is transient → flip the DI to `resolved`; a genuine spec defect halts to the human). It
-is on a **live path**: build/review raise `contract_amendment`, the orchestrator routes it to
-`wf-swa`. The **`wf-sa` spec_amendment fix-mode — and its agent wrapper — are NOT built and are
-deferred.**
-
-**Trigger to act (wf-sa half):** there is **no automated producer of a `spec_amendment` DI
-today** — build/review are code-layer and raise `contract_amendment` only, and `wf-swa`
-fix-mode escalates a genuine spec defect **to the human** rather than auto-reclassifying (that
-auto-route is **C19**). So a `wf-sa` fix-mode would be a consumer with no producer, and `wf-sa`
-is never autonomously dispatched anyway (the `preparing` step dispatches only `wf-swa`; on its
-escalation the human re-runs `wf-sa`'s default mode). Build the `wf-sa` spec_amendment fix-mode
-+ wrapper **together with C19** — the loop change that first produces a `spec_amendment` DI.
-Until then a spec defect surfaced at build time is a human escalation: re-run `wf-sa` default
-mode to reshape the spec and re-cut. Keep the **mechanical classification check** for when it
-lands (spec correct + contract diverges → contract_amendment; contract matches spec + spec
-wrong → spec_amendment; else unknown).
-
----
-
-## C6 — How SA knows which capabilities are in scope this round
-
-**Date:** 2026-06-14
-**Context:** `wf-sa` Phase 1 step 1 says *"Read `$CAPABILITIES` and identify the
-capabilities this change serves."* That is vague — it does not say how SA learns
-which capabilities are new / in-scope for this round vs already handled. Two storage
-options were floated: (1) a per-capability status (`new | designed | implemented`),
-(2) an `ongoing` + `completed` capabilities file pair.
-
-**Analysis (governor lens):** both stored options are the wrong shape.
-- **`implemented`/`done` is derivable** — coverage = `[REQ]` test tags ⟷ capabilities
-  set-diff. Storing it stores what code reports (governor violation).
-- **`designed` is rot-prone** — the design-slice is ephemeral and *free to
-  regenerate*, so a durable "designed" flag has no backing artifact. Not tracking it
-  costs nothing: if a capability was designed but not built, SA just re-designs it.
-- **`ongoing`/`completed` file pair** is the wf1 sync-tax — a maintained second copy
-  of lifecycle with entries shuttled between files by hand. Hard no.
-- The only **durable, non-derivable** status is intent: `planned` vs `deferred`
-  (already in PO's scaffold).
-
-**Likely resolution when picked up:**
-1. "Which capabilities this round" is a **session input** — SA is invoked with a
-   change-to-design (a capability id / feature / free-text ask) and resolves it to
-   the capability set it serves. SA does not autonomously scan for "what's new."
-2. **The backlog is the derived gap** — `planned` capabilities with no proving test
-   yet. Computed on demand from the `[REQ]` coverage harvest; no backlog file, no
-   per-capability build status. This is consistent with "no backlog tier; the slice
-   is the unit of work."
-3. **Prune PO's status values to `planned | deferred`** (drop `in_progress` =
-   transient, `done` = derivable) — `capabilities.yaml.tmpl` + the two PO status
-   references. **DONE 2026-06-21** as part of the capabilities-as-open-work-set reframe
-   (completed capabilities graduate OUT rather than carry a `done` status). Points 1–2
-   (SA scope = session input; backlog = derived gap) remain open pending the coverage
-   harvester.
-
-**Trigger to act:** when build/review land the `[REQ]` coverage harvester (so the
-derived gap is actually computable), or when a multi-driver / orchestrated model
-needs to avoid re-picking an in-flight capability. Until then the interactive
-human-names-the-scope flow is sufficient and the current vague wording is harmless.
-
----
-
 ## C8 — Agent frontmatter is Claude-format; pi/opencode untested
 
 **Date:** 2026-06-15
@@ -143,8 +18,10 @@ copies that Claude frontmatter verbatim — pi and opencode may expect a differe
 agent-definition shape (tool-grant syntax especially).
 
 **Observation:** only the Claude target is dogfooded, so this is deferred like the
-telemetry adapters (C3) — the one genuinely harness-coupled part of an agent is its
-frontmatter. The body is harness-agnostic prose and renders fine everywhere.
+telemetry adapters (the Claude usage-hook adapter shipped 2026-07-10; pi/opencode
+adapters remain deferred on the same grounds) — the genuinely harness-coupled part
+of an agent is its frontmatter. The body is harness-agnostic prose and renders fine
+everywhere.
 
 **Trigger to act:** when pi or opencode becomes a real target. Then verify each
 harness's agent-definition schema and, where it differs, guard the frontmatter with
@@ -165,20 +42,23 @@ PO/SA/SWA/drill already write — no orchestration needed.
 detection** — `wf-retrospective` reads `pipeline_state` (recurring rejections, design-issue
 clusters by `fix_kind`, escalation/block causes) and distils the patterns no single session
 can see into the same learnings streams, sourced by `sprint_id`. Per-task velocity/counts are
-reported transiently, not stored. **Still deferred:** the maintained `MEMORY.yaml` lessons
-store (dedup, capacity-cap, confidence, reinforcement) — wf1's governor-ish overreach, and
-nothing in wf2 consumes a distilled-lessons store.
+reported transiently, not stored. **2026-07-10:** feedback gained a `friction_kind` enum, so
+the friction clustering step is now a mechanical groupby before judgement. **Still
+deferred:** the maintained `MEMORY.yaml` lessons store (dedup, capacity-cap, confidence,
+reinforcement) — wf1's governor-ish overreach, and nothing in wf2 consumes a
+distilled-lessons store.
 
 **Also deferred — `handled` is an optimistic close.** wf-sa flips a learning to
 `handled` when it *designs* the fix, not when build *lands* it; nothing downstream
 confirms the code shipped. Recoverable — an abandoned fix's smell re-surfaces in a later
 observation and re-distils. When the `[REQ]`-style coverage harvester exists, `handled`
 can become *derived from commit citations* instead of a stored flag — the same move
-deferred for capability "done" in C6.
+made for superseded requirements (retired ids verified gone via reconcile, 2026-07-10).
 
 **Trigger to act:** the orchestration half is done. Build the `MEMORY.yaml` store only if a
 real consumer for a maintained lessons store appears (none today — the open learnings streams
-suffice). When the `[REQ]` coverage harvester lands, switch `handled` to derived (above).
+suffice). When the coverage harvest is wired into build/review, switch `handled` to derived
+(above).
 
 ---
 
@@ -208,7 +88,8 @@ work-set.
 
 **Update 2026-07-09:** the requirement-level readable view now exists —
 `tools/reconcile/register.py` derives a markdown register (REQ/SYS-TC id, statement,
-proving tests) from the tags on demand. Still missing for a full compliance trace: the
+proving tests) from the tags on demand (and since 2026-07-10 wf-sa consumes it as its
+what's-already-promised input). Still missing for a full compliance trace: the
 capability → user-need apex, which graduation drops.
 
 **Trigger to act:** when a project with a real audit/traceability mandate adopts wf2
@@ -267,11 +148,14 @@ which wf2 killed). In wf2 the interface is re-derived (discover) or scouted (wf-
 the verbatim-quote would be sourced differently. Premature until the task-contract authoring
 (wf-swa → build) is the actual bottleneck and the interface source is settled.
 
-**Update 2026-07-09:** the **new/widened-seam half shipped** — the design-slice now carries
+**Update 2026-07-09:** the **new/widened-seam half shipped** — the design-slice carries
 an `## Interface contracts` section (SA-authored, for components/seams with no source to
 read yet) and the task contract an optional `interface_contract` field copied verbatim from
-it. What this entry still covers is the **existing-interface** case: quoting a dependency
-component's *current* interface (sourced from discover/drill) into a wiring task.
+it. **Update 2026-07-10:** the *detection* side also tightened — dems T16 wired the wrong
+persistence seam past review, and wf-review now verifies a contract-mandated seam against
+the implementation's wiring, not just a passing assertion. What this entry still covers is
+the **existing-interface** case: quoting a dependency component's *current* interface
+(sourced from discover/drill) into a wiring task, so the builder never guesses it.
 
 **Trigger to act:** when wiring/integration tasks start failing review for guessed
 interface shapes — add a `parent_interface`-style verbatim quote to the task contract,
@@ -302,13 +186,13 @@ in-flight tracking to the backlog and an "skip in-flight" rule to wf-sa's cut st
 
 ---
 
-## C15 — The "test tree" is a path with ≥2 callers but no config key
+## C15 — The "test tree" is a path with ≥3 callers but no config key
 
 **Date:** 2026-06-21
-**Context:** wf-sa now invokes two tools that need the project's test tree as a `--scan` /
-`--tests` root — `reconcile.py` (drain the built, SKILL.md Phase 1) and `next_id.py`
-(allocate ids, Phase 3). Neither resolves the root from config; both say "the test tree" and
-rely on SA judgement to fill the path.
+**Context:** wf-sa invokes tools that need the project's test tree as a `--scan` /
+`--tests` root — `reconcile.py` (drain the built), `next_id.py` (allocate ids), and since
+2026-07-10 `register.py` (the what's-already-promised read). None resolves the root from
+config; all say "the test tree" and rely on SA judgement to fill the path.
 
 **Observation:** this is the C1 threshold (a thing read by ≥2 callers belongs in one source of
 truth) applied to a **path** rather than a config *reader*. The "one source of truth for paths"
@@ -319,10 +203,10 @@ is effectively the source root; a TS repo may scatter `__tests__`). So the key m
 *list* of roots, or the convention may be "the source root" for grep-only consumers. Needs a
 decision, not a reflex `paths.tests: ".wf/..."`.
 
-**Trigger to act:** a third consumer needs the test root, or a dogfood run shows the SA
-resolving it inconsistently between the reconcile call and the next_id call. Then add a config
-key (likely a list) and point both invocations at it. Until then the judgement-filled path is
-harmless and consistent across the two callers.
+**Update 2026-07-10 — trigger fired:** `register.py` in wf-sa Phase 1 is the third consumer.
+Open decision: single root vs list vs "source root" convention (all three consumers are
+grep-only scanners, so a repo-root default may be sufficient — at the cost of scanning
+vendored trees). Promote at the next config touch.
 
 ---
 
@@ -372,36 +256,17 @@ exit non-zero + the offending paths) would turn the one remaining structural rev
 a deterministic verdict the build/review boundary could route on, freeing the reviewer to spend
 its judgement only on what genuinely needs reading.
 
+**Update 2026-07-10:** the *author-time* half shipped — `wf sprint check` now errors when a
+testing mandate has no test-file home in `files_to_touch` (dems' #1 build-halt cause) and
+warns when `implementation_notes` name an out-of-scope file, so the contracts that forced
+mid-build scope amendments are caught at cut time. The *runtime* diff⊆contract check this
+entry proposes remains open.
+
 **Trigger to act:** a scope violation slips past review judgement, or a dogfood wants the
 files_to_touch boundary enforced deterministically (e.g. a mechanical pre-review gate, or
 folding it into the build-return inspection). Then add the check as a CLI verb and have review
 cite it instead of eyeballing `git diff --name-only`. Until then the judgement read is cheap and
 sufficient.
-
----
-
-## C19 — Auto-route a wf-swa-reclassified design issue to wf-sa (spec escalation)
-
-**Date:** 2026-06-22 (updated 2026-07-04)
-**Context:** the code-layer/spec-layer principle has `wf-swa`, while fixing a
-`contract_amendment` design issue, escalate to `wf-sa` when the root cause is actually a wrong
-requirement or ADR. `wf-swa` fix-mode does the honest thing today: on a spec defect it **halts
-and escalates to the human**, who re-runs `wf-sa`. The orchestrator (driver
-`_resolve_design_issues` + LLM-track §2b) now **re-reads the design issue after the fixer
-returns**: `resolved` → mark resolved in state and re-run the task; still `open` → block the
-task and escalate to the human. What it does NOT yet do is inspect a changed `fix_kind` on a
-still-open issue — a fix-mode re-classification (flip `fix_kind` → `spec_amendment`, leave
-`status: open`) lands in the block-and-escalate branch instead of being re-routed to `wf-sa`.
-
-**Likely shape when built:** in the still-open branch, if `fix_kind` changed, re-run
-`dispatch-fix` (routing to `wf-sa`) instead of blocking the task. Touches the driver's
-still-open branch in `_resolve_design_issues`, the LLM-track §2b, and the driver tests. Then
-`wf-swa` fix-mode can re-classify autonomously instead of halting to the human. This is the
-first producer of a `spec_amendment` DI, so it lands **with the `wf-sa` spec_amendment fix-mode
-+ wrapper deferred in C4** — one is the route, the other its consumer.
-
-**Trigger to act:** a real run hits a spec defect surfaced at the contract layer and the
-human round-trip is friction. Until then the halt-to-human path is correct and cheap.
 
 ---
 
@@ -433,7 +298,10 @@ relative sink against the worktree cwd and died with the worktree (fixed 2026-07
 `record_session.py` now anchors a relative sink to the main checkout root), and nothing
 noticed the loss until a manual audit two days later. The fix removes the known loss
 vector; what remains unguarded is the *detection* gap — a silently skipped or misrouted
-telemetry write is invisible until someone reads the sink.
+telemetry write is invisible until someone reads the sink. (Since 2026-07-10 the Claude
+usage hook appends an independent `kind: "usage"` row per session, so a session that ran
+but wrote no skill-row is now visible offline by comparing the two row kinds — a partial,
+maintainer-side mitigation, not an in-run check.)
 
 **Likely shape when built:** the orchestrator records the sink's line count at
 `wf pipeline dispatch` and the return inspectors warn when it did not grow — a cheap
@@ -441,3 +309,86 @@ baseline-compare in pipeline state, not a new subsystem.
 
 **Trigger to act:** a role's telemetry goes missing again *after* the root-anchor fix.
 Building the checker before a second loss mode shows up is machinery without evidence.
+
+---
+
+## C22 — `wf-qa`: exploratory web-app QA role (system-altitude, on the running app)
+
+**Date:** 2026-07-10
+**Context:** dogfood run 1 — hand-browsing the dems web app found bugs the e2e lane
+missed (scripted SYS-TC paths verify the promised flows; nobody *explores*). The gap is a
+verification peer of wf-review (judgement on the diff) and the SYS-TC lane (scripted
+end-to-end): judgement on the **running app**. Exploratory noticing is genuinely
+LLM-shaped work, so mechanical-over-LLM does not bar it — the discipline is that findings
+exit structured, not as prose reports. The immediate need is covered without wf machinery:
+`anthropics/skills@webapp-testing` (official, Playwright-driven browse/screenshot/inspect
+loop) is installed in dems (`.agents/skills/webapp-testing`) for ad-hoc sprint-close QA.
+
+**Shape when built:** a `wf-qa` role dispatched at `end_of_sprint` after the stage checks
+run green — loads the webapp-testing skill, exercises the capabilities' user-visible flows
+plus free exploration, and routes every finding as a design issue (`component_defect` for
+defects in merged code — the fix loop now handles that kind end-to-end) or hands the PO a
+capability-voice need. Read-only outside the browser; its report is transient.
+
+**Trigger to act:** the first ad-hoc dems QA run with the installed skill proves the shape
+(app start/auth needs, what "browse the flows" resolves to, where findings route) — promote
+once it demonstrably catches what the e2e lane missed, and fold what the run taught into the
+role definition.
+
+---
+
+## C23 — The build refactor phase never fires (cost without observed benefit)
+
+**Date:** 2026-07-10
+**Context:** dogfood run 1 — 28 build sessions each ran the refactor checklist pass; zero
+produced a refactor. The user kept it as-is for now (one run is one data point), but the
+pass is a per-task tax whose yield is so far unobserved.
+
+**Likely shape when acted on:** gate the refactor pass on a green-phase signal (duplication
+introduced, contract-forced awkwardness flagged during implementation) instead of running
+the checklist unconditionally — or drop it and leave TDD's refactor step to builder
+judgement.
+
+**Trigger to act:** dogfood-2 evidence — the token adapter now measures per-session cost, so
+the pass's price can be weighed against refactors actually produced; a second zero-yield run
+promotes this.
+
+---
+
+## C24 — `human_intervention` telemetry field (autonomy measurement)
+
+**Date:** 2026-07-10
+**Context:** declined when `friction_kind` shipped. dems required repeated mid-session human
+interventions (manual worktree recreation, hand-edited config, re-running roles) that are
+invisible in telemetry — the sessions still ended `completed`. Autonomy is the metric wf2
+actually optimizes, and today it is anecdotal.
+
+**Likely shape when built:** a count + reason field in the session feedback (enum'd reason
+if patterns emerge), written by the role when the human had to step in mid-session.
+
+**Trigger to act:** autonomy measurement becomes a question actually being asked of the
+telemetry (e.g. comparing dogfood runs, or claiming an orchestration change reduced
+babysitting).
+
+---
+
+## C25 — Worktree dependency provisioning (the second half of L-004)
+
+**Date:** 2026-07-10
+**Context:** dogfood run 1 — task worktrees lacked gitignored dependency dirs
+(`node_modules`); preflight never installs them, so the human copied them by hand. The
+stale-base half of the recovery shipped 2026-07-10 in both tracks (`GitOps.add_worktree`
++ GIT_OPERATIONS.md § Worktree); the LLM track also carries a judgement-level provision
+instruction ("run the project's install command, or copy the dir from the main
+checkout"). The **mechanical** twin was deliberately not built: a blanket
+copy-any-top-level-gitignored-dir rule is dangerous (`cp -al` hardlinks let a worktree
+build corrupt the host copy; a copied Python `.venv` resolves against the host checkout
+via embedded absolute paths; multi-GB cache copies recreate the very stall), and doing
+it honestly needs a per-project declaration of what to provision and how.
+
+**Likely shape when built:** a config-declared provision command (e.g. a
+`commands.provision` the driver runs in each fresh/recreated worktree), captured by
+wf-init from repo evidence like the other commands — not a dir-copy heuristic.
+
+**Trigger to act:** a second run loses time to missing worktree deps, showing which shape
+(install command vs copy) real runs need. Until then the LLM-track instruction covers it.

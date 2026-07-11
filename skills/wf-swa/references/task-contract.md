@@ -22,17 +22,21 @@ Contents:
   requirements:                  # one entry per id in covers — the requirement's text
     - id: REQ-1
       statement: "<the requirement's full EARS statement>"
+      serves: CAP-NNN            # this requirement's driver, read off the slice
     - id: REQ-2
       statement: "<...>"
-  serves: [CAP-NNN, L-NNN]       # every distinct driver behind the covered requirements
-                                 # (read each requirement's driver off the slice; a task
-                                 # grouping requirements with different drivers lists them all)
+      serves: L-NNN
+  serves: [CAP-NNN, L-NNN]       # exactly the union of the requirements' serves — a task
+                                 # grouping requirements with different drivers lists them
+                                 # all, and lists nothing no requirement declares
   files_to_touch: [path, path]   # every file the build phase may write
   acceptance_criteria:           # YOU author these — one testable condition per entry
     - id: REQ-1.AC-1
       check: <testable statement with named inputs and expected outputs>
     - id: REQ-1.AC-2
       check: <...>
+      verified_by: <gate command>  # ONLY when an existing mechanical gate, not a test,
+                                   # proves the criterion — see Acceptance criteria
   testing_mandate:
     unit_tests: [...]            # see below
     integration_tests: [...]     # required when the task touches an external dep
@@ -70,6 +74,12 @@ For each requirement a task `covers`, write the testable conditions that prove i
 - **Within the requirement.** Do not invent criteria for behaviour the requirement
   doesn't call for — that is scope creep. A requirement you cannot make testable from
   the source is a flag to the SA, not a guess.
+- **Gate-verified, not test-provable.** When a criterion is enforced by an existing
+  mechanical gate (a preflight command, a CI check) rather than a test — e.g. "generated
+  code is never stale" enforced by a codegen-drift gate — keep it as an acceptance
+  criterion and add `verified_by: <the gate command>` to the entry; it then needs no
+  covering test in the mandate. Never use `verified_by` for a criterion a test could
+  prove — that is dodging the mandate, and the reviewer will treat it as an unmet AC.
 
 Good: *"For 1,000 concurrent users, median response ≤ 180ms and p99 ≤ 250ms over a 5-minute window."*
 Bad: *"The system performs well under load."*
@@ -124,6 +134,18 @@ canonical home for that test type — MUST appear in `files_to_touch`. The build
 can only write files the contract declares in scope. This includes derived artifacts
 (snapshots, generated schemas, golden outputs) when the task changes the source they
 capture.
+
+**Gate: every mandated test gets a file home.** Before you finish a contract, for each
+non-empty `unit_tests` / `integration_tests` mandate add the test file it lives in to
+`files_to_touch`, placed per the package's test convention — a Go unit test as
+`<file>_test.go` beside its target, a Go integration test as its own
+`//go:build integration` file, a JS test as `*.test.*` / `*.spec.*` or under
+`__tests__/`. A mandate with no test file in `files_to_touch` fails `wf sprint check`,
+and if it slips through, the build halts mid-task for a scope amendment.
+
+Name in `implementation_notes` only files that are in `files_to_touch` or explicitly
+read-only reference material — a note that tells the build to edit a file outside
+`files_to_touch` sends it into a scope violation.
 
 ## Behavior-level wording
 

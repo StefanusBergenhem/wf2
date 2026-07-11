@@ -31,6 +31,9 @@ paths:
   discover_view: ".wf/transient/discover/view.html"              # human interactive map
   discover_brief: ".wf/transient/discover/brief.md"              # agent digest (consumed by planning skills)
   telemetry: ".wf/telemetry/sessions.jsonl"   # Append-only session log. Committed.
+                                              # Skills append session rows; on the claude
+                                              # target an installed Stop/SubagentStop hook
+                                              # also appends `kind: usage` token/tool rows.
   capabilities: ".wf/CAPABILITIES.yaml"       # User-voice capabilities (wf-po appends; wf-sa drains when designed). Committed.
 
   # Learnings — distilled from telemetry by wf-retrospective. First-class design
@@ -79,8 +82,8 @@ parallel:
   worktree_base: ".wf/transient/worktrees"    # per-task git worktree root. Transient.
 
 commands:
-  preflight: ""        # baseline + per-task gate (lint + tests + build) — set per project; build/review run it, the orchestrator runs it as the worktree baseline.
-  stage_check: ""      # heavier checks run only at a stage boundary (e2e / integration) — set per project; empty skips them.
+  preflight: ""        # per-task gate (lint + tests + build) — wf-init captures it from repo evidence at init; build runs it before every handoff.
+  stage_check: ""      # heavier checks run only at a stage boundary (e2e / integration) — wf-init captures it at init; empty skips them.
 
 review:
   passes: [wf-review]      # the ordered build→review chain per task; append e.g. wf-security-review to extend it (no skill change).
@@ -98,4 +101,5 @@ id_counters:            # high-water marks for draining id lanes — only ever i
   wf_learning: 0        # L-NNN in paths.wf_learnings (wf-retrospective bumps)
 
 telemetry:
-  enabled: true               # When false, skills skip the end-of-session record step.
+  enabled: true               # When false, skills skip the end-of-session record step
+                              # and the claude usage hook writes nothing.

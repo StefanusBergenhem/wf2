@@ -38,14 +38,24 @@ one task; every requirement is fully covered across the task set.
 
 For each task, author its **complete** contract per `references/task-contract.md`:
 `files_to_touch`, the `testing_mandate` (unit positive + negative per target; an integration
-test per real seam — external dep or cross-component wiring), `out_of_scope`,
-`implementation_notes` (source patterns + governing ADRs), and `serves` — the list of every
-distinct driver of the covered requirements, never collapsed to one "primary". Copy each covered
+test per real seam — external dep or cross-component wiring), `out_of_scope`, and
+`implementation_notes` (source patterns + governing ADRs). Copy each covered
 requirement's EARS statement **verbatim** from the slice into the task's `requirements`
-(one `{id, statement}` entry per id in `covers`). When a task builds a component or widens a
+(one `{id, statement, serves}` entry per id in `covers` — `serves` is that requirement's
+own driver, read off the slice), and set the task's `serves` to the union of those
+drivers, never collapsed to one "primary". When a task builds a component or widens a
 seam the slice's **Interface contracts** section fixes a shape for, copy that contract
 **verbatim** into the task's `interface_contract` — the build implements the agreed shape,
 never one it discovers.
+
+**Fold in the slice's Supersedes list.** For each superseded id the slice's **Supersedes**
+section carries, locate its proving test file(s) mechanically — grep the test tree for
+`[REQ:<old-id>]` / `[SYS-TC:<old-id>]` (or derive them via
+`python3 <paths.tools>/reconcile/register.py --tests <test-root>`) — never guess. Add those
+files to `files_to_touch` of the task covering the successor requirement (a dedicated
+removal task when the entry has no successor), with an explicit note in its
+`implementation_notes`: update or delete the old proving test and its tag — a superseded
+tag must not survive the sprint.
 
 **Plan the slice's system test cases.** For each `SYS-TC-<n>` case wf-sa wrote, add an e2e
 task whose `system_tests` is that case. The case `Covers` a **capability**, so its
@@ -76,8 +86,9 @@ it by splitting a task or merging two.
 2. **Gate: run `python3 <paths.tools>/cli/wf sprint check`. Do not proceed until it
    reports `verdict: pass` (exit 0).** It checks the sprint against the slice — every
    slice requirement covered, every criterion carried by exactly one task and referenced
-   by a test, every SYS-TC carried by an e2e task, no UNCONFIRMED assumption, an acyclic
-   DAG. On an error finding,
+   by a test (or gate-verified via `verified_by`), every mandated test with a test-file
+   home in `files_to_touch`, every requirement's driver in the task's `serves`, every
+   SYS-TC carried by an e2e task, no UNCONFIRMED assumption, an acyclic DAG. On an error finding,
    fix the decomposition in `$SPRINT` and re-run. A finding you cannot resolve without
    minting or changing a requirement is a spec defect — halt and escalate to the SA (see
    Halt conditions), never invent a criterion to silence it.

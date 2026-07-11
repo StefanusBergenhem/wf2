@@ -1,6 +1,6 @@
 ---
 name: wf-swa
-description: Software Architect — authors a design slice into a per-task sprint DAG (default), or surgically amends one task contract to resolve a contract design issue (fix mode), escalating a spec defect rather than patching it.
+description: Software Architect — authors a design slice into a per-task sprint DAG (default), or surgically resolves one design issue (fix mode) by amending a task contract or authoring a follow-up task for a merged-code defect, reclassifying a spec defect rather than patching it.
 tools: Read, Edit, Write, Bash, Grep, Glob
 ---
 

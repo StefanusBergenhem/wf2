@@ -10,11 +10,9 @@ Created once in `preparing`. Gate first, then branch:
 
 1. Working tree clean (`git status --porcelain` empty) and the base branch not behind its
    remote. If either fails, HALT and ask the user.
-2. `git checkout -b <sprint-branch> <base>` — name it for the sprint (e.g.
-   `sprint/<sprint-id>`). Record `sprint_branch` and `sprint_branch_base_sha` in state.
-
-All task worktrees branch from the sprint branch; nothing is committed to the base until
-the ship PR merges.
+2. `git checkout -b <sprint-branch> <base>` — name it `sprint/<sprint_id>` (the
+   `sprint_id` from `$SPRINT`); on resume, re-derive the same name — never invent a
+   variant.
 
 ## Worktree (per task)
 
@@ -25,17 +23,22 @@ it off the **current sprint-branch HEAD** so a task sees prior stages' merged wo
 git worktree add <worktree> -b <task-branch> <sprint-branch>
 ```
 
-A git worktree is a fresh checkout that shares the main checkout's `.git` (objects + refs),
-so committed files like `.wf/config.yaml` and every branch ref are present in it — but
-**gitignored host transients are not**: the run-level `pipeline_state` does not exist in a
-fresh worktree. So write each task's artifacts (`current_task`, `feedback`, …) INTO its
-worktree, and pass any run-level fact a worktree agent needs — the `sprint_branch` review
-uses as its diff base — in the dispatch envelope, never expecting it to read host state.
-Name the task branch from the task id.
+Name the task branch from the task id. Write each task's artifacts (`current_task`,
+`feedback`, …) INTO its worktree — a worktree cannot read gitignored host transients, so
+any run-level fact its agent needs (e.g. `sprint_branch`) travels in the envelope.
 
-If `git worktree add` fails (e.g. the path exists from an interrupted run), reuse the
-existing worktree rather than recreating it — a re-dispatched build restarts from zero in
-it (it re-reads its contract), so the surviving worktree is just where it runs.
+If the path already exists (left by an interrupted run), verify it before reuse:
+
+1. **Stale base** — run `git -C <worktree> merge-base --is-ancestor <sprint-branch> HEAD`.
+   Non-zero exit → the sprint branch moved past this worktree's base: recreate it —
+   `git worktree remove --force <worktree>`, `git branch -D <task-branch>`, then
+   `git worktree add` as above. A re-dispatched build restarts from zero, so nothing in
+   the stale worktree is worth keeping.
+2. **Same base** → reuse it as-is.
+
+Before any dispatch into a worktree (fresh or reused): if `commands.preflight` needs
+gitignored dependency dirs (e.g. `node_modules`) and they are absent, provision them —
+run the project's install command, or copy the dir from the main checkout.
 
 ## Merge (stage boundary, batch)
 

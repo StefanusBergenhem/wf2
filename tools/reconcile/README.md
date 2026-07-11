@@ -114,3 +114,24 @@ in total, right now?" for a human reader (a new engineer, an auditor) without
 reintroducing a hand-maintained spec: the register is derived on demand and never
 edited — regenerate it when you need it, and treat a stale copy as disposable.
 Divergent statements across one id's tags are flagged on the row.
+
+The SA also reads it when grounding a change: the in-scope entries are what the system
+already promises, the input every new requirement is triaged against (unrelated /
+extends / supersedes).
+
+## retired.py — the superseded-id sweep
+
+Supersession is the one case where a tag must **not** stay as a breadcrumb: when the SA
+supersedes a shipped requirement (the design records a `Supersedes` list), the sprint
+building the successor must update or delete the old proving test and its tag.
+`retired.py` is the mechanical check that it happened:
+
+```sh
+python3 retired.py --ids REQ-4 SYS-TC-2 --tests <test-root>
+```
+
+Exit `0` when every id is gone; exit `1` when any survives, listing each surviving id
+with the files still carrying its tag; exit `2` on input error. It sweeps both lanes
+with the harvester's exact-id matching (`REQ-2` never matches `REQ-20`). The SA runs it
+when draining a backlog design that carried a `Supersedes` list — a survivor is a
+finding routed into the next slice, never silently dropped.

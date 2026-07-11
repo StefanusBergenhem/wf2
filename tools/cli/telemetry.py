@@ -31,7 +31,9 @@ def _record_session(rest):
     p.add_argument("--ended-at", required=True, dest="ended_at")
     p.add_argument("--outcome", required=True)
     p.add_argument("--wf-friction", dest="wf_friction", default="")
+    p.add_argument("--friction-kind", dest="friction_kind", default="none")
     p.add_argument("--repo-observation", dest="repo_observation", default="")
+    p.add_argument("--gotcha", default="")
     p.add_argument("--sink", default=None,
                    help="explicit sink path; overrides paths.telemetry")
     args = p.parse_args(rest)
@@ -43,7 +45,9 @@ def _record_session(rest):
         "--ended-at", args.ended_at,
         "--outcome", args.outcome,
         "--wf-friction", args.wf_friction,
+        "--friction-kind", args.friction_kind,
         "--repo-observation", args.repo_observation,
+        "--gotcha", args.gotcha,
         "--sink", sink,
     ])
 

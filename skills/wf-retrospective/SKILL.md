@@ -15,9 +15,12 @@ Record the session start stamp now per `wf-basics` §2. Resolve every path below
 
 You distil a finished run into learnings, from two sources:
 
-- **session telemetry** (`$TELEMETRY`) — each record's two feedback fields, routed by field:
+- **session telemetry** (`$TELEMETRY`) — each record's feedback fields, routed by field:
   - `feedback.repo_observation` → `$LEARNINGS` — a learning about **the project's code**.
-  - `feedback.wf_friction` → `$WF_LEARNINGS` — a learning about **the wf toolkit itself**.
+  - `feedback.wf_friction` (clustered by `feedback.friction_kind`) → `$WF_LEARNINGS` — a
+    learning about **the wf toolkit itself**.
+  - `feedback.gotcha` → a **proposed AGENTS.md edit** in your report (Phase 5) — never a
+    learnings entry, never a file you write.
 - **the run's execution** (`$PIPELINE_STATE`, when an orchestration run produced one) — the
   **cross-task patterns** no single session can see. Absent it, distil telemetry alone.
 
@@ -70,10 +73,17 @@ is noise, not a learning:
 - **Escalation / block cause** — an `escalated` or `blocked` task: what defeated it, stated
   as something to change next time.
 
-Velocity and per-task counts are run telemetry, not learnings — they belong in the Phase 5
+Velocity and per-task counts are run telemetry, not learnings — they belong in the Phase 6
 summary, not the streams.
 
 ### Phase 4 — Distil
+
+**Cluster friction mechanically before judging any of it:** group the unprocessed records'
+`wf_friction` entries by `feedback.friction_kind` — a record without the field, or with
+`none` beside non-empty prose, goes in the `none` group. Distil each group as a unit:
+several sessions reporting the same kind usually share one cause, so write one learning for
+the shared cause, not one per record. The kind is the grouping key only — the learning's
+statement comes from the prose.
 
 Turn each unprocessed observation and each cross-task pattern into a learning, holding the bar:
 
@@ -86,16 +96,35 @@ Turn each unprocessed observation and each cross-task pattern into a learning, h
   the file) + 1` — `id_counters.learning` for `$LEARNINGS`, `id_counters.wf_learning`
   for `$WF_LEARNINGS`; never renumber, never reuse a retired number.
 
-### Phase 5 — Write, summarize & commit
+### Phase 5 — Gotchas → proposed AGENTS.md edits
+
+Walk **every** telemetry record with a non-empty `feedback.gotcha` (gotchas have no
+`sources` ledger — dedup happens against the target file, below). For each:
+
+1. **Pick the target file** — the nearest `AGENTS.md` at or above the directory the gotcha
+   concerns; the repo-root `AGENTS.md` when the gotcha is repo-wide or no nearer one exists.
+   If the target does not exist yet, the proposal names it as a new file.
+2. **Dedup against the target.** Read the target `AGENTS.md`; if it already covers the same
+   trap (any wording), drop the gotcha — propose nothing.
+3. **Draft the exact edit**: the target path, the section it goes under, and the verbatim
+   lines to add — ready to paste, not a paraphrase of the problem.
+
+Collect the drafts for the Phase 6 report. **Do not Edit or Write any AGENTS.md** — it is
+human-owned intent; an auto-applied edit ships unreviewed. The proposal in your report is
+the whole deliverable, and the human applies or rejects it.
+
+### Phase 6 — Write, summarize & commit
 
 1. Append the new and reinforced entries to `$LEARNINGS` and `$WF_LEARNINGS`, creating either
    from its template (`assets/learnings.yaml.tmpl`, `assets/wf-learnings.yaml.tmpl`) if absent.
    If you minted any id, bump its lane's counter in `.wf/config.yaml`
    (`id_counters.learning` / `id_counters.wf_learning`) to the highest id minted.
 2. **Report the run in your return only — store nothing beyond the streams:** new entries per
-   stream, reinforcements, the count dropped as non-actionable, and (when `$PIPELINE_STATE`
-   was present) a one-glance execution summary — tasks completed/escalated/blocked, design
-   issues by `fix_kind`, stage durations. This summary is transient; do not write it to a file.
+   stream, reinforcements, the count dropped as non-actionable, every Phase 5 proposal as a
+   `PROPOSED AGENTS.md edit` block (target path + verbatim lines, awaiting human approval),
+   and (when `$PIPELINE_STATE` was present) a one-glance execution summary — tasks
+   completed/escalated/blocked, design issues by `fix_kind`, stage durations. This summary is
+   transient; do not write it to a file.
 3. Commit the learnings files — they are durable, and leaving them uncommitted is one
    `git clean` from gone. Stage explicit paths, never `git add .` (include
    `.wf/config.yaml` only when you bumped a counter):
@@ -105,10 +134,10 @@ Turn each unprocessed observation and each cross-task pattern into a learning, h
    ```
    If the commit fails (hook, identity), report the exact error and halt — never `--no-verify`.
 
-### Phase 6 — Telemetry (REQUIRED)
+### Phase 7 — Telemetry (REQUIRED)
 
 Your last action, always. Run the `wf-basics` §2 `record_session.py` command with
-`--agent wf-retrospective`, this run's `--outcome`, and the two feedback answers (omit a
+`--agent wf-retrospective`, this run's `--outcome`, and the feedback answers (omit a
 flag when there is nothing concrete). If it errors, continue.
 
 ## Hard constraints

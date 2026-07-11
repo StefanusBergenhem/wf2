@@ -63,9 +63,15 @@ the build to have done.
   mocks). Each tag line must carry the id's statement verbatim from the contract
   (`requirements[]` for `[REQ:]`, `system_tests[].description` for `[SYS-TC:]`) — missing or
   differing text rejects. For every entry in `acceptance_criteria`, find a real test that
-  proves it. A missing tagged test, a tag on a vacuous test, an AC with no genuine test, or
+  proves it — except an AC carrying `verified_by: <gate command>`, which is discharged by
+  confirming that gate ran green in the build's preflight handoff, not by a test. A
+  missing tagged test, a tag on a vacuous test, an AC with no genuine test, or
   a system test that mocks the seam it exists to exercise rejects. →
   `requirement_trace_missing` / `acceptance_criteria_unmet`.
+- **Mandated seam.** When the contract names a specific seam, model, or interface
+  (`acceptance_criteria` or `interface_contract`), read the implementation's wiring and
+  confirm it actually uses the named one — a passing test asserting at stub level is not
+  proof. An implementation wired to a different seam rejects. → `acceptance_criteria_unmet`.
 
 **P1 — test & code quality:**
 
@@ -96,12 +102,14 @@ Write `paths.feedback` from `assets/feedback.yaml.tmpl` — one entry per failur
 failures sharing a root cause. Do not approve; the build reads this in fix mode. The
 orchestrator owns the attempt cap — you do not count attempts.
 
-### Design issue (the contract is wrong)
+### Design issue (the defect is not this build's to fix)
 When the build faithfully implements a contract that is itself wrong — an AC contradicts
 another or is unbuildable as written — write `paths.design_issues` from
-`assets/design_issues.yaml.tmpl` with `fix_kind: contract_amendment` (always — you are a
-code-layer agent; you never judge the spec layer). Do not approve. The return inspector
-reads the open entry and routes it to the contract-fixer.
+`assets/design_issues.yaml.tmpl` with `fix_kind: contract_amendment`; when the failure
+traces to a defect in **already-merged code** (a dependency task's work — not this diff,
+not the contract), use `fix_kind: component_defect`. Never any other kind — you are a
+code-layer agent; you never judge the spec layer. Do not approve. The return inspector
+reads the open entry and routes it to the fixer.
 
 ## Halt conditions
 

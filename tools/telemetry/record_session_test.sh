@@ -4,7 +4,8 @@
 #
 # Verifies: a session record is appended as one JSON line, the sink's parent dir
 # is auto-created, duration is computed from the timestamps, appends accumulate,
-# and a missing required arg is rejected.
+# the feedback block carries friction_kind (closed enum) and gotcha (free text)
+# with safe defaults, and a missing required arg / invalid enum is rejected.
 # wf2-source-only — never rendered into an install target.
 #
 # Runtime is system python3 (stdlib only) — the same invocation a target uses;
@@ -27,7 +28,9 @@ SINK="$WORK/tel/sessions.jsonl"   # parent dir does NOT exist yet
 echo "== first record (auto-creates parent dir) =="
 if python3 "$REC" --agent wf-discover --started-at 2026-01-01T00:00:00Z \
         --ended-at 2026-01-01T00:00:05Z --outcome completed \
-        --wf-friction "step 3 verb ambiguous" --repo-observation "" \
+        --wf-friction "step 3 verb ambiguous" --friction-kind skill_gap \
+        --repo-observation "" \
+        --gotcha "docker compose collides on :5432 unless COMPOSE_PROJECT_NAME is pinned" \
         --sink "$SINK" > "$WORK/o1" 2>&1; then
     pass "exit zero"
 else
@@ -35,8 +38,8 @@ else
 fi
 [ -f "$SINK" ] && pass "sink + parent dir created" || fail "sink not created"
 [ "$(wc -l < "$SINK")" -eq 1 ] && pass "one line written" || fail "expected 1 line"
-if python3 -c "import json;d=json.loads(open('$SINK').readline());assert d['agent']=='wf-discover';assert d['outcome']=='completed';assert d['duration_seconds']==5;assert d['feedback']['wf_friction']=='step 3 verb ambiguous';assert d['feedback']['repo_observation']=='';assert 'notes' not in d" 2>/dev/null; then
-    pass "json fields + duration + structured feedback (notes gone)"
+if python3 -c "import json;d=json.loads(open('$SINK').readline());assert d['agent']=='wf-discover';assert d['outcome']=='completed';assert d['duration_seconds']==5;assert d['feedback']['wf_friction']=='step 3 verb ambiguous';assert d['feedback']['friction_kind']=='skill_gap';assert d['feedback']['repo_observation']=='';assert d['feedback']['gotcha'].startswith('docker compose');assert 'notes' not in d" 2>/dev/null; then
+    pass "json fields + duration + structured feedback (friction_kind + gotcha)"
 else
     fail "json fields / duration / feedback"
 fi
@@ -45,8 +48,8 @@ echo "== append + feedback defaults empty when omitted =="
 python3 "$REC" --agent wf-review --started-at 2026-01-01T00:00:00Z \
     --ended-at 2026-01-01T00:00:01Z --outcome halted --sink "$SINK" > /dev/null 2>&1
 [ "$(wc -l < "$SINK")" -eq 2 ] && pass "appended (2 lines)" || fail "append failed"
-if python3 -c "import json;d=json.loads(open('$SINK').readlines()[1]);assert d['feedback']['wf_friction']=='';assert d['feedback']['repo_observation']==''" 2>/dev/null; then
-    pass "feedback defaults empty when omitted"
+if python3 -c "import json;d=json.loads(open('$SINK').readlines()[1]);assert d['feedback']['wf_friction']=='';assert d['feedback']['friction_kind']=='none';assert d['feedback']['repo_observation']=='';assert d['feedback']['gotcha']==''" 2>/dev/null; then
+    pass "feedback defaults: prose empty, friction_kind 'none', gotcha empty"
 else
     fail "feedback default"
 fi
@@ -94,6 +97,14 @@ if python3 "$REC" --agent x --started-at 2026-01-01T00:00:00Z --ended-at 2026-01
     fail "invalid --outcome should be non-zero"
 else
     pass "invalid outcome rejected"
+fi
+
+echo "== invalid friction_kind rejected =="
+if python3 "$REC" --agent x --started-at 2026-01-01T00:00:00Z --ended-at 2026-01-01T00:00:01Z \
+        --outcome completed --friction-kind vibes --sink "$SINK" > /dev/null 2>&1; then
+    fail "invalid --friction-kind should be non-zero"
+else
+    pass "invalid friction_kind rejected"
 fi
 
 echo "== missing required arg rejected =="

@@ -37,12 +37,14 @@ orchestrator reverts — your work is lost.
 Pipe every test / build / preflight command output to a file, then read the file:
 
 ```bash
-<command> > /tmp/wf-<role>-<gate>.log 2>&1
+<command> > /tmp/wf-<role>-<task-id>-<gate>.log 2>&1
 ```
 
 Never read raw terminal output for these commands — long output blows context, and the log
-is the artifact a reviewer or post-mortem can cite. Use stable names (`/tmp/wf-build-test.log`,
-`/tmp/wf-build-preflight.log`, `/tmp/wf-review-preflight.log`) so other steps can find them.
+is the artifact a reviewer or post-mortem can cite. Use task-scoped names — `<task-id>` is
+the `task_id` from `paths.current_task` (`/tmp/wf-build-<task-id>-test.log`,
+`/tmp/wf-build-<task-id>-preflight.log`, `/tmp/wf-review-<task-id>-preflight.log`) — so
+other steps can find them and concurrent tasks never overwrite each other's logs.
 
 ## Suppression-directive ban
 

@@ -162,6 +162,12 @@ OUTD="$(wf orchestrate dispatch-fix DI-1 --config "$P/.wf/config.yaml")"; RC=$?
 P="$(mk_di spec_amendment)"
 [ "$(jget "$(wf orchestrate dispatch-fix DI-1 --config "$P/.wf/config.yaml")" "d['subagent_type']")" = "wf-sa" ] \
     && ok "dispatch-fix: spec_amendment → wf-sa" || bad "df spec" ""
+# component_defect: already-merged component code violates a correct contract+spec —
+# routed to wf-swa (fix-mode authors a follow-up task), autonomous (exit 0).
+P="$(mk_di component_defect)"
+OUTC="$(wf orchestrate dispatch-fix DI-1 --config "$P/.wf/config.yaml")"; RCC=$?
+[ "$(jget "$OUTC" "d['subagent_type']")" = "wf-swa" ] && [ "$RCC" -eq 0 ] \
+    && ok "dispatch-fix: component_defect → wf-swa (exit 0)" || bad "df component" "$OUTC rc=$RCC"
 # recut is deliberately NOT a wf2 fix_kind (PO doesn't cut sprints; SA owns the slice) —
 # it falls through to the human gate, never to wf-po.
 P="$(mk_di recut)"

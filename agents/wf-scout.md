@@ -54,5 +54,5 @@ exactly one subsystem, and the top disagreements.
 Your final action, always — even on a halted run. Record one session line per
 **wf-basics §2** (`record_session.py`, resolved from `$TOOLS`, sink `$TELEMETRY`)
 with `--agent wf-scout`, your `--outcome` (`completed`, or `halted` if you could
-not produce the partition), and the two feedback answers. If the recorder command
+not produce the partition), and the session-feedback flags. If the recorder command
 errors, continue; telemetry never blocks.

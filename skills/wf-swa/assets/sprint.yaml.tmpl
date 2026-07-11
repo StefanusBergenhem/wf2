@@ -20,12 +20,17 @@ tasks:
     requirements:               # one entry per id in covers — statement verbatim from the slice
       - id: REQ-1
         statement: "<the requirement's full EARS statement, verbatim>"
-    serves: [CAP-NNN]           # every distinct driver of the covered requirements — never just a "primary"
+        serves: CAP-NNN         # this requirement's driver, read off the slice
+    serves: [CAP-NNN]           # the union of the requirements' serves — never just a "primary"
     files_to_touch:
       - "<path>"
+      - "<the test file the mandated unit/integration tests live in>"
     acceptance_criteria:
       - id: REQ-1.AC-1
         check: "<testable statement with named inputs and expected outputs>"
+      # - id: REQ-1.AC-2
+      #   check: "<criterion an existing mechanical gate enforces>"
+      #   verified_by: "<the gate command>"   # only when a named gate, not a test, proves it
     testing_mandate:
       unit_tests:
         - target: "<file>:<function>"

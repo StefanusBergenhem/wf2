@@ -96,10 +96,12 @@ tasks:
     requirements:
       - id: REQ-1
         statement: "the widget does X"
+        serves: CAP-1
       - id: REQ-2
         statement: "the widget rejects Y"
+        serves: CAP-2
     serves: [CAP-1, CAP-2]
-    files_to_touch: ["core/widget.go"]
+    files_to_touch: ["core/widget.go", "core/widget_test.go"]
     acceptance_criteria:
       - id: REQ-1.AC-1
         check: "given X, returns ok"
@@ -285,6 +287,176 @@ open(p,'w').write(yaml.safe_dump(d, sort_keys=False))
 PY
 OUT="$(wf sprint check --format json)"
 [ "$(has "$OUT" C7)" = "True" ] && ok "check: C7 flags an AC claimed by two tasks" || bad "C7" "$OUT"
+
+# C3 — a unit-test mandate with no plausible test file in files_to_touch
+write_clean_sprint
+"$PYTHON" - "$SPRINT" <<'PY'
+import sys, yaml
+p=sys.argv[1]; d=yaml.safe_load(open(p))
+d['tasks'][0]['files_to_touch']=['core/widget.go']  # mandate stays, test-file home gone
+open(p,'w').write(yaml.safe_dump(d, sort_keys=False))
+PY
+OUT="$(wf sprint check --format json)"
+[ "$(has "$OUT" C3)" = "True" ] && ok "check: C3 flags a test mandate with no test-file home" || bad "C3" "$OUT"
+
+# C3 — an integration-test mandate alone also needs a test-file home
+write_clean_sprint
+"$PYTHON" - "$SPRINT" <<'PY'
+import sys, yaml
+p=sys.argv[1]; d=yaml.safe_load(open(p))
+t=d['tasks'][0]
+t['files_to_touch']=['core/widget.go']
+t['testing_mandate']['unit_tests']=[]
+t['testing_mandate']['integration_tests']=[
+  {'description':'real DB round-trip -> persisted','covers':'REQ-1.AC-1'},
+  {'description':'bad row -> error','covers':'REQ-1.AC-2'},
+  {'description':'Y -> rejected','covers':'REQ-2.AC-1'},
+]
+open(p,'w').write(yaml.safe_dump(d, sort_keys=False))
+PY
+OUT="$(wf sprint check --format json)"
+[ "$(has "$OUT" C3)" = "True" ] && ok "check: C3 flags an integration mandate with no test-file home" || bad "C3-integ" "$OUT"
+
+# C3 — a test directory counts as a test-file home (heuristic is language-agnostic)
+write_clean_sprint
+"$PYTHON" - "$SPRINT" <<'PY'
+import sys, yaml
+p=sys.argv[1]; d=yaml.safe_load(open(p))
+d['tasks'][0]['files_to_touch']=['core/widget.go','__tests__/widget.js']
+open(p,'w').write(yaml.safe_dump(d, sort_keys=False))
+PY
+OUT="$(wf sprint check --format json)"
+[ "$(has "$OUT" C3)" = "False" ] && ok "check: C3 accepts a test-directory file as the home" || bad "C3-dir" "$OUT"
+
+# C3 — no unit/integration mandate -> no test-file home required
+write_clean_sprint
+"$PYTHON" - "$SPRINT" <<'PY'
+import sys, yaml
+p=sys.argv[1]; d=yaml.safe_load(open(p))
+t=d['tasks'][0]
+t['files_to_touch']=['core/widget.go']
+t['testing_mandate']['unit_tests']=[]
+t['testing_mandate']['integration_tests']=[]
+open(p,'w').write(yaml.safe_dump(d, sort_keys=False))
+PY
+OUT="$(wf sprint check --format json)"
+[ "$(has "$OUT" C3)" = "False" ] && ok "check: C3 stays quiet when no unit/integration tests are mandated" || bad "C3-none" "$OUT"
+
+# C9 — implementation_notes naming a file absent from files_to_touch warns
+write_clean_sprint
+"$PYTHON" - "$SPRINT" <<'PY'
+import sys, yaml
+p=sys.argv[1]; d=yaml.safe_load(open(p))
+d['tasks'][0]['implementation_notes']=['also wire the factory in core/build_doors.go per ADR-3']
+open(p,'w').write(yaml.safe_dump(d, sort_keys=False))
+PY
+OUT="$(wf sprint check --format json)"; RC=$?
+[ "$(has "$OUT" C9 warnings)" = "True" ] && ok "check: C9 warns on a noted file outside files_to_touch" || bad "C9" "$OUT"
+[ "$(has "$OUT" C9)" = "False" ] && ok "check: C9 is a warning, not an error" || bad "C9-sev" "$OUT"
+[ "$RC" -eq 0 ] && ok "check: C9 alone still exits 0" || bad "C9 exit" "rc=$RC $OUT"
+
+# C9 — in-scope mentions and prose tokens do not warn
+write_clean_sprint
+"$PYTHON" - "$SPRINT" <<'PY'
+import sys, yaml
+p=sys.argv[1]; d=yaml.safe_load(open(p))
+d['tasks'][0]['implementation_notes']=[
+  'follow the retry pattern in `core/widget.go`; respect ADR-012',
+  'no external seam, e.g. no DB — integration_tests empty by design (v1.2)',
+]
+open(p,'w').write(yaml.safe_dump(d, sort_keys=False))
+PY
+OUT="$(wf sprint check --format json)"
+[ "$(has "$OUT" C9 warnings)" = "False" ] && ok "check: C9 ignores in-scope files and prose tokens" || bad "C9-neg" "$OUT"
+
+# C9 — a bare filename whose full path is in files_to_touch is in scope
+write_clean_sprint
+"$PYTHON" - "$SPRINT" <<'PY'
+import sys, yaml
+p=sys.argv[1]; d=yaml.safe_load(open(p))
+d['tasks'][0]['implementation_notes']=['drop the flattening in widget.go before wiring']
+open(p,'w').write(yaml.safe_dump(d, sort_keys=False))
+PY
+OUT="$(wf sprint check --format json)"
+[ "$(has "$OUT" C9 warnings)" = "False" ] && ok "check: C9 matches a noted basename against full files_to_touch paths" || bad "C9-base" "$OUT"
+
+# B3 — an AC with verified_by (gate-verified, not test-provable) is not a silent hole
+write_clean_sprint
+"$PYTHON" - "$SPRINT" <<'PY'
+import sys, yaml
+p=sys.argv[1]; d=yaml.safe_load(open(p))
+t=d['tasks'][0]
+for ac in t['acceptance_criteria']:
+    if ac['id']=='REQ-2.AC-1':
+        ac['verified_by']='make preflight-codegen'
+u=t['testing_mandate']['unit_tests'][0]
+u['tests']=[x for x in u['tests'] if x['covers']!='REQ-2.AC-1']
+open(p,'w').write(yaml.safe_dump(d, sort_keys=False))
+PY
+OUT="$(wf sprint check --format json)"; RC=$?
+[ "$(has "$OUT" B3)" = "False" ] && ok "check: B3 honors a gate-verified AC (verified_by)" || bad "B3-gate" "$OUT"
+[ "$RC" -eq 0 ] && ok "check: verified_by AC with no test still exits 0" || bad "B3-gate exit" "rc=$RC $OUT"
+
+# B3 — an empty verified_by does not exempt the AC
+write_clean_sprint
+"$PYTHON" - "$SPRINT" <<'PY'
+import sys, yaml
+p=sys.argv[1]; d=yaml.safe_load(open(p))
+t=d['tasks'][0]
+for ac in t['acceptance_criteria']:
+    if ac['id']=='REQ-2.AC-1':
+        ac['verified_by']='  '
+u=t['testing_mandate']['unit_tests'][0]
+u['tests']=[x for x in u['tests'] if x['covers']!='REQ-2.AC-1']
+open(p,'w').write(yaml.safe_dump(d, sort_keys=False))
+PY
+OUT="$(wf sprint check --format json)"
+[ "$(has "$OUT" B3)" = "True" ] && ok "check: B3 rejects a blank verified_by" || bad "B3-blank" "$OUT"
+
+# C8 — a requirement entry with no serves (per-requirement driver mapping)
+write_clean_sprint
+"$PYTHON" - "$SPRINT" <<'PY'
+import sys, yaml
+p=sys.argv[1]; d=yaml.safe_load(open(p))
+del d['tasks'][0]['requirements'][0]['serves']
+open(p,'w').write(yaml.safe_dump(d, sort_keys=False))
+PY
+OUT="$(wf sprint check --format json)"
+[ "$(has "$OUT" C8)" = "True" ] && ok "check: C8 flags a requirement with no serves" || bad "C8" "$OUT"
+
+# C8 — a requirement driver missing from the task's serves union
+write_clean_sprint
+"$PYTHON" - "$SPRINT" <<'PY'
+import sys, yaml
+p=sys.argv[1]; d=yaml.safe_load(open(p))
+d['tasks'][0]['requirements'][1]['serves']='CAP-3'  # driver not in serves: [CAP-1, CAP-2]
+open(p,'w').write(yaml.safe_dump(d, sort_keys=False))
+PY
+OUT="$(wf sprint check --format json)"
+[ "$(has "$OUT" C8)" = "True" ] && ok "check: C8 flags a requirement driver missing from task serves" || bad "C8-union" "$OUT"
+
+# C8 — a task serves entry no requirement declares (the 'primary driver' fudge, reversed)
+write_clean_sprint
+"$PYTHON" - "$SPRINT" <<'PY'
+import sys, yaml
+p=sys.argv[1]; d=yaml.safe_load(open(p))
+d['tasks'][0]['serves']=['CAP-1','CAP-2','CAP-9']
+open(p,'w').write(yaml.safe_dump(d, sort_keys=False))
+PY
+OUT="$(wf sprint check --format json)"
+[ "$(has "$OUT" C8)" = "True" ] && ok "check: C8 flags a task serves no requirement declares" || bad "C8-orphan" "$OUT"
+
+# C8 — an e2e task (no requirements) carries serves without C8 noise (clean fixture proves
+# the pass side; this asserts the check is scoped to tasks WITH requirements)
+write_clean_sprint
+"$PYTHON" - "$SPRINT" <<'PY'
+import sys, yaml
+p=sys.argv[1]; d=yaml.safe_load(open(p))
+d['tasks'][1]['serves']=['CAP-1']  # e2e: requirements [] — serves is the SYS-TC's capability
+open(p,'w').write(yaml.safe_dump(d, sort_keys=False))
+PY
+OUT="$(wf sprint check --format json)"
+[ "$(has "$OUT" C8)" = "False" ] && ok "check: C8 skips tasks with no requirements (e2e)" || bad "C8-e2e" "$OUT"
 
 # A3 — an UNCONFIRMED assumption in the slice blocks the gate
 write_clean_slice; write_clean_sprint

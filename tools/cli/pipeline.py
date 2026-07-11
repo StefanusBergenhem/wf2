@@ -641,6 +641,13 @@ def _resolve_design_issue(rest):
     if not isinstance(entry, dict):
         common.die(f"unknown design issue: {args.di_id}")
     entry["status"] = "resolved"
+    # Un-park the implicated task (design_issue → pending) so the scheduler can place
+    # it again — e.g. behind a component_defect follow-up task after a re-layer. A task
+    # that already moved on (re-dispatched → building, blocked, …) is left alone.
+    tid = entry.get("task_id")
+    ts = (doc.get("task_states") or {}).get(tid) if tid else None
+    if isinstance(ts, dict) and ts.get("status") == "design_issue":
+        ts["status"] = "pending"
     doc.setdefault("history", []).append({
         "ts": _now(), "event": "design_issue_resolved", "di_id": args.di_id,
     })

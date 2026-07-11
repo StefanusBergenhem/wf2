@@ -255,6 +255,18 @@ if wf "$PROJ_M" pipeline resolve-design-issue DI-nope >/dev/null 2>&1; then
 else
     ok "resolve-design-issue errors on an unknown id"
 fi
+# resolve-design-issue un-parks the implicated task (design_issue → pending) so the
+# scheduler can place it again — e.g. behind a component_defect follow-up task.
+[ "$(jget "$(wf "$PROJ_M" pipeline task-state T4 --format json)" "d['state']")" = "pending" ] \
+    && ok "resolve-design-issue resets the parked task to pending" || bad "DI resolve unpark" \
+    "$(wf "$PROJ_M" pipeline task-state T4 --format json)"
+# ...but never clobbers a task that has already moved on (e.g. re-dispatched → building)
+wf "$PROJ_M" pipeline record-design-issue DI-2 --task T5 --severity low --fix_kind contract_amendment >/dev/null
+wf "$PROJ_M" pipeline dispatch --agent wf-build --task T5 --attempt 1 >/dev/null
+wf "$PROJ_M" pipeline resolve-design-issue DI-2 >/dev/null
+[ "$(jget "$(wf "$PROJ_M" pipeline task-state T5 --format json)" "d['state']")" = "building" ] \
+    && ok "resolve-design-issue leaves a non-parked task status alone" || bad "DI resolve non-parked" \
+    "$(wf "$PROJ_M" pipeline task-state T5 --format json)"
 
 # scope-amendment bumps the count
 wf "$PROJ_M" pipeline scope-amendment T2 --added "a.go,b.go" >/dev/null

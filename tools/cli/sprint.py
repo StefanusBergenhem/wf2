@@ -22,6 +22,48 @@ _AC_RE = re.compile(r"^(REQ-\d+)\.AC-\d+$")          # AC id -> owning REQ
 _SLICE_REQ_RE = re.compile(r"\*\*(REQ-\d+)\*\*")     # slice "Component requirements" bullets
 _SLICE_TC_RE = re.compile(r"\b(SYS-TC-\d+)\b")
 
+# C3 test-file heuristic (deliberately simple + language-agnostic): a path is a
+# plausible test home when a directory segment is a conventional test dir, or the
+# filename carries test/spec as a delimited token (covers *_test.*, test_*.*,
+# *.test.*, *.spec.*, *-test.* ...). The goal is catching a contract that lists NO
+# test file at all, not policing which one.
+_TEST_DIRS = {"test", "tests", "__tests__", "spec", "specs", "testdata"}
+_TEST_NAME_RE = re.compile(r"(^|[._-])(test|spec)s?([._-]|$)", re.IGNORECASE)
+
+# C9 path-like note tokens (deliberately conservative): a whitespace-delimited token
+# with an optional path prefix and a letter-led extension. Prose abbreviations that
+# match the shape are skipped.
+_NOTE_PATH_RE = re.compile(r"^[\w./-]*[\w-]\.[A-Za-z][A-Za-z0-9]{0,4}$")
+_NOTE_SKIP = {"e.g", "i.e"}
+
+
+def _is_test_path(path):
+    parts = [seg for seg in str(path).replace("\\", "/").split("/") if seg]
+    if not parts:
+        return False
+    if any(seg.lower() in _TEST_DIRS for seg in parts[:-1]):
+        return True
+    return bool(_TEST_NAME_RE.search(parts[-1]))
+
+
+def _note_paths(note):
+    """File paths a prose note names, per the conservative C9 token shape."""
+    out = []
+    for raw in re.split(r"[\s,;()\[\]{}<>]+", str(note)):
+        tok = raw.strip("`'\"*").split(":", 1)[0].rstrip(".,!?").strip("`'\"*")
+        if tok.lower() in _NOTE_SKIP:
+            continue
+        if _NOTE_PATH_RE.match(tok):
+            out.append(tok)
+    return out
+
+
+def _serves_of(value):
+    """A `serves` may be a scalar or a list; normalise to a list of strings."""
+    if not value:
+        return []
+    return value if isinstance(value, list) else [value]
+
 
 def _task(rest):
     """Emit (or --write) the contract for a single task from sprint.yaml. --write is an
@@ -107,7 +149,8 @@ def _check(rest):
         covers = _covers_of(t)
         reqs = {r.get("id"): (r.get("statement") or "").strip()
                 for r in (t.get("requirements") or [])}
-        acs = [ac.get("id") for ac in (t.get("acceptance_criteria") or [])]
+        ac_entries = t.get("acceptance_criteria") or []
+        acs = [ac.get("id") for ac in ac_entries]
         ac_set = set(acs)
         tm = t.get("testing_mandate") or {}
         unit = tm.get("unit_tests") or []
@@ -140,9 +183,13 @@ def _check(rest):
         for it in integ:
             test_ac_refs += _covers_of(it)
 
-        # B3 — every AC is referenced by >=1 test (the silent hole this gate exists to catch)
+        # B3 — every AC is referenced by >=1 test (the silent hole this gate exists to
+        # catch). An AC verified by a named mechanical gate instead of a test declares
+        # `verified_by: <gate/command>` and is exempt.
+        gate_acs = {ac.get("id") for ac in ac_entries
+                    if str(ac.get("verified_by") or "").strip()}
         for ac in acs:
-            if ac not in test_ac_refs:
+            if ac not in test_ac_refs and ac not in gate_acs:
                 err("B3", f"{tid}: AC {ac} is not referenced by any test (silent hole)")
 
         # B4 — every AC-shaped test ref names an AC that exists in this task
@@ -161,6 +208,12 @@ def _check(rest):
             fpath = (u.get("target") or "").split(":", 1)[0].strip()
             if fpath and fpath not in files:
                 err("C2", f"{tid}: unit target '{fpath}' not in files_to_touch")
+
+        # C3 — mandated unit/integration tests need a file to live in
+        if (unit or integ) and not any(_is_test_path(f) for f in files):
+            err("C3", f"{tid}: testing_mandate names unit/integration tests but "
+                      f"files_to_touch has no test file (*_test.*, test_*.*, *.test.*, "
+                      f"*.spec.*, tests/ ...) — the mandated tests have no home")
 
         # C4 — e2e task shape
         if systests:
@@ -182,6 +235,36 @@ def _check(rest):
         # C6 — serves present
         if not t.get("serves"):
             err("C6", f"{tid}: no serves (driver) declared")
+
+        # C8 — per-requirement driver mapping: every requirements[] entry declares its
+        # serves, and the task-level serves is exactly their union (no "primary driver"
+        # fudge in either direction). Scoped to tasks WITH requirements — an e2e task's
+        # serves is its SYS-TC's capability.
+        req_entries = t.get("requirements") or []
+        if req_entries:
+            task_serves = _serves_of(t.get("serves"))
+            declared = set()
+            for r in req_entries:
+                r_serves = _serves_of(r.get("serves"))
+                if not r_serves:
+                    err("C8", f"{tid}: requirement {r.get('id', '<no-id>')} declares no "
+                              f"serves (per-requirement driver)")
+                declared.update(r_serves)
+            for d in sorted(declared - set(task_serves)):
+                err("C8", f"{tid}: requirement driver {d} missing from task serves")
+            for s in sorted(set(task_serves) - declared):
+                err("C8", f"{tid}: serves {s} is not the driver of any requirement in this task")
+
+        # C9 — implementation_notes naming a file outside files_to_touch (heuristic
+        # extraction over prose, so a warning, not an error). Notes often name a bare
+        # filename while files_to_touch carries the full path — a noted token is in
+        # scope when any files_to_touch entry ends with it.
+        noted = set()
+        for note in (t.get("implementation_notes") or []):
+            noted.update(_note_paths(note))
+        for fp in sorted(noted):
+            if fp not in files and not any(f.endswith("/" + fp) for f in files):
+                warn("C9", f"{tid}: implementation_notes name '{fp}', which is not in files_to_touch")
 
     # C1 — depends_on integrity + acyclicity
     for t in tasks:

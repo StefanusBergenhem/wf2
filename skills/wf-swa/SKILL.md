@@ -1,6 +1,6 @@
 ---
 name: wf-swa
-description: Software Architect — in default mode authors acceptance criteria for a design slice's requirements and decomposes them into a per-task dependency graph in the sprint file; in fix mode surgically amends one task contract to resolve a contract design issue.
+description: Software Architect — in default mode authors acceptance criteria for a design slice's requirements and decomposes them into a per-task dependency graph in the sprint file; in fix mode surgically resolves one design issue by contract amendment or a follow-up task.
 ---
 
 # wf-swa
@@ -33,8 +33,8 @@ each requirement, which files change, what each task demonstrates, what order ta
 Your dispatch envelope (the input handed to you) names your `mode`. Read and follow **exactly
 one** procedure, then do **Telemetry** (below):
 
-- **`fix`** — `mode` is `fix` (the envelope carries a `di_id`): repair one contract design
-  issue. Read `references/fix-mode.md` and follow it. Do **not** read the default-mode procedure.
+- **`fix`** — `mode` is `fix` (the envelope carries a `di_id`): resolve one design issue.
+  Read `references/fix-mode.md` and follow it. Do **not** read the default-mode procedure.
 - **`default`** — `mode` is `default`: build the sprint from the design slice. Read
   `references/default-mode.md` and follow it. Do **not** read the fix-mode procedure.
 

@@ -83,5 +83,19 @@ check "field absent → detected pi"   "[ -d '$P6/.pi/skills/wf-init' ]"
 echo "== rendered skills carry no tests =="
 check "no *_test.* shipped"          "! find '$P1/.claude/skills' -name '*_test.*' | grep -q ."
 
+echo "== claude install registers the telemetry usage hook =="
+SETTINGS="$P1/.claude/settings.json"
+check "hook script shipped into .wf/tools" "[ -f '$P1/.wf/tools/telemetry/claude_usage_hook.py' ]"
+check "settings.json created"              "[ -f '$SETTINGS' ]"
+check "Stop + SubagentStop registered"     "[ \"\$(grep -c claude_usage_hook.py '$SETTINGS' 2>/dev/null)\" = 2 ]"
+bash "$INSTALL" --target claude "$P1" > "$WORK/run1b.log" 2>&1 \
+    || fail "re-install exited non-zero (see $WORK/run1b.log)"
+check "re-install stays idempotent (still 2)" "[ \"\$(grep -c claude_usage_hook.py '$SETTINGS' 2>/dev/null)\" = 2 ]"
+
+echo "== non-claude install ships no claude telemetry adapter =="
+check "no claude hook script for pi target" "! find '$P2/.wf/tools/telemetry' -name 'claude_*' | grep -q ."
+check "no settings.json for pi target"      "! [ -e '$P2/.claude/settings.json' ]"
+check "claude+pi list ships the adapter"    "[ -f '$P3/.wf/tools/telemetry/claude_usage_hook.py' ]"
+
 echo ""
 if [ "$FAILS" -eq 0 ]; then echo "ALL GREEN"; exit 0; else echo "$FAILS FAILURE(S)"; exit 1; fi
