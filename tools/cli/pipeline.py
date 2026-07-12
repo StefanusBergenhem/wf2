@@ -856,9 +856,10 @@ def _archive_history(rest):
 def _complete_sprint(rest):
     """Close a shipped sprint and reset the pipeline for the next one. Run at the end
     of ship. When paths.archive is set, snapshot the sprint's working set into
-    paths.archive/<sprint_id>/ as it drains — the sprint and the design-slice are moved
-    out (drained), the design-backlog and final run state are copied (reconcile drains
-    the backlog on its own). The archive is a write-only maintainer sink; no role reads
+    paths.archive/<sprint_id>/ as it drains — the sprint, the design-slice, and the
+    host design-issues file are moved out (drained), the design-backlog and final run
+    state are copied (reconcile drains the backlog on its own). The archive is a
+    write-only maintainer sink; no role reads
     it. Then reset pipeline_state to a bare ``idle`` so the next run starts clean instead
     of overlaying the shipped sprint's all-completed task states. When paths.archive is
     unset, the sprint slot is simply cleared (no archive).
@@ -875,21 +876,35 @@ def _complete_sprint(rest):
     archived = {}
     if paths.get("archive"):
         root = common.resolve_path(args.config, "archive", None)
-        # sprint + slice drain out of the working set; backlog + run-state are snapshots.
+        # sprint + slice + design-issues drain out of the working set; backlog +
+        # run-state are snapshots.
         if sprint_path.exists():
             archived["sprint"] = str(archive.snapshot(root, sprint_id, sprint_path, move=True))
         if paths.get("design_slice"):
             sp = common.resolve_path(args.config, "design_slice", None)
             if sp.exists():
                 archived["slice"] = str(archive.snapshot(root, sprint_id, sp, move=True))
+        # The host design-issues file is per-sprint working state (the fix agents' prose
+        # record). Its run-state twin (pipeline_state.design_issues) resets with the state
+        # below; drain the file too, or resolved DIs accumulate across sprints.
+        if paths.get("design_issues"):
+            dip = common.resolve_path(args.config, "design_issues", None)
+            if dip.exists():
+                archived["design_issues"] = str(archive.snapshot(root, sprint_id, dip, move=True))
         if paths.get("design_backlog"):
             bp = common.resolve_path(args.config, "design_backlog", None)
             if bp.exists():
                 archived["backlog"] = str(archive.snapshot(root, sprint_id, bp, move=False))
         if _state_path(args).exists():
             archived["pipeline_state"] = str(archive.snapshot(root, sprint_id, _state_path(args), move=False))
-    elif sprint_path.exists():
-        sprint_path.unlink()  # no archive configured — clear the active slot
+    else:
+        # no archive configured — clear the active working-set slots
+        if sprint_path.exists():
+            sprint_path.unlink()
+        if paths.get("design_issues"):
+            dip = common.resolve_path(args.config, "design_issues", None)
+            if dip.exists():
+                dip.unlink()
 
     _save_state(args, {"current_phase": "idle"})
     common.emit({
