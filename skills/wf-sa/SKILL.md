@@ -81,8 +81,11 @@ its ids before removing the design:
 
 ```sh
 python3 <paths.tools>/reconcile/retired.py --ids <the superseded ids> \
-  --tests <the test tree you reconcile against>
+  --tests <a test root> [--tests <root> ...]
 ```
+
+Pass a `--tests` for **each** root of a split test tree (e.g. `--tests backend --tests
+frontend/src`); it sweeps their union.
 
 A non-zero exit lists superseded tags still in the test tree — the build failed to remove
 them. Record each survivor as a finding and fold its removal into the next slice; never
@@ -98,7 +101,7 @@ drain past it silently. Then ground the new change:
    already promises today, the peer of the brief:
 
    ```sh
-   python3 <paths.tools>/reconcile/register.py --tests <the test tree you reconcile against>
+   python3 <paths.tools>/reconcile/register.py --tests <a test root> [--tests <root> ...]
    ```
 
    Read only the entries touching the components in scope (the register covers the whole

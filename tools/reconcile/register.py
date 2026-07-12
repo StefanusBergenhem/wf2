@@ -24,7 +24,7 @@ import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from reconcile import harvest  # noqa: E402
+from reconcile import DEFAULT_TEST_GLOBS, harvest  # noqa: E402
 
 _NUM_RE = re.compile(r"(\d+)$")
 
@@ -58,12 +58,13 @@ def _table(rows, statement_header):
     return "\n".join(lines)
 
 
-def render(harvested, tests_root):
+def render(harvested, tests_roots):
+    shown = ", ".join(f"`{r}`" for r in tests_roots)
     parts = [
         "# Requirement register",
         "",
         f"> Derived from the `[REQ:]` / `[SYS-TC:]` proving-test tags under "
-        f"`{tests_root}`. Regenerate on demand (`register.py --tests …`); "
+        f"{shown}. Regenerate on demand (`register.py --tests …`); "
         "never hand-edit — a stale copy is not truth.",
         "",
         "## Component requirements",
@@ -80,15 +81,22 @@ def render(harvested, tests_root):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description="wf2 derived requirement register")
-    ap.add_argument("--tests", required=True, help="test-tree root to scan for tags")
+    ap.add_argument("--tests", action="append", required=True, metavar="PATH",
+                    help="test-tree root to scan for tags (repeatable; rows union "
+                         "across roots — pass each root of a split test tree)")
+    ap.add_argument("--test-glob", action="append", dest="test_glob", metavar="GLOB",
+                    help="extra test-file name glob, added to the built-in defaults "
+                         "(repeatable) — e.g. '*Test.java'")
     ap.add_argument("--out", help="write the register here instead of stdout")
     args = ap.parse_args(argv)
 
-    if not os.path.isdir(args.tests):
-        print(f"register: --tests {args.tests} is not a directory", file=sys.stderr)
-        return 2
+    for troot in args.tests:
+        if not os.path.isdir(troot):
+            print(f"register: --tests {troot} is not a directory", file=sys.stderr)
+            return 2
 
-    report = render(harvest(args.tests), args.tests)
+    globs = DEFAULT_TEST_GLOBS + tuple(args.test_glob or ())
+    report = render(harvest(args.tests, globs), args.tests)
 
     if args.out:
         parent = os.path.dirname(args.out)

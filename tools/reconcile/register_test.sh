@@ -74,6 +74,22 @@ else
     ok "missing tests dir rejected"
 fi
 
+# --- 7: tags in NON-test files are excluded from the register (C30) --------
+cat > "$TESTS/go/NOTES.md" <<'MD'
+Design note quoting a built [REQ:REQ-2] and an unbuilt [REQ:REQ-500].
+MD
+OUT7="$(python3 "$SCRIPT" --tests "$TESTS" 2>/dev/null)"
+echo "$OUT7" | grep -q "REQ-500" && bad "non-test file token leaked into register: $OUT7" || ok "non-test tokens excluded from register"
+
+# --- 8: --tests repeatable; register unions rows across roots --------------
+T2="$TMP/tests2"; mkdir -p "$T2"
+cat > "$T2/extra_test.go" <<'GO'
+// [REQ:REQ-42] a requirement proven in a second tree
+GO
+OUT8="$(python3 "$SCRIPT" --tests "$TESTS" --tests "$T2" 2>/dev/null)"
+echo "$OUT8" | grep -q "REQ-42" && echo "$OUT8" | grep -q "REQ-2 " \
+  && ok "--tests repeatable; register unions rows across roots" || bad "multi-root register wrong: $OUT8"
+
 echo ""
 echo "  register: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

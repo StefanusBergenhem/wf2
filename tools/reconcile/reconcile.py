@@ -39,6 +39,7 @@ Exit: 0 on success (report produced), 2 on input error. The JSON `all_complete`
 field is the "backlog empty -> design releasable" signal.
 """
 import argparse
+import fnmatch
 import json
 import os
 import re
@@ -48,6 +49,22 @@ import sys
 # [SYS-TC:<id>] for capability-level system tests. Both are plain comment tokens; the
 # captured id is namespaced (REQ-<n> vs SYS-TC-<n>) so the lanes never collide.
 TAG_RE = re.compile(r"\[(?:REQ|SYS-TC):\s*([\w.:-]+)\s*\]")
+
+# The honest scope of "the test tree": a file counts as a proving test only when its
+# NAME matches one of these globs. A [REQ:<id>] / [SYS-TC:<id>] token in a non-test file
+# — an archived contract under an archive dir, a skill doc, a tool README — is NOT
+# coverage; counting it would silently drain real backlog work (reconcile) or raise a
+# false survivor (retired). Extension-agnostic on the test/spec infix so one set spans
+# Go, TS/JS, Python, Ruby, and more:
+#   *_test.*   foo_test.go, foo_test.py       *.test.*   foo.test.ts, foo.test.js
+#   *.spec.*   foo.spec.ts, e2e.spec.js       *_spec.*   foo_spec.rb
+#   test_*.*   test_foo.py
+# Extend per project with --test-glob (added to, never replacing, these defaults).
+DEFAULT_TEST_GLOBS = ("*_test.*", "*.test.*", "*.spec.*", "*_spec.*", "test_*.*")
+
+
+def _is_test_file(name, test_globs):
+    return any(fnmatch.fnmatch(name, g) for g in test_globs)
 
 
 # Comment closers a statement may drag along when the tag lives in a block comment
@@ -64,25 +81,35 @@ def _statement(line, tag_end):
     return text
 
 
-def harvest(tests_root):
+def harvest(tests_roots, test_globs=DEFAULT_TEST_GLOBS):
     """Return {id: {"files": [relpath, ...], "statements": [text, ...]}} for every
-    [REQ:<id>] / [SYS-TC:<id>] tag under tests_root."""
+    [REQ:<id>] / [SYS-TC:<id>] tag in the proving TEST FILES under tests_roots.
+
+    tests_roots is a single path or an iterable of paths — coverage is the union across
+    all of them (so a repo with split test trees reconciles in one call). A file counts
+    only when its name matches test_globs; a tag in a non-test file is not coverage.
+    Relpaths are relative to each file's own root."""
+    if isinstance(tests_roots, (str, os.PathLike)):
+        tests_roots = [tests_roots]
     covered = {}
-    for root, _dirs, files in os.walk(tests_root):
-        for name in files:
-            path = os.path.join(root, name)
-            try:
-                with open(path, encoding="utf-8", errors="ignore") as fh:
-                    text = fh.read()
-            except OSError:
-                continue
-            for line in text.splitlines():
-                for match in TAG_RE.finditer(line):
-                    entry = covered.setdefault(
-                        match.group(1), {"files": [], "statements": []}
-                    )
-                    entry["files"].append(os.path.relpath(path, tests_root))
-                    entry["statements"].append(_statement(line, match.end()))
+    for tests_root in tests_roots:
+        for root, _dirs, files in os.walk(tests_root):
+            for name in files:
+                if not _is_test_file(name, test_globs):
+                    continue
+                path = os.path.join(root, name)
+                try:
+                    with open(path, encoding="utf-8", errors="ignore") as fh:
+                        text = fh.read()
+                except OSError:
+                    continue
+                for line in text.splitlines():
+                    for match in TAG_RE.finditer(line):
+                        entry = covered.setdefault(
+                            match.group(1), {"files": [], "statements": []}
+                        )
+                        entry["files"].append(os.path.relpath(path, tests_root))
+                        entry["statements"].append(_statement(line, match.end()))
     return covered
 
 
@@ -130,7 +157,12 @@ def reconcile(slices, harvested):
 def main(argv=None):
     ap = argparse.ArgumentParser(description="wf2 requirement-tag harvester")
     ap.add_argument("--slices", required=True, help="design slices JSON")
-    ap.add_argument("--tests", required=True, help="test-tree root to scan for tags")
+    ap.add_argument("--tests", action="append", required=True, metavar="PATH",
+                    help="test-tree root to scan for tags (repeatable; coverage unions "
+                         "across roots — pass each root of a split test tree)")
+    ap.add_argument("--test-glob", action="append", dest="test_glob", metavar="GLOB",
+                    help="extra test-file name glob, added to the built-in defaults "
+                         "(repeatable) — e.g. '*Test.java'")
     ap.add_argument("--json", action="store_true", help="emit JSON instead of text")
     args = ap.parse_args(argv)
 
@@ -154,11 +186,13 @@ def main(argv=None):
                 return 2
             seen[req] = sl.get("id")
 
-    if not os.path.isdir(args.tests):
-        print(f"reconcile: --tests {args.tests} is not a directory", file=sys.stderr)
-        return 2
+    for troot in args.tests:
+        if not os.path.isdir(troot):
+            print(f"reconcile: --tests {troot} is not a directory", file=sys.stderr)
+            return 2
 
-    report = reconcile(slices, harvest(args.tests))
+    globs = DEFAULT_TEST_GLOBS + tuple(args.test_glob or ())
+    report = reconcile(slices, harvest(args.tests, globs))
 
     if args.json:
         print(json.dumps(report, indent=2))

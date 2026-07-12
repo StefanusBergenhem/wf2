@@ -56,7 +56,7 @@ never one it discovers.
 **Fold in the slice's Supersedes list.** For each superseded id the slice's **Supersedes**
 section carries, locate its proving test file(s) mechanically — grep the test tree for
 `[REQ:<old-id>]` / `[SYS-TC:<old-id>]` (or derive them via
-`python3 <paths.tools>/reconcile/register.py --tests <test-root>`) — never guess. Add those
+`python3 <paths.tools>/reconcile/register.py --tests <a test root> [--tests <root> ...]`) — never guess. Add those
 files to `files_to_touch` of the task covering the successor requirement (a dedicated
 removal task when the entry has no successor), with an explicit note in its
 `implementation_notes`: update or delete the old proving test and its tag — a superseded

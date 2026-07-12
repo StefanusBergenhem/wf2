@@ -10,10 +10,20 @@ grep.
 ## What it does
 
 - Reads the design's open requirements, grouped into slices (`--slices <json>`).
-- Greps the test tree (`--tests <root>`) for `[REQ:<id>]` tags.
+- Greps the **proving test files** under each `--tests <root>` for `[REQ:<id>]` tags.
+  `--tests` is **repeatable** — pass each root of a split test tree (e.g. `--tests
+  backend --tests frontend/src`) and coverage is the union across them.
 - A requirement is **covered** when a test carries its tag; a **slice** is complete
   when all its requirements are covered; the **backlog** is empty (the design can be
   released) when every slice is complete.
+
+**Only proving *test files* count.** A file contributes tags only when its name matches
+a test glob — the defaults span Go/TS/JS/Python/Ruby (`*_test.*`, `*.test.*`, `*.spec.*`,
+`*_spec.*`, `test_*.*`); extend per project with a repeatable `--test-glob '<glob>'`. This
+is deliberate: a `[REQ:<id>]` token in a **non-test** file — an archived task contract under
+the archive dir, a skill doc, this README — is *not* a built requirement. Counting it would
+silently mark unbuilt backlog work as covered (a false drain). The same filter keeps
+`register.py` and `retired.py` honest (no phantom rows, no false survivors).
 - Reports per-slice completion plus any **orphan/historical tags** — tags for
   requirements not in the current design (e.g. breadcrumbs left by already-retired
   slices). Orphans are informational, never errors.
@@ -76,7 +86,8 @@ Reconcile is necessary but not sufficient; pair it with both.
 ## Usage
 
 ```sh
-python3 reconcile.py --slices slices.json --tests <test-root> [--json]
+python3 reconcile.py --slices slices.json --tests <test-root> [--tests <root> ...] \
+  [--test-glob '<glob>' ...] [--json]
 ```
 
 `slices.json`:
@@ -107,7 +118,7 @@ the SA's, not reconcile's.
 
 ## register.py — the derived requirement register
 
-`register.py --tests <test-root> [--out <path>]` renders the same harvested tags as a
+`register.py --tests <test-root> [--tests <root> ...] [--out <path>]` renders the same harvested tags as a
 read-only markdown register — per lane (`REQ`, `SYS-TC`): id, the statement its tag
 lines carry, and every proving test file. It answers "what does the system require,
 in total, right now?" for a human reader (a new engineer, an auditor) without
@@ -127,7 +138,7 @@ building the successor must update or delete the old proving test and its tag.
 `retired.py` is the mechanical check that it happened:
 
 ```sh
-python3 retired.py --ids REQ-4 SYS-TC-2 --tests <test-root>
+python3 retired.py --ids REQ-4 SYS-TC-2 --tests <test-root> [--tests <root> ...]
 ```
 
 Exit `0` when every id is gone; exit `1` when any survives, listing each surviving id

@@ -439,19 +439,20 @@ the task's mandated tier, sourced from the contract or `commands`.
 
 ---
 
-## C28 — `reconcile.py` / `register.py --tests` accepts only one test root
+## C29 — wf-discover: let the human pin subsystem groupings
 
 **Date:** 2026-07-12
-**Context:** dems `sprint-20260711-typed-edge-hardening` (wf-learning L-016). Both tools take a
-single `--tests` root. A repo with split test trees (`backend/`, `frontend/src/`, `e2e/`) needs
-one invocation per tree plus a manual union of the covered ids — the reconcile/register read is
-no longer one command. Relates to **C15** (the "test tree" path with ≥3 callers): the same
-polyglot/split-layout reality that blocks a single `paths.tests` key also blocks a single
-`--tests` root.
+**Context:** dogfood — the human wanted authority over the subsystem partition wf-scout
+reconciles from the three candidate clusterings (folder · depgraph · git-cochange). Today the
+partition is fully machine-chosen; there is no way to say "these components are one subsystem"
+or "split that one" and have discover honor it on the next run.
 
-**Observation:** accept **multiple** `--tests` roots (repeatable flag) and union the harvested
-ids internally, so a split test layout is one invocation. Mechanical and contained — a flag
-change plus a union, no new subsystem.
+**Observation:** an optional human-supplied grouping input discover reads and treats as
+authoritative (an override the scout reconciles *around*, not against) — e.g. a committed
+`paths.discover_groupings` the scout merges before writing `subsystems.json`, or seeds the
+scout prompt with. Must stay derive-friendly: the override is intent (small, committed,
+hand-authored), the partition it shapes stays transient and regenerated each run.
 
-**Trigger to act:** promote with **C15** at the next config/tooling touch — the two are the
-same split-test-layout problem seen from the path side (C15) and the CLI side (this).
+**Trigger to act:** a second run where the machine partition actively obstructs planning and a
+manual regroup would have paid for itself. Until then the three-clustering scout output is
+enough.

@@ -166,6 +166,59 @@ JSON
 python3 "$SCRIPT" --slices "$SYSDUP" --tests "$SYSTESTS" >/dev/null 2>"$TMP/err9"; rc=$?
 [ "$rc" -eq 2 ] && ok "duplicate SYS-TC id across slices rejected (exit 2)" || bad "duplicate SYS-TC id not rejected (rc=$rc)"
 
+# --- 10: tags in NON-test files are not coverage (C30 false-drain guard) ---
+# A [REQ:...] token in an archived contract, a skill doc, or a README is NOT a built
+# requirement — counting it silently drains real backlog work. Only proving TEST files count.
+CONTAM="$TMP/contam"; mkdir -p "$CONTAM/backend" "$CONTAM/.wf/archive/s1" "$CONTAM/.wf/tools"
+cat > "$CONTAM/backend/endpoint_test.go" <<'GO'
+// [REQ:REQ-1] the built component requirement
+func TestOne(t *testing.T) {}
+GO
+# REQ-3 is genuinely UNBUILT — it appears only in machine-owned, non-test files:
+cat > "$CONTAM/.wf/archive/s1/old__sprint.yaml" <<'YAML'
+requirements: ["[REQ:REQ-3] a shipped-then-archived contract quoting its id"]
+YAML
+cat > "$CONTAM/.wf/tools/README.md" <<'MD'
+Worked example: [REQ:REQ-3] and [SYS-TC:SYS-TC-9].
+MD
+JOUT10="$(python3 "$SCRIPT" --slices "$SLICES" --tests "$CONTAM" --json 2>/dev/null)"
+echo "$JOUT10" | python3 -c '
+import sys, json
+d = json.load(sys.stdin)
+s = {x["id"]: x for x in d["slices"]}
+assert "REQ-1" in s["foundation"]["covered"], d      # real test tag counts
+assert "REQ-3" in s["endpoint"]["missing"], d        # non-test token does NOT count
+assert s["endpoint"]["complete"] is False, d         # so the slice stays PENDING (no false drain)
+assert "SYS-TC-9" not in d["orphans"], d             # README token is not an orphan tag either
+' && ok "tags in non-test files are not coverage (C30 no false drain)" || bad "C30: non-test tags counted: $JOUT10"
+
+# --- 11: --tests is repeatable; coverage unions across roots (C28/L-016) ---
+R1="$TMP/r1"; R2="$TMP/r2"; mkdir -p "$R1" "$R2"
+cat > "$R1/a_test.go" <<'GO'
+// [REQ:REQ-1] built in tree one
+GO
+cat > "$R1/b_test.go" <<'GO'
+// [REQ:REQ-2] also in tree one
+GO
+cat > "$R2/c.test.ts" <<'TS'
+// [REQ:REQ-3] built in tree two
+TS
+JOUT11="$(python3 "$SCRIPT" --slices "$SLICES" --tests "$R1" --tests "$R2" --json 2>/dev/null)"
+echo "$JOUT11" | python3 -c 'import sys,json; d=json.load(sys.stdin); assert d["all_complete"] is True, d' \
+  && ok "--tests repeatable; coverage unions across roots" || bad "multi-root union wrong: $JOUT11"
+
+# --- 12: --test-glob extends the default test-file globs -------------------
+JV="$TMP/jv"; mkdir -p "$JV"
+cat > "$JV/FooTest.java" <<'JAVA'
+// [REQ:REQ-1] a JUnit test in a non-default-named file
+JAVA
+J12A="$(python3 "$SCRIPT" --slices "$SLICES" --tests "$JV" --json 2>/dev/null)"
+echo "$J12A" | python3 -c 'import sys,json; s={x["id"]:x for x in json.load(sys.stdin)["slices"]}; assert "REQ-1" in s["foundation"]["missing"]' \
+  && ok "non-default test filename excluded by default globs" || bad "default glob wrongly matched .java: $J12A"
+J12B="$(python3 "$SCRIPT" --slices "$SLICES" --tests "$JV" --test-glob '*Test.java' --json 2>/dev/null)"
+echo "$J12B" | python3 -c 'import sys,json; s={x["id"]:x for x in json.load(sys.stdin)["slices"]}; assert "REQ-1" in s["foundation"]["covered"]' \
+  && ok "--test-glob adds a project-specific test pattern" || bad "--test-glob not honored: $J12B"
+
 echo ""
 echo "  $pass passed, $fail failed"
 [ "$fail" -eq 0 ] && echo "ALL GREEN" || { echo "FAILURES"; exit 1; }

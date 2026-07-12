@@ -75,6 +75,33 @@ python3 "$SCRIPT" --ids REQ-1 --tests "$TMP/nope" >/dev/null 2>&1; rc=$?
 python3 "$SCRIPT" --ids --tests "$TESTS" >/dev/null 2>&1; rc=$?
 [ "$rc" -eq 2 ] && ok "empty ids rejected (exit 2)" || bad "empty ids rc=$rc"
 
+# --- 9: an id lingering only in a NON-test file is reported GONE (C30) --------
+# A superseded id quoted in an archived contract / README is not a surviving proving tag.
+NT="$TMP/nt"; mkdir -p "$NT"
+cat > "$NT/keep_test.go" <<'GO'
+// [REQ:REQ-2] a live, still-tagged requirement
+GO
+cat > "$NT/archived__sprint.yaml" <<'YAML'
+requirements: ["[REQ:REQ-4] superseded id quoted in an archived contract"]
+YAML
+cat > "$NT/README.md" <<'MD'
+Worked example uses [REQ:REQ-4].
+MD
+python3 "$SCRIPT" --ids REQ-4 --tests "$NT" > "$TMP/out9" 2>&1; rc9=$?
+[ "$rc9" -eq 0 ] && ok "id only in non-test files reported GONE (no false survivor)" || bad "C30: non-test token read as surviving tag: $(cat "$TMP/out9")"
+
+# --- 10: --tests repeatable; sweep spans every root --------------------------
+A="$TMP/swa"; B="$TMP/swb"; mkdir -p "$A" "$B"
+cat > "$A/live_test.go" <<'GO'
+// [REQ:REQ-5] a superseded id still tagged in tree A
+GO
+cat > "$B/other_test.go" <<'GO'
+// [REQ:REQ-6] an unrelated live requirement in tree B
+GO
+python3 "$SCRIPT" --ids REQ-5 --tests "$A" --tests "$B" > "$TMP/out10" 2>&1; rc10=$?
+[ "$rc10" -ne 0 ] && grep -q "live_test.go" "$TMP/out10" \
+  && ok "--tests repeatable; survivor found in first root too" || bad "multi-root sweep missed root A (rc=$rc10): $(cat "$TMP/out10")"
+
 echo ""
 echo "  retired: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
