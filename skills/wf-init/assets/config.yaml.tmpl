@@ -30,16 +30,19 @@ paths:
   discover_subsystems: ".wf/transient/discover/subsystems.json"  # scout output (semantic cache)
   discover_view: ".wf/transient/discover/view.html"              # human interactive map
   discover_brief: ".wf/transient/discover/brief.md"              # agent digest (consumed by planning skills)
-  telemetry: ".wf/telemetry/sessions.jsonl"   # Append-only session log. Committed.
-                                              # Skills append session rows; on the claude
-                                              # target an installed Stop/SubagentStop hook
-                                              # also appends `kind: usage` token/tool rows.
+  telemetry: ".wf/telemetry/sessions.jsonl"   # Session log. Committed. Skills append session
+                                              # rows; on the claude target an installed
+                                              # Stop/SubagentStop hook also appends `kind: usage`
+                                              # token/tool rows. wf-retrospective drains it to
+                                              # paths.archive at closeout, so it holds one cycle,
+                                              # not all history (bounds the retrospective's own read).
   capabilities: ".wf/CAPABILITIES.yaml"       # User-voice capabilities (wf-po appends; wf-sa drains when designed). Committed.
 
   # Learnings — distilled from telemetry by wf-retrospective. First-class design
   # inputs (peer of capabilities); each entry is one actionable observation.
   learnings: ".wf/LEARNINGS.yaml"             # Project-code learnings (wf-retrospective appends; wf-sa drains when designed). Committed.
   wf_learnings: ".wf/wf-learnings.yaml"       # wf-toolkit friction, for the wf maintainer. Committed.
+  retro_report: ".wf/transient/retro-report.md"  # wf-retrospective's human-facing digest of ONE run: proposed AGENTS.md edits (gotchas), this run's new/reinforced learnings, and the execution summary. The maintainer's inbox — read after a run, then acted on. Overwritten each run; derived from telemetry + the learnings files, so transient.
 
   # Planning layer (wf-sa, wf-swa). The durable planning artifacts are the ADRs and the
   # design-backlog (committed); the design-slice, drill-cache, and sprint are transient —

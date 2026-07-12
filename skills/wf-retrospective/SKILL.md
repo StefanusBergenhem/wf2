@@ -12,6 +12,7 @@ Record the session start stamp now per `wf-basics` §2. Resolve every path below
 - `PIPELINE_STATE` = `paths.pipeline_state`  (the finished run's state — read if present)
 - `LEARNINGS`      = `paths.learnings`       (project-code learnings — read + append)
 - `WF_LEARNINGS`   = `paths.wf_learnings`    (wf-toolkit learnings — read + append)
+- `RETRO_REPORT`   = `paths.retro_report`    (the human-facing digest of this run — write)
 
 You distil a finished run into learnings, from two sources:
 
@@ -119,18 +120,30 @@ the whole deliverable, and the human applies or rejects it.
    from its template (`assets/learnings.yaml.tmpl`, `assets/wf-learnings.yaml.tmpl`) if absent.
    If you minted any id, bump its lane's counter in `.wf/config.yaml`
    (`id_counters.learning` / `id_counters.wf_learning`) to the highest id minted.
-2. **Report the run in your return only — store nothing beyond the streams:** new entries per
-   stream, reinforcements, the count dropped as non-actionable, every Phase 5 proposal as a
-   `PROPOSED AGENTS.md edit` block (target path + verbatim lines, awaiting human approval),
-   and (when `$PIPELINE_STATE` was present) a one-glance execution summary — tasks
-   completed/escalated/blocked, design issues by `fix_kind`, stage durations. This summary is
-   transient; do not write it to a file.
-3. Commit the learnings files — they are durable, and leaving them uncommitted is one
-   `git clean` from gone. Stage explicit paths, never `git add .` (include
-   `.wf/config.yaml` only when you bumped a counter):
+2. **Write the run's digest to `$RETRO_REPORT`**, overwriting it — it holds one run. This
+   is the deliverable that reaches the maintainer; a return alone is discarded by the
+   orchestrator. Include: the new and reinforced entries per stream; the count dropped as
+   non-actionable; every Phase 5 proposal as a `PROPOSED AGENTS.md edit` block (target path +
+   verbatim lines, awaiting human approval); the **per-role context footprint** from
+   `python3 <paths.tools>/cli/wf telemetry roles` (which roles' context is ballooning — the
+   work-package scoping signal, most-concerning role first); and, when `$PIPELINE_STATE` was
+   present, a one-glance execution summary — tasks completed/escalated/blocked, design issues
+   by `fix_kind`, stage durations. Do not commit `$RETRO_REPORT` — it is transient. In your
+   return, name `$RETRO_REPORT` and the headline counts; the file carries the detail.
+3. **Archive and drain `$TELEMETRY`** — after step 2 has read the log for the roles report.
+   Snapshot the cycle's telemetry into the maintainer archive and empty the live log, so it
+   holds only the next cycle and this role's own read stays bounded as history grows. Run
+   only when `$TELEMETRY` exists:
+   ```sh
+   python3 <paths.tools>/cli/wf archive add $TELEMETRY --label <sprint-id> --move
+   ```
+4. Commit the durable outputs — the learnings, the archived telemetry snapshot, and the
+   drained live log — leaving them uncommitted is one `git clean` from gone. Stage explicit
+   paths, never `git add .` (include `.wf/config.yaml` only when you bumped a counter):
    ```sh
    git add $LEARNINGS $WF_LEARNINGS .wf/config.yaml
-   git commit -m "learnings: distil <sprint-id or session range>"
+   git add -A -- "$(dirname "$TELEMETRY")" <paths.archive>   # the drain + its archive snapshot
+   git commit -m "learnings + telemetry drain: <sprint-id or session range>"
    ```
    If the commit fails (hook, identity), report the exact error and halt — never `--no-verify`.
 
@@ -143,8 +156,9 @@ flag when there is nothing concrete). If it errors, continue.
 ## Hard constraints
 
 - **A run that distils nothing is a valid run.** When every observation is already compiled
-  or judged noise, report "nothing new" and commit nothing — never invent a learning to look
-  productive.
+  or judged noise, report "nothing new" and append no learning — never invent one to look
+  productive. Phase 6's report, telemetry drain, and its commit still run: the rows were
+  read, so they are archived and the live log is drained regardless.
 
 ## Halt conditions
 
