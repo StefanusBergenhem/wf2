@@ -1,8 +1,7 @@
 # wf2
 
 > This file is the agent-facing guide for **developing wf2 itself** (the repo is
-> built with Claude Code). It is *not* the `AGENTS.md` that wf2 produces for a
-> target repo. A public README can be split back out at graduation.
+> built with Claude Code).
 
 An **agentic development workflow** that works when you open *any* repo —
 legacy-first, not greenfield-first.
@@ -117,11 +116,10 @@ real run proves its absence hurt).
   read. Where a precondition can be enforced by a mechanism, prefer the mechanism
   over wording (mechanical-over-LLM applies to compliance too).
 
-### Config & layout
+### Config & layout for wf when installed in target repo
 
 - All configuration lives under **`.wf/`**: `.wf/config.yaml` (committed,
   intent) and `.wf/transient/` (gitignored — derived, machine-owned, disposable).
-  This is the wf1 `.workflow/` concept, restarted clean and near-empty.
 - **Every config field must be read by something that exists.** Start the config
   near-empty and add a field only when a skill or script consumes it. No
   speculative knobs.
@@ -154,12 +152,6 @@ real run proves its absence hurt).
 
 ### Dogfooding (standing guardrail)
 
-- The wf2 MVP (Discover → PO → SA → SWA → Orchestration) is built **before** the
-  first real dogfood, because you cannot dogfood a planning run without the
-  planning roles existing. The discipline that keeps this honest: **do not
-  gold-plate any single skill** — no extra visualization, config knobs, or review
-  passes — before that first dogfood. Build the thin version, dogfood it, then
-  earn each addition with evidence its absence hurt.
 - **Candidates are a parking lot, not a backlog.** Deferred observations live in
   `doc/CANDIDATES.md`: promote one to real work when its trigger fires, and **delete it
   when resolved** — once a candidate's change has shipped, remove the entry rather than
