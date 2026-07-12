@@ -72,6 +72,39 @@ else
     ok "invalid --friction-kind rejected"
 fi
 
+# ---------------------------------------------------------------------------
+# wf telemetry roles — per-role context-footprint report (window-joins the
+# SubagentStop usage rows to the skill rows; excludes wf-orchestrate, which is
+# the main loop and shows under main_loop from its Stop rows).
+# ---------------------------------------------------------------------------
+FIX="$P/roles.jsonl"
+cat > "$FIX" <<'JSONL'
+{"agent":"wf-build","started_at":"2026-07-11T10:00:00Z","ended_at":"2026-07-11T10:05:00Z","outcome":"completed"}
+{"agent":"wf-sa","started_at":"2026-07-11T10:10:00Z","ended_at":"2026-07-11T10:20:00Z","outcome":"completed"}
+{"agent":"wf-orchestrate","started_at":"2026-07-11T09:00:00Z","ended_at":"2026-07-11T21:00:00Z","outcome":"completed"}
+{"kind":"usage","session_id":"S1","hook_event":"SubagentStop","started_at":"2026-07-11T10:00:10Z","ended_at":"2026-07-11T10:04:50Z","tokens":{"input":1000,"output":2000,"cache_read":50000,"cache_creation":9000},"tool_calls":5}
+{"kind":"usage","session_id":"S1","hook_event":"SubagentStop","started_at":"2026-07-11T10:10:30Z","ended_at":"2026-07-11T10:19:00Z","tokens":{"input":2000,"output":4000,"cache_read":80000,"cache_creation":18000},"tool_calls":9}
+{"kind":"usage","session_id":"S1","hook_event":"Stop","started_at":"2026-07-11T09:00:00Z","ended_at":"2026-07-11T21:00:00Z","tokens":{"input":500,"output":3000,"cache_read":100000,"cache_creation":4500},"tool_calls":20}
+JSONL
+OUT="$(wf telemetry roles --sink "$FIX" --config "$P/.wf/config.yaml" --format json 2>&1)"; RC=$?
+[ "$RC" -eq 0 ] && ok "telemetry roles exits zero" || bad "roles exit" "rc=$RC $OUT"
+rget() { "$PYTHON" -c 'import sys,json; d=json.loads(sys.argv[1]); print(eval(sys.argv[2]))' "$1" "$2" 2>/dev/null; }
+# wf-build subagent row: footprint = input+cache_creation = 10000
+[ "$(rget "$OUT" "next(r['footprint_max'] for r in d['roles'] if r['role']=='wf-build')")" = "10000" ] \
+    && ok "roles: wf-build footprint (input+cache_creation)" || bad "roles build foot" "$OUT"
+[ "$(rget "$OUT" "next(r['footprint_max'] for r in d['roles'] if r['role']=='wf-sa')")" = "20000" ] \
+    && ok "roles: wf-sa footprint" || bad "roles sa foot" "$OUT"
+[ "$(rget "$OUT" "next(r['output_max'] for r in d['roles'] if r['role']=='wf-build')")" = "2000" ] \
+    && ok "roles: carries output" || bad "roles output" "$OUT"
+[ "$(rget "$OUT" "next(r['tool_calls_max'] for r in d['roles'] if r['role']=='wf-sa')")" = "9" ] \
+    && ok "roles: carries tool_calls" || bad "roles tools" "$OUT"
+# wf-orchestrate must NOT be a subagent role; it appears in main_loop instead
+[ "$(rget "$OUT" "any(r['role']=='wf-orchestrate' for r in d['roles'])")" = "False" ] \
+    && ok "roles: excludes wf-orchestrate from subagent roles" || bad "roles orch excl" "$OUT"
+[ "$(rget "$OUT" "d['main_loop'][0]['footprint']")" = "5000" ] \
+    && ok "roles: main_loop footprint from the Stop row" || bad "roles main_loop" "$OUT"
+[ "$(rget "$OUT" "d['matched']")" = "2" ] && ok "roles: reports matched count" || bad "roles matched" "$OUT"
+
 echo ""
 echo "  telemetry verbs: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

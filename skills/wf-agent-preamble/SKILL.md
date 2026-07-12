@@ -34,10 +34,11 @@ orchestrator reverts — your work is lost.
 
 ## Test & gate output piping
 
-Pipe every test / build / preflight command output to a file, then read the file:
+Pipe every test / build / preflight command output to a file, then read the **outcome**,
+not the whole log:
 
 ```bash
-<command> > /tmp/wf-<role>-<task-id>-<gate>.log 2>&1
+<command> > /tmp/wf-<role>-<task-id>-<gate>.log 2>&1; echo "exit=$?"
 ```
 
 Never read raw terminal output for these commands — long output blows context, and the log
@@ -45,6 +46,12 @@ is the artifact a reviewer or post-mortem can cite. Use task-scoped names — `<
 the `task_id` from `paths.current_task` (`/tmp/wf-build-<task-id>-test.log`,
 `/tmp/wf-build-<task-id>-preflight.log`, `/tmp/wf-review-<task-id>-preflight.log`) — so
 other steps can find them and concurrent tasks never overwrite each other's logs.
+
+**Read the exit code first, and pull only what you need into context.** On a clean exit,
+the exit code is the whole result — do not read the log body; a green gate carries no
+information you must hold. On a failure, read only the failing portion — grep the failing
+cases or read the tail (`grep -nE 'FAIL|Error|panic|✗' <log>`, `tail -n 40 <log>`), never
+the entire file.
 
 ## Suppression-directive ban
 

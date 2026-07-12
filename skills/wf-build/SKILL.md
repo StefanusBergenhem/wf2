@@ -110,9 +110,9 @@ the open entry and parks the task — you never go on to review.
 
 ## Step 4 — Gate
 
-Run `commands.preflight` (pipe to `/tmp/wf-build-<task-id>-preflight.log`, read the log). It must
-exit clean. A gate that cannot run because its environment is unavailable is a HALT, not a
-pass — do not write `review_ready`.
+Run `commands.preflight` (pipe to `/tmp/wf-build-<task-id>-preflight.log`; read the outcome
+per `wf-agent-preamble`, not the whole log). It must exit clean. A gate that cannot run
+because its environment is unavailable is a HALT, not a pass — do not write `review_ready`.
 
 ## Step 5 — Hand off
 

@@ -18,9 +18,14 @@ component. Cross-component work is separate tasks.
    if it is absent** — it is wf-sa's output.
 2. Read the relevant `$ADRS` for the rationale you must respect when writing
    `implementation_notes`.
-3. Read the **source** of every component the slice's requirements name — locate each in
-   the repo. The slice has already bounded the work to these components; their code is your
-   depth, read it directly rather than working from a summary.
+3. Read source **targeted to the decomposition decision, not wholesale.** The slice already
+   names the components and bounds the work — you do not need every named component's full
+   source in context to decompose it. Read the specific files a task will list in
+   `files_to_touch` and the seams it must trace — grep a symbol, read its definition and its
+   callers — as each decomposition decision needs it, not as a blanket up-front read of every
+   component tree. Reach for depth where a file-set, a consumer set (a changed signature's
+   callers, per `references/task-contract.md`), or an `implementation_notes` pattern turns on
+   it; the slice carries the breadth.
 
 ## Phase 2 — Author the acceptance criteria
 
