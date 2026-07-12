@@ -158,3 +158,11 @@ real run proves its absence hurt).
   leaving it as a resolved tombstone. The rationale survives in the commit and the code; a
   lingering "done" candidate is exactly the kind of stored-what-code-reports the governor
   forbids.
+
+## Pilot Project - DEMS
+
+As of now, wf2 is only located on my host, and the pilot project used to develop wf2 is
+~/repos/dems/. Whenever there is mention of "dems" that is what is being refered to. 
+But keep in mind that DEMS is not the only intended customer of dems, just the first adapter
+for dogfooding. 
+
