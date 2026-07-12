@@ -147,6 +147,15 @@ Name in `implementation_notes` only files that are in `files_to_touch` or explic
 read-only reference material — a note that tells the build to edit a file outside
 `files_to_touch` sends it into a scope violation.
 
+**A signature or field change carries its consumers.** When a task changes a function
+signature, renames or relocates a field, or otherwise alters a shape other code depends
+on, `files_to_touch` must list **every caller and fixture that won't compile or pass
+until it is updated too** — not just the file the change originates in. Trace the changed
+symbol through the source (its integration- and system-test callers, any shared test
+fixture that constructs it) and add each to scope; the atomic edit set is the origin file
+plus its dependents. A consumer left out of `files_to_touch` halts the build mid-task,
+because the change is unbuildable without editing a file the contract forbids.
+
 ## Behavior-level wording
 
 A `testing_mandate` item describes the **observable behavior or output**, never the

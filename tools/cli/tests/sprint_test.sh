@@ -288,6 +288,31 @@ PY
 OUT="$(wf sprint check --format json)"
 [ "$(has "$OUT" C7)" = "True" ] && ok "check: C7 flags an AC claimed by two tasks" || bad "C7" "$OUT"
 
+# C10 — two tasks whose files_to_touch overlap with no dependency edge between them
+write_clean_sprint
+"$PYTHON" - "$SPRINT" <<'PY'
+import sys, yaml
+p=sys.argv[1]; d=yaml.safe_load(open(p))
+d['tasks'][1]['depends_on']=[]                                   # drop the T2->T1 edge
+d['tasks'][1]['files_to_touch']=['e2e/widget_test.go','core/widget.go']  # now overlaps T1
+open(p,'w').write(yaml.safe_dump(d, sort_keys=False))
+PY
+OUT="$(wf sprint check --format json)"; RC=$?
+[ "$RC" -eq 1 ] && ok "check: C10 overlap -> exit 1" || bad "C10 exit" "rc=$RC $OUT"
+[ "$(has "$OUT" C10)" = "True" ] && ok "check: C10 flags overlapping files_to_touch with no edge" || bad "C10" "$OUT"
+[ "$(jget "$OUT" "any('core/widget.go' in f['msg'] for f in d['errors'])")" = "True" ] && ok "check: C10 names the shared file" || bad "C10 name" "$OUT"
+
+# C10 — the same overlap is fine when a dependency edge orders the two tasks
+write_clean_sprint
+"$PYTHON" - "$SPRINT" <<'PY'
+import sys, yaml
+p=sys.argv[1]; d=yaml.safe_load(open(p))
+d['tasks'][1]['files_to_touch']=['e2e/widget_test.go','core/widget.go']  # overlaps T1, but T2 depends_on T1
+open(p,'w').write(yaml.safe_dump(d, sort_keys=False))
+PY
+OUT="$(wf sprint check --format json)"
+[ "$(has "$OUT" C10)" = "False" ] && ok "check: C10 accepts overlap when an edge orders the tasks" || bad "C10-edge" "$OUT"
+
 # C3 — a unit-test mandate with no plausible test file in files_to_touch
 write_clean_sprint
 "$PYTHON" - "$SPRINT" <<'PY'

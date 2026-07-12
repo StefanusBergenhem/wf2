@@ -77,6 +77,14 @@ interface, a migration, a type another task imports). Tasks with no edge between
 run in parallel. The graph must be acyclic — a cycle is a decomposition error; resolve
 it by splitting a task or merging two.
 
+**Two tasks whose `files_to_touch` overlap must have an edge between them** — unordered,
+they land in the same parallel stage and edit the same file in separate worktrees, which
+collides at the stage merge. `wf sprint check` fails (C10) on any such pair; add the edge
+(or, better, factor the shared file into its own upstream task so the leaf tasks partition).
+When numbered artifacts are pre-allocated across tasks (migrations, ordered fixtures), give
+them numbers that ascend with merge order — a lower number merging after a higher one
+replays out of order against a persistent store.
+
 ## Phase 5 — Write and gate
 
 1. Write `$SPRINT` from `assets/sprint.yaml.tmpl`. Mint its top-level `sprint_id`

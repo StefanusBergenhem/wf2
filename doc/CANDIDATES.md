@@ -392,3 +392,66 @@ wf-init from repo evidence like the other commands — not a dir-copy heuristic.
 
 **Trigger to act:** a second run loses time to missing worktree deps, showing which shape
 (install command vs copy) real runs need. Until then the LLM-track instruction covers it.
+
+---
+
+## C26 — wf-swa: SYS-TC `depends_on` resolution for a learnings-driven slice
+
+**Date:** 2026-07-12
+**Context:** dems `sprint-20260711-typed-edge-hardening` (wf-learning L-013). `default-mode.md`
+Phase 3 / `task-contract.md` resolve a SYS-TC's `depends_on` as "the tasks building the
+requirements **driven by that capability**" — a CAP → REQ link read off the slice. A slice
+with **no new capabilities** (its requirements serve `L-NNN`, not `CAP-NNN`) has no such link,
+so a SYS-TC that `Covers CAP-NNN` cannot be mechanically resolved to its building tasks. The
+SwA fell back to mapping by "the tasks that assemble the path the case exercises."
+
+**Observation:** the CAP-driver resolution rule assumes every slice introduces capabilities.
+A learnings-driven slice (bug-hardening, refactors) breaks that assumption. Either the SA must
+attach a driver the SYS-TC can resolve against, or `default-mode.md` needs an explicit
+"no-capability-driver" resolution rule (map the case to the tasks that build the path it
+exercises).
+
+**Trigger to act:** a second learnings-driven slice reaches the SwA and the SYS-TC
+`depends_on` is again resolved by hand. Then add the fallback rule to `default-mode.md`
+(and/or have wf-sa carry a resolvable driver on a learnings-only SYS-TC).
+
+---
+
+## C27 — build Step-4 gate can exclude the very tests a task's ACs are proven by
+
+**Date:** 2026-07-12
+**Context:** dems `sprint-20260711-typed-edge-hardening` (wf-learning L-014). `wf-build`'s
+mandated Step-4 gate runs `commands.preflight` (the default preflight). A task whose ACs are
+proven by a **higher tier** — dems' migration-tagged replay tests run only under
+`commands.stage_check` (preflight all) or `preflight.sh migration` — never executes its own
+AC-proving tests at the build gate; the tier only runs later, at the stage boundary. The build
+returns green having not run the tests that prove its contract.
+
+**Observation:** the build gate assumes the default preflight tier is a superset of every
+task's AC tests. When a task's mandated tests live in a tier the default preflight skips, the
+build's own gate is blind to them. The fix is to run the AC-proving tier for the task, not just
+the default preflight — e.g. the contract names the test command/tier its mandate needs, and
+the build runs that.
+
+**Trigger to act:** a task again passes its build gate while its AC tests sit in an unrun tier
+(the stage boundary catches it, at the cost of a late round-trip). Then have the build gate run
+the task's mandated tier, sourced from the contract or `commands`.
+
+---
+
+## C28 — `reconcile.py` / `register.py --tests` accepts only one test root
+
+**Date:** 2026-07-12
+**Context:** dems `sprint-20260711-typed-edge-hardening` (wf-learning L-016). Both tools take a
+single `--tests` root. A repo with split test trees (`backend/`, `frontend/src/`, `e2e/`) needs
+one invocation per tree plus a manual union of the covered ids — the reconcile/register read is
+no longer one command. Relates to **C15** (the "test tree" path with ≥3 callers): the same
+polyglot/split-layout reality that blocks a single `paths.tests` key also blocks a single
+`--tests` root.
+
+**Observation:** accept **multiple** `--tests` roots (repeatable flag) and union the harvested
+ids internally, so a split test layout is one invocation. Mechanical and contained — a flag
+change plus a union, no new subsystem.
+
+**Trigger to act:** promote with **C15** at the next config/tooling touch — the two are the
+same split-test-layout problem seen from the path side (C15) and the CLI side (this).

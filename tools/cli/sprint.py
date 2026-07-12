@@ -280,6 +280,22 @@ def _check(rest):
         if len(owners) > 1:
             err("C7", f"AC {ac} claimed by multiple tasks {owners} — a criterion lands in exactly one")
 
+    # C10 — two tasks whose files_to_touch overlap must be ordered by a dependency edge.
+    # Unordered, they can land in the same parallel stage, edit the same file in separate
+    # worktrees, and collide at the stage merge. A transitive edge either direction orders
+    # them and satisfies the check.
+    reach = _reachable(tasks)
+    files_by = {t.get("id"): set(t.get("files_to_touch") or []) for t in tasks}
+    ordered = [t.get("id") for t in tasks]
+    for i in range(len(ordered)):
+        for j in range(i + 1, len(ordered)):
+            a, b = ordered[i], ordered[j]
+            shared = files_by.get(a, set()) & files_by.get(b, set())
+            if shared and b not in reach.get(a, set()) and a not in reach.get(b, set()):
+                err("C10", f"{a} and {b} share files_to_touch {sorted(shared)} with no "
+                           f"dependency edge — they can land in the same parallel stage and "
+                           f"collide in separate worktrees; add a depends_on edge to order them")
+
     # ---- Family A: slice -> sprint completeness (needs the slice) ----
     slice_path = _slice_path(args)
     if slice_path and slice_path.exists():
@@ -310,6 +326,24 @@ def _check(rest):
     }
     common.emit(result, args.format)
     return 1 if result["verdict"] == "fail" else 0
+
+
+def _reachable(tasks):
+    """Map each task id to the set of task ids reachable via depends_on (transitive).
+    Cycle-safe: the `seen` set bounds the walk even on a cyclic graph (C1 flags cycles)."""
+    graph = {t.get("id"): list(t.get("depends_on") or []) for t in tasks}
+
+    def walk(start):
+        seen, stack = set(), list(graph.get(start, []))
+        while stack:
+            n = stack.pop()
+            if n in seen or n not in graph:
+                continue
+            seen.add(n)
+            stack.extend(graph.get(n, []))
+        return seen
+
+    return {n: walk(n) for n in graph}
 
 
 def _has_cycle(tasks):
