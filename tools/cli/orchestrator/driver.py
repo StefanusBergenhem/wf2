@@ -751,15 +751,21 @@ class Orchestrator:
                 await asyncio.to_thread(self.dispatcher.dispatch, AGENT_BUILD,
                                         self._build_envelope(fix_id, worktree), worktree)
                 await asyncio.to_thread(self._preserve, worktree, fix_id)
-                bv = (await asyncio.to_thread(self._inspect_build, worktree, fix_id))["verdict"]
+                bres = await asyncio.to_thread(self._inspect_build, worktree, fix_id)
+                bv = bres["verdict"]
                 if bv != "ready_for_review":
-                    # build_blocked / design_issue / escalate_no_artifacts on a stage-fix
-                    # task is not auto-recoverable here — give up so the boundary escalates.
+                    # A stage-fix design_issue is not auto-resolved here, but record it
+                    # canonically (host DI file + state) before giving up, so the boundary
+                    # escalates a schema-shaped, dispatch-fix-able DI — never an improvised
+                    # file. build_blocked / escalate_no_artifacts just escalate.
+                    if bv == "design_issue":
+                        self._record_design_issue(worktree, fix_id, bres.get("di_id"))
                     return False
                 build_sha = self.git.head_sha(worktree)
                 await asyncio.to_thread(self.dispatcher.dispatch, self.passes[0],
                                         self._review_envelope(fix_id, worktree, self.passes[0], sprint_branch), worktree)
-                rv = (await asyncio.to_thread(self._inspect_review, worktree, fix_id, build_sha))["verdict"]
+                rres = await asyncio.to_thread(self._inspect_review, worktree, fix_id, build_sha)
+                rv = rres["verdict"]
                 if rv == "approved":
                     self.git.merge(branch, sprint_branch)
                     if await self._run_check(cmd):
@@ -767,6 +773,9 @@ class Orchestrator:
                     if attempt < self.max_attempts:
                         attempt += 1
                         continue
+                    return False
+                if rv == "design_issue":
+                    self._record_design_issue(worktree, fix_id, rres.get("di_id"))
                     return False
                 if rv == "rejected" and attempt < self.max_attempts:
                     attempt += 1

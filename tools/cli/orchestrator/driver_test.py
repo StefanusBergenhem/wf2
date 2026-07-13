@@ -1073,6 +1073,40 @@ def test_record_session_on_halt():
         bad("telemetry halt record", f"halted={result.halted} recs={recs}")
 
 
+def test_stage_fix_design_issue_recorded_canonically():
+    # A design_issue raised inside the stage heavy-check repair cycle is recorded as a
+    # canonical DI (host file + pipeline_state) before the boundary escalates — never
+    # improvised into an off-schema file.
+    proj = make_project(["T1"])
+    orch, state, git, dispatcher = make_orch(proj, ["T1"])
+    fix_id = f"STAGE-FIX-{orch._sprint_id()}"
+    wt = seed_worktree(proj, "stage-fix", di={"issues": [
+        {"id": "DI-SF", "task_id": fix_id, "fix_kind": "spec_amendment",
+         "severity": "high", "status": "open"}]})
+    orch.scripts.build = {fix_id: [{"verdict": "design_issue", "di_id": "DI-SF"}]}
+    orch._worktree_for = lambda tid: str(wt)
+
+    async def _check_fails(cmd):
+        return False
+    orch._run_check = _check_fails
+
+    got = asyncio.run(orch._stage_fix_cycle("make check", "sprint/test"))
+
+    if got is False:
+        ok("stage-fix DI: cycle returns False so the boundary escalates")
+    else:
+        bad("stage-fix DI cycle result", got)
+    if state.recorded_dis == ["DI-SF"]:
+        ok("stage-fix DI: recorded canonically in pipeline_state")
+    else:
+        bad("stage-fix DI recorded", state.recorded_dis)
+    host = yaml.safe_load((proj / ".wf" / "transient" / "design-issues.yaml").read_text())
+    if any(i.get("id") == "DI-SF" for i in (host or {}).get("issues", [])):
+        ok("stage-fix DI: appended to the host design-issues file (dispatch-fix-able)")
+    else:
+        bad("stage-fix DI host file", host)
+
+
 if __name__ == "__main__":
     test_happy_path()
     test_reject_then_rebuild()
@@ -1095,6 +1129,7 @@ if __name__ == "__main__":
     test_ship_pr_body_omits_empty_sections()
     test_build_envelope_has_no_mode()
     test_stage_fix_artifacts_schema()
+    test_stage_fix_design_issue_recorded_canonically()
     test_record_session_on_halt()
     print(f"\n  driver: {PASS} passed, {FAIL} failed")
     sys.exit(1 if FAIL else 0)
