@@ -456,3 +456,24 @@ hand-authored), the partition it shapes stays transient and regenerated each run
 **Trigger to act:** a second run where the machine partition actively obstructs planning and a
 manual regroup would have paid for itself. Until then the three-clustering scout output is
 enough.
+
+---
+
+## C31 — driver: autonomously resolve a stage-fix design issue (not just record + escalate)
+
+**Date:** 2026-07-13
+**Context:** the wf-orchestrate SKILL now resolves a heavy-check (`stage_check`) design issue
+in-line via §2b (dispatch-fix → wf-sa/wf-swa → re-cut the stage-repair). The live driver
+(`_stage_fix_cycle`) only records the DI canonically (host file + state) and then escalates
+the boundary — it does not run dispatch-fix + re-loop. The manual (skill) path is what
+dogfood runs exercise, so the driver's escalate-after-record is currently sufficient.
+
+**Observation:** bring `_stage_fix_cycle` to full parity — on a stage-fix `design_issue`,
+call the existing `_resolve_design_issues` machinery and re-run the heavy check. The snag is
+the synthetic `STAGE-FIX-<sprint>` task is not a DAG node, so the `component_defect` branch
+(which does `compute-stages --force` and expects the parked task to re-enter a later stage)
+has no clean re-entry. Needs a design for how a stage-fix follow-up task re-triggers the
+heavy check after it merges.
+
+**Trigger to act:** the first autonomous (SDK-driver) run that hits a stage-fix design issue
+— until the driver is actually used for a sprint with heavy checks, the skill path covers it.
