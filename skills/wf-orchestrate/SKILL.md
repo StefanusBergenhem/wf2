@@ -131,26 +131,27 @@ python3 <paths.tools>/cli/wf orchestrate dispatch-fix <di-id>
    `wf pipeline complete-task <id> --commit <build_sha> --merge <merge_sha>`, then remove
    the worktree. A merge conflict → HALT.
 3. **Heavy checks** — if `commands.stage_check` is empty, skip. Otherwise run it on the
-   sprint branch (piped to `/tmp`); green → go to step 4. On failure, repair it in a
-   worktree — never edit the sprint branch directly, and never judge the failure yourself:
-   1. Use the synthetic task id `STAGE-FIX-<sprint-id>`. Create its worktree off the sprint
-      branch (see [GIT_OPERATIONS.md](assets/GIT_OPERATIONS.md) § Worktree).
-   2. Write two artifacts into the worktree: `$CURRENT_TASK` — a contract whose sole
-      acceptance criterion is that `commands.stage_check` exits 0 on the sprint branch, with
-      empty `covers`/`files_to_touch` and `out_of_scope: [any change not needed to make the
-      stage check pass]`; and `paths.feedback` naming the failing command and that it exited
-      non-zero (so build runs in fix mode).
-   3. `wf pipeline dispatch --agent wf-build --task STAGE-FIX-<sprint-id> --attempt <n>`,
-      spawn `wf-build` (Build envelope), apply the Build return protocol; on
-      `ready_for_review` run the review chain and apply the Review-pass return protocol.
-   4. On `approved`: merge the worktree to the sprint branch (§ Merge), remove it, and
-      re-run `commands.stage_check`. Green → step 4. Still failing under `review.max_attempts`
-      → re-dispatch build; at the limit → escalate.
-   5. A `design_issue` verdict (build or review) routes like any task's — record it (§ Return
-      protocols → Design issues) with `--task STAGE-FIX-<sprint-id>` and resolve it now via
-      §2b, then re-cut the stage-repair from step 3.1. Never hand-author a design-issue file.
-   6. A `build_blocked`, `escalate_no_artifacts`, or exhausted-attempts outcome → remove the
-      worktree and escalate the boundary.
+   sprint branch (piped to `/tmp`); green → step 4. On failure, repair it in a worktree —
+   never edit the sprint branch directly, and never judge the failure yourself:
+   - **Set up the repair.** Use the synthetic task id `STAGE-FIX-<sprint-id>`; create its
+     worktree off the sprint branch (see [GIT_OPERATIONS.md](assets/GIT_OPERATIONS.md) §
+     Worktree). Write two artifacts into it: `$CURRENT_TASK` — a contract whose sole
+     acceptance criterion is that `commands.stage_check` exits 0 on the sprint branch, with
+     empty `covers`/`files_to_touch` and `out_of_scope: [any change not needed to make the
+     stage check pass]`; and `paths.feedback` naming the failing command and that it exited
+     non-zero (so build runs in fix mode).
+   - **Run build → review.** `wf pipeline dispatch --agent wf-build --task
+     STAGE-FIX-<sprint-id> --attempt <n>`, spawn `wf-build` (Build envelope), apply the Build
+     return protocol; on `ready_for_review` run the review chain and apply the Review-pass
+     return protocol. Route the verdict:
+     - **`approved`** → merge the worktree to the sprint branch (§ Merge), remove it, re-run
+       `commands.stage_check`. Green → step 4. Still red under `review.max_attempts` →
+       re-dispatch build at the next attempt (same worktree); at the limit → escalate.
+     - **`design_issue`** (build or review) → record it (§ Return protocols → Design issues)
+       with `--task STAGE-FIX-<sprint-id>`, resolve it now via §2b, then set up the repair
+       afresh (new worktree). Never hand-author a design-issue file.
+     - **`build_blocked`, `escalate_no_artifacts`, or attempts exhausted** → remove the
+       worktree and escalate the boundary.
 4. `wf pipeline stage-summary --stage <N>`; `wf pipeline stage-end --stage <N>`; if history
    exceeds `orchestrate.history_cap`, `wf pipeline archive-history --cap <history_cap>`.
 5. `wf pipeline advance-stage` — **advanced** → return to the stage loop for the next stage
