@@ -55,6 +55,21 @@ grep -q "avoidOverlap" "$OUT" && grep -q "springLength" "$OUT" \
 grep -q 'id="graph"' "$OUT" && grep -q 'id="panel"' "$OUT" \
   && ok "two-pane mount points present" || bad "mount points missing"
 
+# 6 — the layout settles and STAYS settled: physics is switched off once stabilization
+#     finishes, so nodes stop drifting and a dragged node stays where it is put.
+#     Grep for the call we author, not the bare event name — the inlined vis lib carries
+#     that name itself, so a loose pattern passes before the hook exists.
+grep -q 'setOptions({physics:false})' "$OUT" \
+  && ok "physics switched off after settling (nodes stay still)" \
+  || bad "physics never switched off — nodes keep drifting"
+grep -q 'once("stabilizationIterationsDone"' "$OUT" \
+  && ok "freeze is armed on the stabilization-done event" \
+  || bad "no stabilization-done freeze hook"
+# 7 — a redraw re-settles: physics must come back on for setData, else new nodes pile at 0,0
+grep -q 'physics:{enabled:true}' "$OUT" \
+  && ok "physics re-armed on redraw (new nodes lay out)" \
+  || bad "redraw would leave physics off — new nodes would not lay out"
+
 echo ""
 echo "  $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

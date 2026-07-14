@@ -186,30 +186,6 @@ in-flight tracking to the backlog and an "skip in-flight" rule to wf-sa's cut st
 
 ---
 
-## C15 — The "test tree" is a path with ≥3 callers but no config key
-
-**Date:** 2026-06-21
-**Context:** wf-sa invokes tools that need the project's test tree as a `--scan` /
-`--tests` root — `reconcile.py` (drain the built), `next_id.py` (allocate ids), and since
-2026-07-10 `register.py` (the what's-already-promised read). None resolves the root from
-config; all say "the test tree" and rely on SA judgement to fill the path.
-
-**Observation:** this is the C1 threshold (a thing read by ≥2 callers belongs in one source of
-truth) applied to a **path** rather than a config *reader*. The "one source of truth for paths"
-ground rule says skills resolve paths from `.wf/config.yaml`; "the test tree" is the one path in
-wf-sa resolved by judgement instead. A `paths.tests` key would fix it — **but a single root does
-not fit polyglot / co-located layouts** (Go's `_test.go` lives beside source, so the "test tree"
-is effectively the source root; a TS repo may scatter `__tests__`). So the key may need to be a
-*list* of roots, or the convention may be "the source root" for grep-only consumers. Needs a
-decision, not a reflex `paths.tests: ".wf/..."`.
-
-**Update 2026-07-10 — trigger fired:** `register.py` in wf-sa Phase 1 is the third consumer.
-Open decision: single root vs list vs "source root" convention (all three consumers are
-grep-only scanners, so a repo-root default may be sufficient — at the cost of scanning
-vendored trees). Promote at the next config touch.
-
----
-
 ## C17 — A `wf-research` agent for external-standard grounding (symmetric to wf-drill)
 
 **Date:** 2026-06-22

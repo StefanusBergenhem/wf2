@@ -70,20 +70,29 @@ _PREAMBLE = """
 const WF = (function(){
   const baseOptions = {
     interaction:{hover:true, tooltipDelay:120},
-    physics:{stabilization:true, barnesHut:{springLength:150, avoidOverlap:0.5, gravitationalConstant:-6000}},
+    physics:{enabled:true, stabilization:{enabled:true, iterations:400, fit:true},
+             barnesHut:{springLength:150, avoidOverlap:0.5, gravitationalConstant:-6000}},
     nodes:{shape:"dot", font:{size:13, multi:false, face:"-apple-system,Segoe UI,Roboto"}, borderWidth:1},
     edges:{color:{color:"#cbd5e1", highlight:"#3b82f6"}, smooth:{type:"continuous"}, width:1}
   };
   const el = document.getElementById("graph");
   let net=null, nodeHandler=null;
+  // Physics lays the graph out, then must stop: left running it keeps nudging nodes
+  // forever and shoves the whole graph around whenever one node is dragged. Run it to
+  // stabilization, then switch it off so the layout — and a dragged node — stays put.
+  function settle(){
+    net.setOptions({physics:{enabled:true}});
+    net.once("stabilizationIterationsDone", ()=>net.setOptions({physics:false}));
+  }
   function draw(nodes, edges){
     const data={nodes:new vis.DataSet(nodes), edges:new vis.DataSet(edges)};
     if(!net){ net=new vis.Network(el, data, baseOptions);
       net.on("click", p=>{ if(nodeHandler && p.nodes.length) nodeHandler(p.nodes[0]); }); }
     else net.setData(data);
+    settle();
   }
   return {
-    baseOptions, draw,
+    baseOptions, draw, net:()=>net,
     onNode:fn=>{nodeHandler=fn;},
     panel:h=>{document.getElementById("panel").innerHTML=h;},
     panelHead:t=>{document.getElementById("panel-h").textContent=t;}

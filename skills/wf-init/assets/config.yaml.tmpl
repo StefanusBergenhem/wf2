@@ -38,6 +38,14 @@ paths:
                                               # not all history (bounds the retrospective's own read).
   capabilities: ".wf/CAPABILITIES.yaml"       # User-voice capabilities (wf-po appends; wf-sa drains when designed). Committed.
 
+  # Test-tree roots — every root the tag scanners sweep for [REQ:]/[SYS-TC:] tags
+  # (reconcile.py, register.py, retired.py, next_id.py, render_design.py). A LIST, because
+  # the "test tree" is not one dir in a polyglot repo: Go's tests sit beside their source
+  # (so the root is the source root), while a TS app's live under its src, and e2e in its
+  # own tree. Coverage is the union across the roots. wf-init captures the real roots at
+  # init; the repo root is the safe fallback (correct, just slower — it greps vendored dirs).
+  tests: ["."]
+
   # Learnings — distilled from telemetry by wf-retrospective. First-class design
   # inputs (peer of capabilities); each entry is one actionable observation.
   learnings: ".wf/LEARNINGS.yaml"             # Project-code learnings (wf-retrospective appends; wf-sa drains when designed). Committed.

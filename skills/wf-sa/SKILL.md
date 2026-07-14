@@ -11,6 +11,7 @@ Record the session start stamp now per `wf-basics` §2. Resolve every path below
 - `CAPABILITIES`   = `paths.capabilities`   (user-voice needs — read; **drain** what you design in)
 - `LEARNINGS`      = `paths.learnings`      (project learnings — read; **drain** what you design in)
 - `BRIEF`          = `paths.discover_brief` (discover's system digest — read)
+- `TESTS`          = `paths.tests`          (the test-tree roots — a **list**; pass every one to each scanner)
 - `DRILL_CACHE`    = `paths.drill_cache`    (shared scout digests — read; append via wf-drill)
 - `ADRS`           = `paths.adrs`           (durable decision records — read + author)
 - `DESIGN_BACKLOG` = `paths.design_backlog` (your designed-but-unbuilt work — append designs, drain built ones; committed)
@@ -81,11 +82,11 @@ its ids before removing the design:
 
 ```sh
 python3 <paths.tools>/reconcile/retired.py --ids <the superseded ids> \
-  --tests <a test root> [--tests <root> ...]
+  --tests <root> [--tests <root> ...]        # every root in $TESTS
 ```
 
-Pass a `--tests` for **each** root of a split test tree (e.g. `--tests backend --tests
-frontend/src`); it sweeps their union.
+Pass a `--tests` for **each** root in `$TESTS`; it sweeps their union. Dropping one hides
+the tags it holds, so a superseded id reads as swept when it is still in the tree.
 
 A non-zero exit lists superseded tags still in the test tree — the build failed to remove
 them. Record each survivor as a finding and fold its removal into the next slice; never
@@ -101,7 +102,7 @@ drain past it silently. Then ground the new change:
    already promises today, the peer of the brief:
 
    ```sh
-   python3 <paths.tools>/reconcile/register.py --tests <a test root> [--tests <root> ...]
+   python3 <paths.tools>/reconcile/register.py --tests <root> [--tests <root> ...]   # every root in $TESTS
    ```
 
    Read only the entries touching the components in scope (the register covers the whole
@@ -186,7 +187,7 @@ number them by hand — run the allocator for the whole set you derived:
 
 ```sh
 python3 <paths.tools>/reconcile/next_id.py --count <how many you are minting> \
-  --scan <the test tree you reconcile against> --scan $DESIGN_BACKLOG --scan $ADRS
+  --scan <each root in $TESTS> --scan $DESIGN_BACKLOG --scan $ADRS
 ```
 
 Assign the printed ids in order. If alignment (Phase 4) adds a requirement, continue numbering
@@ -222,7 +223,7 @@ there is no requirement above it. Give each a repo-unique `SYS-TC-<n>` id from i
 
 ```sh
 python3 <paths.tools>/reconcile/next_id.py --prefix SYS-TC --count <how many> \
-  --scan <the test tree you reconcile against> --scan $DESIGN_BACKLOG --scan $ADRS
+  --scan <each root in $TESTS> --scan $DESIGN_BACKLOG --scan $ADRS
 ```
 
 A single-component change with no observable end-to-end behaviour needs none. wf-swa plans
@@ -231,23 +232,49 @@ each case as its own e2e task; the build stamps `[SYS-TC:SYS-TC-<n>]` in the e2e
 
 ### Phase 4 — Present & align (the interactive core)
 
-Now bring the prepared work to the human — this is where the two of you spend the most
-time. First make the design visible: author the design graph as JSON (components with
-their move state, dependencies, the requirement→component allocation) and pipe it to
-the renderer; point the human at `$DESIGN_VIEW`, and re-render whenever the shape
-shifts. It is a transient conversation aid — never commit it.
+This is where you and the human spend the most time. Run 4a → 4d **in order**. Each step
+has a stop in it; the design is not a report you deliver, it is a thing you talk through.
+
+#### 4a — Render the view, then hand it over and stop
+
+Author the design graph as JSON and pipe it to the renderer. It is a transient
+conversation aid — never commit it.
 
 ```sh
 cat <<'JSON' | python3 <paths.tools>/design_view/render_design.py --out $DESIGN_VIEW
 { "title": "<change summary>",
-  "components":   [{"id": "auth", "label": "auth", "state": "existing"}],
+  "components":   [{"id": "auth", "label": "auth", "state": "existing",
+                    "note": "<what THIS CHANGE does to it — omit when it is untouched>"}],
   "dependencies": [{"from": "gateway", "to": "auth", "state": "existing"}],
-  "allocation":   [{"requirement": "REQ-2", "component": "auth"}] }
+  "allocation":   [{"requirement": "REQ-2", "component": "auth",
+                    "statement": "<the full EARS statement>"}],
+  "system_tests": [{"id": "SYS-TC-1", "title": "<the behaviour>", "covers": "CAP-3",
+                    "given": "…", "when": "…", "then": "…",
+                    "components": ["auth", "gateway"]}],
+  "decisions":    [{"id": "D-1", "title": "<what is being decided>",
+                    "question": "<the question the human answers>",
+                    "options": [{"label": "<option>", "pros": "…", "cons": "…"}],
+                    "recommended": "<option label>", "status": "open",
+                    "components": ["auth"]}] }
 JSON
 ```
 
+Name each component with the id `$BRIEF` lists for it (e.g. `internal/auth`) — the
+renderer resolves an id it shares with the brief, and invents nothing for one it does not.
+**Author only what this change adds.** The renderer reads discover's structure model and
+the test tree itself — straight from `.wf/config.yaml`, no path from you — and derives
+every component's description and the requirements and system tests already shipped into
+it. Retyping those burns your context and drifts from the tests, which are the truth.
+
 `state` marks the move — components `existing | new | split | merged | removed`,
-dependencies `existing | added | removed | changed`.
+dependencies `existing | added | removed | changed`. Every non-obvious decision,
+assumption, and supersession from Phases 2–3 goes in `decisions` **before** you render, so
+the human can see what is coming; re-render with `"status": "ratified"` as each is settled,
+and whenever the shape shifts.
+
+Then **hand it over and STOP**: tell the human the design draft is done, give them the
+`$DESIGN_VIEW` path, and ask them to open it. **WAIT.** Do not walk the design and do not
+ask a question in the message that hands it over — they have not looked at it yet.
 
 When the domain model itself is under discussion (or the human asks for an entity
 view), author it the same way and render it with the same tool to `$DOMAIN_VIEW`:
@@ -255,22 +282,38 @@ entities (`{"id", "label", "attributes": [...]}`) plus labelled relations
 (`{"from", "to", "label", "cardinality"}`) instead of components. Never hand-author
 diagram HTML — a hand-built artifact cannot be regenerated and rots.
 
-With the picture up, walk the human through the shape and the requirements. Present
-each non-obvious decision in the **decision format** (below) — one at a time,
-alternatives + recommendation + risk — and **WAIT for the human** to ratify or redirect
-before the next. Present each **assumption** recorded in Phase 3 the same way — the
-chosen reading against the rejected one — and **WAIT for the human to confirm or
-correct it**; only a ratified assumption may be marked CONFIRMED in the slice. Present each
-**supersession** likewise — the shipped requirement being invalidated, the reason, and its
-successor (or that it retires with none) — and **WAIT for ratification**; only a ratified
-supersession enters the slice. The back-and-forth is the point; do not dump every decision in one
-wall of text. When a redirection changes the shape or a requirement, fold it back into
-Phase 2 or 3 and re-present.
+#### 4b — Walk the design in prose, before any question
 
-**Do not leave Phase 4 on your own judgement.** When you have no open
-decision left, ask: *"Anything else to settle, or shall I validate and record?"* and
-**WAIT for an affirmative** before Phase 5. Inferring completion and moving on records a
-design the human was still reshaping.
+Give the human the orientation the diagram cannot: **several paragraphs of plain prose** —
+what you designed and *why it came out this way*. Cover the shape you chose and the force
+that drove it, how the change flows through the components end to end, what is new against
+what was already there, and what you are about to ask them to decide. Point at the view as
+you go ("the two green nodes are new"). No question box in this message — they are reading,
+not answering. Then **WAIT**, inviting them to react to the design as a whole before you
+narrow into single decisions.
+
+#### 4c — Then take the decisions, one at a time
+
+Only now start questioning. Present each non-obvious decision, each **assumption** from
+Phase 3 (the chosen reading against the rejected one), and each **supersession** (the
+shipped requirement invalidated, why, and its successor or "retired, no successor") in the
+**decision brief** format below — **one per message** — and **WAIT** for the answer before
+the next.
+
+**Never open with the question box.** An `AskUserQuestion` holds a couple of sentences per
+option; deciding from that alone is deciding blind, and it hides the reasoning you already
+did. The brief carries the reasoning; the box only collects the answer.
+
+Only a ratified assumption may be marked CONFIRMED in the slice, and only a ratified
+supersession enters it. When a redirection changes the shape or a requirement, fold it back
+into Phase 2 or 3, re-render, and re-present.
+
+#### 4d — Close the phase with the human, not on your own judgement
+
+When no open decision is left, re-render the view with every decision `ratified`, summarize
+what the alignment settled, and ask: *"Anything else to settle, or shall I validate and
+record?"* — then **WAIT for an affirmative** before Phase 5. Inferring completion and moving
+on records a design the human was still reshaping.
 
 ### Phase 5 — Validate the design is sound
 
@@ -345,16 +388,31 @@ Your last action, always. Run the `wf-basics` §2 `record_session.py` command wi
 session-feedback flags (omit a flag when there is nothing concrete). If the command
 errors, continue — telemetry never blocks.
 
-## Decision format
+## Decision brief
 
-Present every non-obvious decision one at a time:
+The shape of every Phase 4c presentation — one decision (or assumption, or supersession)
+per message, in this order. Write it as prose to a colleague who has the design view open
+in front of them; the human decides from this, so an under-written brief is a decision made
+blind.
 
-> **Decision:** <what is being decided>
-> **Alternatives:**
-> - A: <option> — <trade-off>
-> - B: <option> — <trade-off>
-> **Recommended:** <which> because <1–2 sentences>.
-> **Risk:** <one sentence>.
+**1 — Background (2–4 paragraphs).** What forces this decision now, and what makes it
+non-obvious. Name the components it touches and what they do today — cite the shipped
+requirements the view lists under them and the drill digest you grounded in, rather than
+speaking in generalities. Say what it costs to get wrong, and why the obvious answer is not
+simply right. Name the decision's id (`D-1`) and tell them to click it under **Decisions**
+in `$DESIGN_VIEW` to light up the components it moves.
+
+**2 — Each option, one paragraph each.** What it does to the architecture, what it buys,
+what it costs, and what it forecloses later. State the pros and the cons explicitly — an
+option you are not recommending still gets its honest best case, or you are presenting a
+rehearsed conclusion, not a choice.
+
+**3 — Your recommendation.** Which one, the reasoning that decides it, and the risk you
+accept by taking it. You are the architect: recommend, do not abstain.
+
+**4 — Only then, the question.** Ask via `AskUserQuestion`, one option per alternative,
+your recommendation first and labelled `(Recommended)`. The box repeats only the labels —
+the reasoning is in the brief above it. **WAIT** for the answer.
 
 ## Halt conditions
 

@@ -38,15 +38,22 @@ Populate both keys now, before reporting init complete:
      commands CI runs to gate a merge are the strongest evidence of the real gate.
    - The heavier test layer: where integration/e2e tests live (their directories, any
      `docker-compose*.yml` they depend on) and the exact command that invokes them.
+   - Where test files actually sit: run a find for the test-file name patterns
+     (`*_test.*`, `*.test.*`, `*.spec.*`, `*_spec.*`, `test_*.*`) and note the smallest
+     set of roots that covers every hit.
 2. **Propose a concrete value for each key, citing its evidence:**
    - `commands.preflight` — the fast per-task gate: lint + unit tests + build, chained
      with `&&` into one command that exits non-zero on any failure.
    - `commands.stage_check` — the heavy stage-boundary check: the integration/e2e
      invocation, plus where those tests live. A repo with no such layer gets an
      explicit "leave empty" proposal — empty skips the stage check by design.
+   - `paths.tests` — the roots covering every test file found, as a list (e.g.
+     `["backend", "frontend/src", "e2e"]`). Where tests sit beside their source, the root
+     is that source root. Keep `["."]` only when no smaller set covers them.
 3. **Confirm with the human before writing.** Present each proposal with its evidence
    and ask. Never write an unconfirmed guess into the config — a wrong preflight fails
-   every task it gates.
+   every task it gates, and a `paths.tests` that misses a root under-reports coverage,
+   silently draining unbuilt work from the design backlog.
 4. **Write the confirmed values into `.wf/config.yaml`**, then run the confirmed
    `commands.preflight` once (pipe output to a file, read the file) to prove it exits
    zero on the untouched repo. A red baseline is a finding to report to the human, not
