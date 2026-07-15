@@ -112,6 +112,9 @@ N1="$(wf "$PROJ1" pipeline next --format json)"
 [ "$(jget "$N1" "'mode' in d['dispatch'][0]")" = "False" ] \
     && ok "next: dispatch entry carries no mode field (wf-build derives its mode)" \
     || bad "dispatch mode field" "$N1"
+[ "$(jget "$N1" "sorted(d['dispatch'][0])")" = "['task_id', 'worktree']" ] \
+    && ok "next: dispatch entry carries exactly task_id + worktree" \
+    || bad "dispatch entry keys" "$N1"
 
 # cap=1 → one dispatched, the other ready
 PROJ_CAP="$(echo "$DIAMOND" | new_proj)"

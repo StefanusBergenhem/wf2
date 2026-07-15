@@ -179,6 +179,66 @@ OUTU="$(wf orchestrate dispatch-fix DI-1 --config "$P/.wf/config.yaml" 2>/dev/nu
 [ "$(jget "$OUTU" "d['human_gate']")" = "True" ] && [ "$RCU" -eq 1 ] \
     && ok "dispatch-fix: unknown fix_kind → human gate (exit 1)" || bad "df unknown" "$OUTU rc=$RCU"
 
+# slice_defect: wf-swa rejected the design slice in `preparing` — no task, no sprint.
+# Routes to wf-sa autonomously, but only for a bounded number of re-design rounds.
+
+mk_slice_di() {  # mk_slice_di <how-many-rounds> → prints project dir; the LAST is open
+    local p n; p="$(mktemp -d)"; n="$1"; mkdir -p "$p/.wf/transient"
+    cat > "$p/.wf/config.yaml" <<YAML
+version: 1
+paths:
+  design_issues: ".wf/transient/design-issues.yaml"
+  sprint: ".wf/transient/sprint.yaml"
+YAML
+    echo "issues:" > "$p/.wf/transient/design-issues.yaml"
+    for i in $(seq 1 "$n"); do
+        local st=resolved; [ "$i" -eq "$n" ] && st=open
+        echo "  - {id: DI-SLICE-$i, task_id: null, detected_by: swa, fix_kind: slice_defect, status: $st}" \
+            >> "$p/.wf/transient/design-issues.yaml"
+    done
+    echo "$p"
+}
+P="$(mk_slice_di 1)"
+OUTS="$(wf orchestrate dispatch-fix DI-SLICE-1 --config "$P/.wf/config.yaml")"; RCS=$?
+[ "$(jget "$OUTS" "d['subagent_type']")" = "wf-sa" ] && [ "$RCS" -eq 0 ] \
+    && ok "dispatch-fix: slice_defect → wf-sa (exit 0)" || bad "df slice_defect" "$OUTS rc=$RCS"
+[ "$(jget "$OUTS" "d['envelope']['task_id'] is None")" = "True" ] \
+    && ok "dispatch-fix: slice_defect envelope carries no task_id" || bad "df slice task_id" "$OUTS"
+[ "$(jget "$OUTS" "'sprint_artifact' in d['envelope']")" = "False" ] \
+    && ok "dispatch-fix: slice_defect envelope omits sprint_artifact (none exists in preparing)" \
+    || bad "df slice sprint_artifact" "$OUTS"
+# The envelope names the artifacts that are THERE: dispatch-fix reports what is on disk
+# rather than inferring it from the fix_kind.
+P="$(mk_slice_di 1)"
+: > "$P/.wf/transient/sprint.yaml"
+OUTSP="$(wf orchestrate dispatch-fix DI-SLICE-1 --config "$P/.wf/config.yaml")"
+[ "$(jget "$OUTSP" "d['envelope'].get('sprint_artifact') or ''")" = ".wf/transient/sprint.yaml" ] \
+    && ok "dispatch-fix: slice_defect envelope names \$SPRINT when one is on disk" \
+    || bad "df slice sprint present" "$OUTSP"
+# round 2 is still autonomous — the loop is cheap, and one bad cut deserves one re-cut
+P="$(mk_slice_di 2)"
+OUT2="$(wf orchestrate dispatch-fix DI-SLICE-2 --config "$P/.wf/config.yaml")"; RC2=$?
+[ "$(jget "$OUT2" "d['human_gate']")" = "False" ] && [ "$RC2" -eq 0 ] \
+    && ok "dispatch-fix: 2nd slice rejection still routes to wf-sa" || bad "df slice round2" "$OUT2 rc=$RC2"
+# round 3 → the SA is not converging; a human rules on the slice
+P="$(mk_slice_di 3)"
+OUT3="$(wf orchestrate dispatch-fix DI-SLICE-3 --config "$P/.wf/config.yaml" 2>/dev/null)"; RC3=$?
+[ "$(jget "$OUT3" "d['human_gate']")" = "True" ] && [ "$RC3" -eq 1 ] \
+    && ok "dispatch-fix: 3rd slice rejection → human gate (exit 1)" || bad "df slice round3" "$OUT3 rc=$RC3"
+[ -n "$(jget "$OUT3" "d.get('reason') or ''")" ] \
+    && ok "dispatch-fix: the round-bound gate says why" || bad "df slice round3 reason" "$OUT3"
+# The bound counts slice rejections ONLY: a sprint's task-scoped design issues share the
+# file, and counting them would gate a slice loop that has laps left.
+P="$(mk_slice_di 2)"
+cat >> "$P/.wf/transient/design-issues.yaml" <<'YAML'
+  - {id: DI-1, task_id: T1, fix_kind: contract_amendment, status: resolved}
+  - {id: DI-2, task_id: T2, fix_kind: spec_amendment, status: resolved}
+YAML
+OUTM="$(wf orchestrate dispatch-fix DI-SLICE-2 --config "$P/.wf/config.yaml" 2>/dev/null)"; RCM=$?
+[ "$(jget "$OUTM" "d['human_gate']")" = "False" ] && [ "$RCM" -eq 0 ] \
+    && ok "dispatch-fix: the round bound counts slice rejections, not the sprint's other DIs" \
+    || bad "df slice mixed-kinds" "$OUTM rc=$RCM"
+
 # ── sweep-transients ─────────────────────────────────────────────────────────
 # Staleness routes on pipeline_state.task_states: the artifact names its task_id;
 # a terminal task status (approved/completed/blocked/escalated/design_issue) makes
@@ -225,6 +285,139 @@ P="$(mk_sweep approved)"
 SW="$(wf orchestrate sweep-transients --config "$P/.wf/config.yaml" --dry-run)"
 [ "$(jget "$SW" "len(d['deleted'])")" = "1" ] && [ -f "$P/.wf/transient/feedback.yaml" ] \
     && ok "sweep: --dry-run reports stale without deleting" || bad "sweep dry-run" "$SW"
+
+# ── sweep-transients: design-issues (per-entry prune) ────────────────────────
+# design-issues.yaml is a LIST of entries, each with its own task_id — the top-level
+# task_id rule cannot read it. It prunes per entry instead: `resolved` is never a live
+# handoff (prune regardless of task_states — the shipped sprint's states are gone by
+# then); an `open` entry whose task is terminal in task_states is prunable too; every
+# other `open` entry stays, including task_id-less (slice-scoped) ones. Emptied → the
+# file is deleted. Per-entry prunes surface in `pruned`; a file left holding live
+# issues surfaces in `skipped`.
+
+mk_sweep_di() {  # mk_sweep_di <issues-body> <task-states-body> → project dir with a
+                 # design-issues.yaml (+ pipeline-state.yaml)
+    local p; p="$(mktemp -d)"; mkdir -p "$p/.wf/transient"
+    cat > "$p/.wf/config.yaml" <<'YAML'
+version: 1
+paths:
+  pipeline_state: ".wf/transient/pipeline-state.yaml"
+  design_issues: ".wf/transient/design-issues.yaml"
+YAML
+    printf '%b' "$1" > "$p/.wf/transient/design-issues.yaml"
+    printf '%b' "$2" > "$p/.wf/transient/pipeline-state.yaml"
+    echo "$p"
+}
+
+# The observed bug: every entry resolved, from a sprint whose task_states complete-sprint
+# already wiped (bare `idle`). Nothing is keyed on task_states, so all three prune.
+DI_RESOLVED='issues:\n  - {id: DI-T20, task_id: T20, fix_kind: contract_amendment, status: resolved}\n  - {id: DI-T21, task_id: T21, fix_kind: spec_amendment, status: resolved}\n  - {id: DI-T3, task_id: T3, fix_kind: component_defect, status: resolved}\n'
+P="$(mk_sweep_di "$DI_RESOLVED" 'current_phase: idle\n')"
+SW="$(wf orchestrate sweep-transients --config "$P/.wf/config.yaml")"
+[ "$(jget "$SW" "len(d['deleted'])")" = "1" ] && [ "$(jget "$SW" "len(d['pruned'])")" = "3" ] \
+    && [ ! -f "$P/.wf/transient/design-issues.yaml" ] \
+    && ok "sweep-di: all-resolved + wiped task_states → entries pruned, file deleted" \
+    || bad "sweep-di resolved-empty-state" "$SW"
+
+# Mixed: the resolved entry prunes, the open one survives → file rewritten, both reported.
+DI_MIXED='issues:\n  - {id: DI-1, task_id: T20, fix_kind: contract_amendment, status: resolved}\n  - {id: DI-2, task_id: T99, fix_kind: spec_amendment, status: open}\n'
+P="$(mk_sweep_di "$DI_MIXED" 'current_phase: idle\n')"
+SW="$(wf orchestrate sweep-transients --config "$P/.wf/config.yaml")"
+[ "$(jget "$SW" "len(d['pruned'])")" = "1" ] && [ "$(jget "$SW" "d['pruned'][0]['id']")" = "DI-1" ] \
+    && [ "$(jget "$SW" "len(d['skipped'])")" = "1" ] \
+    && grep -q "DI-2" "$P/.wf/transient/design-issues.yaml" \
+    && ! grep -q "DI-1" "$P/.wf/transient/design-issues.yaml" \
+    && ok "sweep-di: mixed → resolved pruned, survivors rewritten, both reported" \
+    || bad "sweep-di mixed" "$SW"
+
+# A slice-scoped open issue (no task yet) is a live handoff — never pruned.
+DI_NULL='issues:\n  - {id: DI-5, task_id: null, fix_kind: spec_amendment, status: open}\n'
+P="$(mk_sweep_di "$DI_NULL" 'current_phase: idle\n')"
+SW="$(wf orchestrate sweep-transients --config "$P/.wf/config.yaml")"
+[ "$(jget "$SW" "len(d['pruned'])")" = "0" ] && [ "$(jget "$SW" "len(d['skipped'])")" = "1" ] \
+    && [ -f "$P/.wf/transient/design-issues.yaml" ] \
+    && ok "sweep-di: open entry with task_id: null → kept" || bad "sweep-di null-task" "$SW"
+
+# A RESOLVED slice-scoped entry is the preparing loop's own history: dispatch-fix counts
+# these to bound the re-design rounds, so pruning one mid-loop under-counts the round on
+# a resume and hands the SA a third lap it should not get. Keep them while preparing runs.
+DI_ROUND1='issues:\n  - {id: DI-SLICE-1, task_id: null, fix_kind: slice_defect, status: resolved}\n  - {id: DI-SLICE-2, task_id: null, fix_kind: slice_defect, status: open}\n'
+P="$(mk_sweep_di "$DI_ROUND1" 'current_phase: preparing\n')"
+SW="$(wf orchestrate sweep-transients --config "$P/.wf/config.yaml")"
+[ "$(jget "$SW" "len(d['pruned'])")" = "0" ] \
+    && grep -q "DI-SLICE-1" "$P/.wf/transient/design-issues.yaml" \
+    && ok "sweep-di: resolved slice issue kept while preparing (it is the round count)" \
+    || bad "sweep-di slice-history" "$SW"
+# Once preparing is over, the same entry is residue.
+P="$(mk_sweep_di "$DI_ROUND1" 'current_phase: running_stage\n')"
+SW="$(wf orchestrate sweep-transients --config "$P/.wf/config.yaml")"
+[ "$(jget "$SW" "len(d['pruned'])")" = "1" ] && [ "$(jget "$SW" "d['pruned'][0]['id']")" = "DI-SLICE-1" ] \
+    && grep -q "DI-SLICE-2" "$P/.wf/transient/design-issues.yaml" \
+    && ok "sweep-di: resolved slice issue pruned once preparing is over" \
+    || bad "sweep-di slice-residue" "$SW"
+# No pipeline-state file → the phase is UNKNOWN, which is not "not preparing": keep
+# everything, exactly as the top-level-task_id sweep does.
+P="$(mk_sweep_di "$DI_ROUND1" 'current_phase: preparing\n')"
+rm "$P/.wf/transient/pipeline-state.yaml"
+SW="$(wf orchestrate sweep-transients --config "$P/.wf/config.yaml")"
+[ "$(jget "$SW" "len(d['pruned'])")" = "0" ] && [ "$(jget "$SW" "len(d['deleted'])")" = "0" ] \
+    && grep -q "DI-SLICE-1" "$P/.wf/transient/design-issues.yaml" \
+    && ok "sweep-di: no pipeline-state file → nothing pruned (phase unknown)" \
+    || bad "sweep-di no-state" "$SW"
+
+# A status-less entry is the malformed-writer case: it defaults to `open` and stays. The
+# other default silently destroys a live handoff.
+DI_NOSTATUS='issues:\n  - {id: DI-8, task_id: T1, fix_kind: contract_amendment}\n'
+P="$(mk_sweep_di "$DI_NOSTATUS" 'task_states:\n  T1: {status: building}\n')"
+SW="$(wf orchestrate sweep-transients --config "$P/.wf/config.yaml")"
+[ "$(jget "$SW" "len(d['pruned'])")" = "0" ] && grep -q "DI-8" "$P/.wf/transient/design-issues.yaml" \
+    && ok "sweep-di: entry without a status → read as open, kept" || bad "sweep-di no-status" "$SW"
+
+# An unreadable (non-mapping) entry survives the rewrite — dropping it destroys data
+# nothing else can recover.
+DI_JUNK='issues:\n  - a bare string, not a mapping\n  - {id: DI-9, task_id: T20, fix_kind: spec_amendment, status: resolved}\n'
+P="$(mk_sweep_di "$DI_JUNK" 'current_phase: idle\n')"
+SW="$(wf orchestrate sweep-transients --config "$P/.wf/config.yaml")"
+[ "$(jget "$SW" "len(d['pruned'])")" = "1" ] && [ -f "$P/.wf/transient/design-issues.yaml" ] \
+    && grep -q "a bare string" "$P/.wf/transient/design-issues.yaml" \
+    && ok "sweep-di: unreadable entry survives the prune rewrite" || bad "sweep-di junk-entry" "$SW"
+
+# An open entry whose task IS terminal in task_states: its consumer never comes back.
+DI_STALE_OPEN='issues:\n  - {id: DI-6, task_id: T1, fix_kind: contract_amendment, status: open}\n'
+P="$(mk_sweep_di "$DI_STALE_OPEN" 'task_states:\n  T1: {status: approved}\n')"
+SW="$(wf orchestrate sweep-transients --config "$P/.wf/config.yaml")"
+[ "$(jget "$SW" "len(d['pruned'])")" = "1" ] && [ "$(jget "$SW" "len(d['deleted'])")" = "1" ] \
+    && [ ! -f "$P/.wf/transient/design-issues.yaml" ] \
+    && ok "sweep-di: open entry for an approved task → pruned" || bad "sweep-di stale-open" "$SW"
+
+# An open entry for a task still in the loop stays put.
+DI_LIVE='issues:\n  - {id: DI-7, task_id: T1, fix_kind: contract_amendment, status: open}\n'
+P="$(mk_sweep_di "$DI_LIVE" 'task_states:\n  T1: {status: building}\n')"
+SW="$(wf orchestrate sweep-transients --config "$P/.wf/config.yaml")"
+[ "$(jget "$SW" "len(d['pruned'])")" = "0" ] && [ "$(jget "$SW" "len(d['skipped'])")" = "1" ] \
+    && [ -f "$P/.wf/transient/design-issues.yaml" ] \
+    && ok "sweep-di: open entry for a building task → kept" || bad "sweep-di live" "$SW"
+
+# No design-issues file at all → silent no-op, exit 0.
+P="$(mk_sweep_di "$DI_RESOLVED" 'current_phase: idle\n')"
+rm "$P/.wf/transient/design-issues.yaml"
+SW="$(wf orchestrate sweep-transients --config "$P/.wf/config.yaml")"; RCS=$?
+[ "$RCS" -eq 0 ] && [ "$(jget "$SW" "len(d['pruned'])")" = "0" ] \
+    && [ "$(jget "$SW" "len(d['deleted'])")" = "0" ] && [ "$(jget "$SW" "len(d['skipped'])")" = "0" ] \
+    && ok "sweep-di: no design-issues file → no-op" || bad "sweep-di absent" "$SW rc=$RCS"
+
+# --dry-run reports the prune but leaves every byte on disk.
+P="$(mk_sweep_di "$DI_RESOLVED" 'current_phase: idle\n')"
+SW="$(wf orchestrate sweep-transients --config "$P/.wf/config.yaml" --dry-run)"
+[ "$(jget "$SW" "len(d['pruned'])")" = "3" ] && [ "$(jget "$SW" "len(d['deleted'])")" = "1" ] \
+    && grep -q "DI-T20" "$P/.wf/transient/design-issues.yaml" \
+    && ok "sweep-di: --dry-run reports prunes without writing" || bad "sweep-di dry-run" "$SW"
+
+# --dry-run on a mixed file must not rewrite the survivors either.
+P="$(mk_sweep_di "$DI_MIXED" 'current_phase: idle\n')"
+SW="$(wf orchestrate sweep-transients --config "$P/.wf/config.yaml" --dry-run)"
+[ "$(jget "$SW" "len(d['pruned'])")" = "1" ] && grep -q "DI-1" "$P/.wf/transient/design-issues.yaml" \
+    && ok "sweep-di: --dry-run leaves a mixed file unrewritten" || bad "sweep-di dry-run mixed" "$SW"
 
 echo ""
 echo "  orchestrate helpers: $pass passed, $fail failed"

@@ -447,15 +447,18 @@ def _sweep_transients(rest):
     p_pipeline_state = resolve("pipeline_state", ".wf/transient/pipeline-state.yaml")
 
     task_states = None  # None → no pipeline-state file → keep everything
+    in_preparing = False
     if p_pipeline_state.is_file():
         try:
             doc = yaml.safe_load(p_pipeline_state.read_text()) or {}
         except yaml.YAMLError as e:
             return _err(f"error: parse {p_pipeline_state}: {e}")
         task_states = doc.get("task_states") or {}
+        in_preparing = doc.get("current_phase") == "preparing"
 
     deleted = []
     skipped = []
+    pruned = []
 
     def sweep(path):
         if not path.exists():
@@ -491,11 +494,101 @@ def _sweep_transients(rest):
         except OSError as e:
             skipped.append({"path": str(path), "reason": f"unlink failed: {e}"})
 
+    def sweep_design_issues(path):
+        """design-issues.yaml holds a LIST of entries, each with its own task_id — the
+        top-level-task_id rule above cannot read it, so prune per entry instead.
+
+        An entry is a live handoff iff `status: open` (the same test both readers already
+        apply: `_open_design_issue_for_task` here, and `dispatch-fix`, which refuses to
+        route anything already resolved/overridden). A closed entry is pruned regardless
+        of its task_id — deliberately NOT keyed on task_states, because complete-sprint
+        resets pipeline_state to a bare `idle`: by the next run the shipped sprint's task
+        states are gone, and a task_states-keyed rule would keep the file forever.
+        An open entry prunes only when its task is provably terminal.
+
+        A task-less (slice-scoped) entry is the `preparing` re-design loop's own history:
+        dispatch-fix counts those entries to bound the rounds, so while preparing runs they
+        survive whatever their status — pruning one under-counts the round on a resume and
+        hands wf-sa a lap it should not get. Once preparing is over they are residue.
+
+        Without a pipeline-state file the phase is UNKNOWN, not "not preparing" — keep
+        everything, as `sweep` above does. Guessing here prunes the round count and
+        silently lifts the re-design bound."""
+        if not path.exists():
+            return
+        if task_states is None:
+            skipped.append({"path": str(path), "reason": "pipeline-state file not found"})
+            return
+        try:
+            doc = _load_yaml_file(path)
+        except _MalformedYAML:
+            skipped.append({"path": str(path), "reason": "malformed YAML — left for a human"})
+            return
+        issues = doc.get("issues") if isinstance(doc, dict) else None
+        if not isinstance(issues, list):
+            skipped.append({"path": str(path), "reason": "no readable issues list in artifact"})
+            return
+
+        survivors = []
+        prune_mark = len(pruned)
+        for issue in issues:
+            if not isinstance(issue, dict):
+                survivors.append(issue)  # unreadable entry — never destroy it
+                continue
+            iid = str(issue.get("id") or "?")
+            status = str(issue.get("status") or "open")
+            task_id = issue.get("task_id")
+            task_id = "" if task_id is None else str(task_id)
+            if not task_id:
+                if in_preparing or status == "open":
+                    survivors.append(issue)  # live handoff, or this loop's round count
+                    continue
+                pruned.append({"path": str(path), "id": iid,
+                               "reason": f"slice issue is {status} and preparing is over "
+                                         "— residue"})
+                continue
+            if status != "open":
+                pruned.append({"path": str(path), "id": iid,
+                               "reason": f"issue is {status} — not a live handoff"})
+                continue
+            ts = task_states.get(task_id)
+            if isinstance(ts, dict):
+                ts_status = ts.get("status") or "pending"
+                if ts_status in _SWEEP_STALE_STATUSES:
+                    pruned.append({"path": str(path), "id": iid,
+                                   "reason": f"open issue for task {task_id}, which is "
+                                             f"{ts_status} — consumer can never return"})
+                    continue
+            survivors.append(issue)
+
+        if survivors:
+            if len(pruned) > prune_mark and not dry_run:
+                doc["issues"] = survivors
+                try:
+                    path.write_text(yaml.safe_dump(doc, sort_keys=False))
+                except OSError as e:
+                    skipped.append({"path": str(path), "reason": f"rewrite failed: {e}"})
+                    return
+            skipped.append({"path": str(path),
+                            "reason": f"{len(survivors)} live issue(s) retained"})
+            return
+
+        # Nothing live left — the file itself is residue.
+        if not dry_run:
+            try:
+                path.unlink()
+            except OSError as e:
+                skipped.append({"path": str(path), "reason": f"unlink failed: {e}"})
+                return
+        deleted.append(str(path))
+
     sweep(resolve("feedback", ".wf/transient/feedback.yaml"))
     sweep(resolve("review_ready", ".wf/transient/review-ready.yaml"))
     sweep(resolve("build_blocked", ".wf/transient/build-blocked.yaml"))
+    sweep_design_issues(resolve("design_issues", ".wf/transient/design-issues.yaml"))
 
-    print(json.dumps({"deleted": deleted, "skipped": skipped}, sort_keys=False))
+    print(json.dumps({"deleted": deleted, "pruned": pruned, "skipped": skipped},
+                     sort_keys=False))
     return 0
 
 
@@ -612,12 +705,22 @@ def _classify_amendment(rest):
 # `recut → wf-po` is dropped: wf2's PO owns capabilities, not sprint cutting. (The prose
 # taxonomy lands in wf-skill-spec-references with the build/review DI-writers; this table
 # is its executable form — add a new fix_kind here.)
+#
+# slice_defect is the one kind raised in `preparing`, by wf-swa, against the design-slice
+# itself — before any task or sprint exists. It routes to wf-sa like spec_amendment, but
+# its envelope carries no task and no sprint, and it is bounded (below).
 _ROUTING = {
     "contract_amendment": {"subagent_type": "wf-swa", "human_gate": False},
     "spec_amendment": {"subagent_type": "wf-sa", "human_gate": False},
     "component_defect": {"subagent_type": "wf-swa", "human_gate": False},
+    "slice_defect": {"subagent_type": "wf-sa", "human_gate": False},
     "unknown": {"subagent_type": None, "human_gate": True},
 }
+
+# How many times wf-sa may re-design a rejected slice before a human rules on it. Each
+# lap is autonomous and cheap, but the SA's re-cut is only tested by the NEXT decomposition
+# — so a slice still failing after this many laps is one the SA is not converging on.
+_MAX_REDESIGN_ROUNDS = 2
 
 
 def _dispatch_fix(rest):
@@ -689,6 +792,23 @@ def _dispatch_fix(rest):
         route = _ROUTING["unknown"]
         fix_kind = fix_kind or "unknown"
 
+    # A rejected slice re-designed past the round limit stops being an autonomous repair:
+    # every lap so far is on disk, so count them rather than tracking the loop's position.
+    reason = ""
+    if fix_kind == "slice_defect":
+        rounds = sum(1 for it in issues
+                     if isinstance(it, dict) and it.get("fix_kind") == "slice_defect")
+        if rounds > _MAX_REDESIGN_ROUNDS:
+            route = _ROUTING["unknown"]
+            # Every re-design past the limit is a human's, so do not name wf-sa as the one
+            # failing to converge — the count cannot tell whose cut was rejected, and a
+            # human gate whose reason misattributes the cause is the misdescription this
+            # route exists to end.
+            reason = (
+                f"{rounds} slice rejections on this sprint (limit {_MAX_REDESIGN_ROUNDS}) — "
+                "the slice is not converging on a decomposable cut. Run /wf-sa interactively."
+            )
+
     def relpath(p):
         try:
             return str(p.relative_to(project_root))
@@ -700,8 +820,11 @@ def _dispatch_fix(rest):
         "di_id": di_id,
         "task_id": task_id,
         "di_artifact": relpath(di_path),
-        "sprint_artifact": relpath(sprint_path),
     }
+    # Name the sprint only when there is one to read: a slice_defect is raised in
+    # `preparing`, where wf-swa may have halted before ever writing it.
+    if sprint_path.exists():
+        envelope["sprint_artifact"] = relpath(sprint_path)
 
     result = {
         "di_id": di_id,
@@ -711,6 +834,8 @@ def _dispatch_fix(rest):
         "human_gate": route["human_gate"],
         "envelope": envelope,
     }
+    if reason:
+        result["reason"] = reason
 
     print(json.dumps(result, indent=2, sort_keys=False))
     return 1 if route["human_gate"] else 0

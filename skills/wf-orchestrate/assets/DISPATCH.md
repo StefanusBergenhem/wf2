@@ -39,16 +39,15 @@ Pass the envelope `dispatch-fix` emits verbatim:
 ```
 mode:            fix
 di_id:           <id>
-task_id:         <id>
-di_artifact:     <path>       # the design issue to resolve
-sprint_artifact: <paths.sprint>
+task_id:         <id>          # null on a slice rejection — no task exists in preparing
+di_artifact:     <path>        # the design issue to resolve
+sprint_artifact: <paths.sprint>  # named only when a sprint exists on disk; §1a deletes it
+                                 # before routing a slice rejection, so that route omits it
 ```
 
-The fix agent amends in isolation — the task contract, or a follow-up task for a
-merged-code defect, for `wf-swa` (no commit; the sprint file is transient), the
-requirement/ADR for `wf-sa` — and flips the issue's `status` to `resolved` in the DI
-artifact, or reclassifies it (new `fix_kind`, left `open`). Re-read that entry and route
-per SKILL.md §2b.
+When it returns, re-read its entry in the DI artifact and route on that entry per
+SKILL.md §2b — or §1a for a slice rejection, where the fixer also commits the design it
+re-cut, so §1 step 2 finds the clean tree it needs to branch from.
 
 ## Closeout — `wf-retrospective` (and any future `wf-*` closeout agent)
 

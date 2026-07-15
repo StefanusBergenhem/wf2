@@ -160,11 +160,12 @@ durable, and leaving it uncommitted is one `git clean` from gone:
 **ID allocation — you add, the SA drains.** `CAP-NNN` ids increase monotonically over the
 file's lifetime; never renumber, never reuse a retired number. Park a capability the user
 isn't ready to pursue with `status: deferred` (it stays in the array). You **add**
-capabilities (and may revise an un-designed one with the user's assent, per *Preserve
+capabilities (and may revise an un-built one with the user's assent, per *Preserve
 existing intent*), but you never **remove** one for being built: a capability leaves this
-file when the **SA removes it**, once the SA has designed a solution for it — its essence
-then lives in the design backlog, and after build in the `[REQ]` tags + any ADR it
-motivated. So this file is the **un-designed** demand, never a catalog of what's shipped.
+file when the **SA removes it**, once the design serving it has shipped — its essence then
+lives in the `[REQ]` tags + any ADR it motivated. An un-built capability may already be
+designed and building, so this file is the **un-shipped** demand, never a catalog of what's
+shipped.
 A capability the user explicitly abandons is removed. Bump `last_updated`.
 
 ## Halt conditions

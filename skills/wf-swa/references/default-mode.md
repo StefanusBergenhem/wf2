@@ -5,8 +5,9 @@ requirement testable, then decompose them into a per-task dependency graph in `$
 requirements and component boundaries are fixed — you consume them, you do not change them;
 the acceptance criteria and the task breakdown are yours.
 
-**Component boundaries are law.** Every file a task touches belongs to that task's declared
-component. Cross-component work is separate tasks.
+**Components do not bound a task's file set.** `files_to_touch` is the atomic edit set — it
+crosses component boundaries whenever the change does, and that is never a reason to split
+a task.
 
 ## Phase 1 — Ground
 
@@ -104,18 +105,34 @@ replays out of order against a persistent store.
    home in `files_to_touch`, every requirement's driver in the task's `serves`, every
    SYS-TC carried by an e2e task, no UNCONFIRMED assumption, an acyclic DAG. On an error finding,
    fix the decomposition in `$SPRINT` and re-run. A finding you cannot resolve without
-   minting or changing a requirement is a spec defect — halt and escalate to the SA (see
-   Halt conditions), never invent a criterion to silence it.
+   minting or changing a requirement is a slice defect — halt per **Halt conditions**,
+   never invent a criterion to silence it.
 3. Return a summary: the task count, the dependency shape, and the gate verdict. Leave
    `$DESIGN_SLICE` in place — it is drained at sprint close, not here.
 
 ## Halt conditions
 
-Halt and report with outcome `escalated` if:
+Halt and report with outcome `escalated` if any condition below holds.
 
-- `$DESIGN_SLICE` is absent (it is wf-sa's output).
+### Slice defects — the slice cannot be decomposed as written
+
+- A requirement cannot be made testable.
+- A requirement no component in the slice owns, or whose declared owner cannot express the
+  behaviour at all. A requirement whose edit set spans several components is **not** this —
+  an atomic edit set crossing component boundaries is normal, never a defect.
+- The slice's **Interface contracts** section fixes a shape the source contradicts — a type,
+  sentinel, or signature the code does not use.
+- Satisfying a requirement would regress a working behaviour no requirement owns.
+
+**Gate: before you halt, append one entry to `$DESIGN_ISSUES` from
+`assets/design_issues.yaml.tmpl`.** One entry per rejection, carrying **every** blocker you
+found and the `working_notes` — the measurements, the signatures that unblock a requirement,
+the traps the next cut must avoid. Skip it and your findings die with the session; wf-sa
+re-derives them from nothing.
+
+### Structural halts — write no design issue
+
+- `$DESIGN_SLICE` is absent.
 - A component named in the slice cannot be located in the source — the structure has
   drifted (needs a discover re-run).
-- A requirement cannot be made testable, or its criteria cannot be turned into a task
-  without crossing a component boundary — flag to the SA.
 - The tasks form a dependency cycle that cannot be broken by splitting or merging.

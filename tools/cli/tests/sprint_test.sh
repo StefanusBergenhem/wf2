@@ -29,7 +29,6 @@ cat > "$PROJ/.wf/sprint.yaml" <<'YAML'
 tasks:
   - id: T1
     title: "First task"
-    component: "core"
     files_to_touch: ["a.go"]
   - id: T2
     title: "Second task"
@@ -90,7 +89,6 @@ write_clean_sprint() { cat > "$SPRINT" <<'YAML'
 sprint_id: sprint-20260708-widget
 tasks:
   - id: T1
-    component: core
     depends_on: []
     covers: [REQ-1, REQ-2]
     requirements:
@@ -122,7 +120,6 @@ tasks:
       integration_tests: []
       system_tests: []
   - id: T2
-    component: e2e
     depends_on: [T1]
     covers: []
     requirements: []

@@ -1,21 +1,27 @@
 # wf-sa — fix mode
 
-The orchestrator dispatched you to resolve **one** spec design issue. Your envelope
-carries:
+Your envelope carries:
 
 - `di_id`           — the design issue to resolve
-- `task_id`         — the task the issue parked
-- `di_artifact`     — the design-issues file holding the issue
-- `sprint_artifact` — the sprint file holding the task contracts
+- `di_artifact`     — the design-issues file holding the issue (the same file as `$DESIGN_ISSUES`)
+- `task_id`         — the task the issue parked, or `null` when the issue is slice-scoped
+- `sprint_artifact` — the sprint file holding the task contracts, when a sprint exists
 
-Resolve only this issue. Do not commit anything in this mode — the slice is transient,
-and the durable spec files you touch ride the working tree; list every amended file in
-your report instead.
+Read the `di_id` entry in `$di_artifact` — its `summary` says what is unbuildable. Resolve
+only that issue, on the path its `fix_kind` names:
+
+- **`spec_amendment`** — one task's requirement or ADR is wrong. Steps 1–4 below.
+- **`slice_defect`** — the slice cannot be decomposed as written. **The slice-defect path**.
+
+On a **`spec_amendment`**, commit nothing — the sprint branch already exists and the durable
+spec files you touch ride its working tree; list every amended file in your report instead.
+On a **`slice_defect`** you run before that branch exists, and its creation gates on a clean
+working tree — leave your amendments uncommitted and the sprint can never be cut. Commit
+them, per the slice-defect path below. The slice is transient either way: never commit it.
 
 ## Step 1 — Understand the issue
 
-Read the `di_id` entry in `$di_artifact` — its `summary` says what is unbuildable. Read
-the `task_id` contract in `$sprint_artifact` (its `requirements[]` carries the statements
+Read the `task_id` contract in `$sprint_artifact` (its `requirements[]` carries the statements
 at issue), the implicated requirement's entry in `$DESIGN_SLICE` and in its
 `$DESIGN_BACKLOG` design, and any ADR in `$ADRS` the contract or slice cites for it.
 
@@ -65,13 +71,84 @@ needs re-design is a halt (below), not a bigger amendment.
 Set the `di_id` entry's `status: resolved` in `$di_artifact`. That flag is the signal the
 issue is closed.
 
+## The slice-defect path
+
+The entry's `blockers[]` are the whole set to resolve, and they interact — resolve **all**
+of them in one run, never one at a time.
+
+Run default mode (SKILL.md **Process**) with Phase 1 replaced by the grounding below and
+**Phase 4 skipped entirely**:
+
+1. **Ground in the blockers.** Read each blocker's `requirement`, `summary`, `evidence`,
+   and `needs`; the `$DESIGN_BACKLOG` design the slice was cut from; `$DESIGN_SLICE`; and
+   each ADR in `$ADRS` whose `governs_components` names a component a blocker implicates.
+   Reuse what the entry's `working_notes[]` already settle rather than re-deriving them.
+   Drill what the blockers implicate (SKILL.md **Scouting & the drill-cache**). **Derive the
+   requirement register and read its in-scope entries**, as Phase 1's grounding does — Phase 3
+   triages every requirement against it, and the supersession halt below reads it. Reconcile
+   nothing, and drain nothing.
+2. **Phases 2, 3, and 5** as written. Reshape boundaries and mint requirements as the
+   blockers demand — Step 3's limits govern the `spec_amendment` path, not this one. Take
+   each non-obvious decision that stays **below** `references/adr-rules.md`'s ADR threshold
+   yourself and record it in your report — there is no Phase 4 to present it at.
+3. **Phase 6 steps 1–3** — finalize the ADRs, amend the design in `$DESIGN_BACKLOG`
+   in place, and re-cut `$DESIGN_SLICE`, including its `wf slice check` gate and, once that
+   gate passes, step 3's closing of the `di_id` entry. A gate **failure** means your re-cut
+   rests on an assumption nobody ratified — that is the assumption halt below: write `$DECISION_PREP`
+   and halt. SKILL.md's "return to Phase 4" does not apply here; Phase 4 does not run in
+   this mode.
+4. **Phase 6 steps 5–6, skipping step 4's human confirm** — no human ran, so there is no
+   go-ahead to ask for and step 5's "On approval" does not gate you. Commit unasked: stage
+   and commit exactly `$ADRS` + `$DESIGN_BACKLOG`. Leave them
+   uncommitted and `wf-orchestrate` cannot cut the sprint branch: it gates on a clean working
+   tree, and these are committed paths. Step 4's forbidden-environment carve-out still
+   applies — report what is left uncommitted and stop, a clean outcome.
+5. Report every file you amended. **Delete `$DECISION_PREP` if an earlier escalation of this
+   `di_id` left one on disk** — the issue is resolved, so its prepared decisions are dead,
+   and a leftover file hijacks the next default `wf-sa` run.
+
 ## Halt conditions
 
 Halt and report with outcome `escalated` if:
 
-- `di_id` is not in `$di_artifact`, or `task_id` is not in `$sprint_artifact`.
+- `di_id` is not in `$di_artifact`.
+- The driving capability itself is wrong, too big to cover whole (SKILL.md Phase 3), or its
+  meaning is at stake — the human owns the *why*.
+
+On a **`spec_amendment`**, also halt if:
+
 - The defect is contract-level or a merged-code source regression (Step 2) — reclassify it
-  there; do not resolve it.
-- The driving capability itself is wrong — the human owns the *why*.
+  there; do not resolve it. Never reclassify a `slice_defect`: its `task_id` is `null`, so
+  the kind you reclassify it to has no task to park and no route — it becomes an open entry
+  nothing can dispatch and no sweep can clear. A slice blocker that is really wf-swa's is
+  still yours to re-cut around.
+- `task_id` is not in `$sprint_artifact`.
 - The minimum fix would reshape a component boundary or ripple beyond the implicated
   requirement(s) and ADR — that is a re-design, not a surgical amendment.
+
+On a **`slice_defect`**, `task_id` is `null` and no sprint exists — never halt on their
+absence. Beyond the driving-capability halt above, also halt if:
+
+- A decision meets `references/adr-rules.md`'s three-condition ADR threshold — the human
+  ratifies load-bearing architecture.
+- You would need to record an assumption (Phase 3: a driver's wording admits more than one
+  reading and you must pick one). Only Phase 4 ratifies an assumption and `wf slice check`
+  fails the slice on an unratified one, so needing an assumption is itself the halt. Never
+  mark one CONFIRMED to clear the gate.
+- Resolving a blocker would **supersede a shipped requirement** — one the requirement
+  register (step 1) carries a `[REQ:<id>]` / `[SYS-TC:<id>]` tag for. The human ratifies
+  retiring or changing
+  shipped behaviour. No gate catches this one for you: `wf slice check` reads assumptions
+  only, so a supersession you write here reaches the build unratified and silent.
+
+**Halting a `slice_defect` on any of those four — the driving capability, an ADR-threshold
+decision, an assumption, or a supersession — write `$DECISION_PREP` first.** Halt without it
+and the run's reasoning is lost and the human restarts it cold. Head it with the `di_id`, then, for
+**each** decision you prepared but could not take, write both:
+
+- the full brief prose, parts 1–3 of SKILL.md **Decision brief** — background, every option
+  with its honest pros and cons, and your recommendation with the risk it accepts; and
+- the fields Phase 4a's `render_design.py` `decisions` block takes — `id`, `title`,
+  `question`, `options[{label, pros, cons}]`, `recommended`, `status`, `components`.
+
+Leave the `di_id` entry `status: open`.

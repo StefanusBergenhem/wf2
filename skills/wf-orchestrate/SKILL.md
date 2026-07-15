@@ -1,6 +1,6 @@
 ---
 name: wf-orchestrate
-description: Executes a planned change as dependency stages — each stage runs its tasks through a configurable build→review chain in parallel worktrees, resolves design issues and merges at the boundary, then runs configurable closeout steps. Use to execute a design slice or sprint.
+description: Executes a planned change as dependency stages — each stage runs its tasks through a configurable build→review chain in parallel worktrees, merges at the boundary and resolves design issues, then runs configurable closeout steps. Use to execute a design slice or sprint.
 ---
 
 # wf-orchestrate
@@ -58,13 +58,41 @@ Then read `wf pipeline current-phase` and resume from where it points:
 
 ### 1 — Preparing
 
-1. **Ensure `$SPRINT` exists** before proceeding. If it is absent, dispatch the `wf-swa`
-   agent with the **Preparing envelope** (DISPATCH.md) to build the sprint from the design
-   slice, then re-check `$SPRINT` on disk: still absent → **HALT and report** (wf-swa could
-   not build a sprint from the slice). Never run compute-stages without `$SPRINT` present.
+1. **Gate `$SPRINT`** before proceeding — presence is never the verdict. Route on the
+   first case that matches:
+   - `paths.design_issues` holds an `open` entry with `fix_kind: slice_defect` → §1a.
+     Never dispatch `wf-swa` against a slice already rejected — it reproduces the same
+     rejection and burns a re-design round.
+   - `$SPRINT` present and `python3 <paths.tools>/cli/wf sprint check` reports
+     `verdict: pass` (exit 0) → step 2.
+   - otherwise → dispatch the `wf-swa` agent with the **Preparing envelope** (DISPATCH.md)
+     to build the sprint from the design slice — it overwrites an unusable `$SPRINT` —
+     then re-run this step **once**, dispatching no second `wf-swa`: `verdict: pass` →
+     step 2; anything else → §1a.
 2. **Ensure the sprint branch** — see [GIT_OPERATIONS.md](assets/GIT_OPERATIONS.md) § Sprint branch.
 3. `wf pipeline compute-stages` (idempotent; HALTs on a dependency cycle).
 4. `wf pipeline transition --to running_stage`, then enter the stage loop (§2).
+
+#### 1a — A rejected slice
+
+Read `paths.design_issues`. No `open` entry with `fix_kind: slice_defect` → **HALT and
+report** that wf-swa produced no usable sprint and raised no slice defect; stop.
+
+Otherwise take the **highest-numbered** such entry. **Gate: delete `$SPRINT` before you
+route it** — wf-swa decomposed it from the rejected cut. Skip the delete and it survives
+the re-cut and still passes `wf sprint check`, which compares ids, not statements — the
+build then ships the old requirements. Then, for that entry's `id`:
+
+```
+python3 <paths.tools>/cli/wf orchestrate dispatch-fix <di-id>
+```
+
+- **exit 1** → human gate: **HALT**, report the emitted `reason`, stop.
+- **exit 0** → dispatch `wf-sa` with the **Fix envelope** (DISPATCH.md). When it returns,
+  re-read that entry in `paths.design_issues`:
+  - `status: resolved` → wf-sa re-cut the slice: return to §1 step 1.
+  - still `open` → wf-sa escalated: **HALT and report** that the slice needs a human
+    ruling — run `/wf-sa`. Stop.
 
 ### 2 — The stage loop
 
@@ -250,5 +278,6 @@ Stop and surface to the user when:
 - `wf pipeline next` reports `terminal.halt` (dependency cycle, or all remaining work blocked).
 - A sub-agent HALTs, or `dispatch-fix` returns the human gate (exit 1).
 - A merge conflict, or a heavy-check fix cycle that exhausts `review.max_attempts`.
-- `$SPRINT` is absent and `wf-swa` cannot produce one.
+- No usable `$SPRINT` and §1a cannot get one: wf-swa raised no slice defect, `dispatch-fix`
+  gated the re-design to a human, or wf-sa escalated the rejection.
 - The pipeline-state file is corrupt, or config cannot be resolved.

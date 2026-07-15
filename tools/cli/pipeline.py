@@ -197,7 +197,6 @@ def _dispatch_entry(task, worktree_base, sprint_id):
     tid = task["id"]
     return {
         "task_id": tid,
-        "component": task.get("component"),
         "worktree": f"{worktree_base}/{sprint_id}-{tid}",
     }
 

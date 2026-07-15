@@ -87,6 +87,7 @@ class FakeState:
         self.stage = 1
         self.total_stages = 1
         self.on_compute_stages = None  # test hook: a compute_stages call re-layers
+        self.sprint_check_verdicts = ["pass"]  # queue; the last entry is sticky
 
     def run(self, subcmd, *args, soft=False):
         self.calls.append((subcmd, args))
@@ -122,6 +123,10 @@ class FakeState:
             return {"issues": [
                 {"di_id": k, "task_id": v.get("task_id"), "status": "open"}
                 for k, v in self.dis.items() if v.get("status") == "open"]}
+        if subcmd == "sprint_check":
+            return {"verdict": (self.sprint_check_verdicts.pop(0)
+                                if len(self.sprint_check_verdicts) > 1
+                                else self.sprint_check_verdicts[0])}
         if subcmd == "scope_amendment_count":
             return {"value": 0}
         if subcmd == "attempt_counter":
@@ -596,6 +601,220 @@ def test_fixer_leaves_di_open_escalates():
         ok("fixer-open DI: state DI left open")
     else:
         bad("fixer-open DI state", state.dis)
+
+
+def test_slice_rejection_escalates_naming_the_design_issue():
+    """wf-swa rejecting the slice in preparing leaves no sprint — the same on-disk symptom
+    as 'wf-swa could not build one', and the opposite meaning. The open slice_defect is
+    what tells them apart, so the escalation must read it rather than guess."""
+    proj = make_project(["T1"])
+    (proj / ".wf" / "transient" / "sprint.yaml").unlink()
+    (proj / ".wf" / "transient" / "design-issues.yaml").write_text(yaml.safe_dump({
+        "issues": [{"id": "DI-SLICE-1", "task_id": None, "detected_by": "swa",
+                    "fix_kind": "slice_defect", "status": "open",
+                    "summary": "REQ-141 has no satisfiable owner",
+                    "blockers": [{"id": "B1"}, {"id": "B2"}]}]}))
+    orch, _state, _git, _dispatcher = make_orch(proj, ["T1"])
+    try:
+        asyncio.run(orch.run())
+        bad("slice rejection", "no Escalation raised")
+    except driver.Escalation as exc:
+        msg = str(exc)
+        if "DI-SLICE-1" in msg and "2 blocker" in msg and "wf-sa" in msg:
+            ok("slice rejection: escalation names the DI, the blocker count, and wf-sa")
+        else:
+            bad("slice rejection message", msg)
+
+
+def test_no_sprint_and_no_slice_defect_escalates_distinctly():
+    proj = make_project(["T1"])
+    (proj / ".wf" / "transient" / "sprint.yaml").unlink()
+    orch, _state, _git, _dispatcher = make_orch(proj, ["T1"])
+    try:
+        asyncio.run(orch.run())
+        bad("no sprint no di", "no Escalation raised")
+    except driver.Escalation as exc:
+        if "neither" in str(exc):
+            ok("no sprint + no slice defect: escalation says so, not 'rejected the slice'")
+        else:
+            bad("no sprint no di message", str(exc))
+
+
+def test_resolved_slice_defect_is_not_read_as_a_rejection():
+    proj = make_project(["T1"])
+    (proj / ".wf" / "transient" / "sprint.yaml").unlink()
+    (proj / ".wf" / "transient" / "design-issues.yaml").write_text(yaml.safe_dump({
+        "issues": [{"id": "DI-SLICE-1", "task_id": None, "fix_kind": "slice_defect",
+                    "status": "resolved", "blockers": [{"id": "B1"}]}]}))
+    orch, _state, _git, _dispatcher = make_orch(proj, ["T1"])
+    try:
+        asyncio.run(orch.run())
+        bad("resolved slice di", "no Escalation raised")
+    except driver.Escalation as exc:
+        if "neither" in str(exc):
+            ok("resolved slice defect: not reported as a live rejection")
+        else:
+            bad("resolved slice di message", str(exc))
+
+
+def test_sprint_failing_its_own_check_is_not_executed():
+    """wf-swa writes $SPRINT at Phase 5 step 1 and only gates it at step 2, so a sprint
+    that FAILED its own `wf sprint check` sits on disk looking exactly like a good one.
+    Presence is not the verdict: an unusable sprint is re-decomposed, and never executed."""
+    proj = make_project(["T1"])
+    orch, state, git, dispatcher = make_orch(proj, ["T1"])
+    state.sprint_check_verdicts = ["fail"]  # wf-swa cannot produce a passing sprint
+    try:
+        asyncio.run(orch.run())
+        bad("failed sprint check", "no Escalation raised — the sprint was executed")
+        return
+    except driver.Escalation as exc:
+        if "sprint check" in str(exc):
+            ok("failed check: escalation names the gate the sprint failed")
+        else:
+            bad("failed check message", str(exc))
+    if "wf-swa" in dispatcher.agents_dispatched():
+        ok("failed check: wf-swa dispatched to re-decompose the unusable sprint")
+    else:
+        bad("failed check re-decompose", dispatcher.agents_dispatched())
+    if not any(s == "compute_stages" for s, _ in state.calls):
+        ok("failed check: never computed stages over a sprint that failed its gate")
+    else:
+        bad("failed check compute_stages", state.calls)
+
+
+def test_stale_sprint_after_a_recut_is_re_decomposed():
+    """A full re-design lap's re-entry. wf-swa rejected the slice and left its FAILED
+    $SPRINT on disk; wf-sa re-cut the slice and resolved the DI. Returning to §1 step 1
+    the sprint is present but stale — it must be re-decomposed by wf-swa, not executed
+    (presence) and not dead-ended (a failed check with no open DI)."""
+    proj = make_project(["T1"])
+    (proj / ".wf" / "transient" / "design-issues.yaml").write_text(yaml.safe_dump({
+        "issues": [{"id": "DI-SLICE-1", "task_id": None, "fix_kind": "slice_defect",
+                    "status": "resolved", "blockers": [{"id": "B1"}]}]}))
+    def swa_rebuilds(call):
+        if call.agent_name == "wf-swa":
+            (proj / ".wf" / "transient" / "sprint.yaml").write_text(
+                "sprint: {summary: recut}\ntasks:\n  - {id: T1}\n")
+
+    orch, state, git, dispatcher = make_orch(
+        proj, ["T1"], dispatcher=FakeDispatcher(on_dispatch=swa_rebuilds))
+    state.sprint_check_verdicts = ["fail", "pass"]  # stale → wf-swa re-cuts → passes
+    try:
+        result = asyncio.run(orch.run())
+    except driver.Escalation as exc:
+        bad("stale sprint lap", f"dead-ended instead of re-decomposing: {exc}")
+        return
+
+    if dispatcher.agents_dispatched().count("wf-swa") == 1:
+        ok("stale sprint: wf-swa dispatched once to re-decompose the re-cut slice")
+    else:
+        bad("stale sprint re-decompose", dispatcher.agents_dispatched())
+    if result.completed == ["T1"] and not result.escalated:
+        ok("stale sprint: the lap completes — the fresh sprint executes")
+    else:
+        bad("stale sprint lap completion", result.as_dict())
+
+
+def test_open_slice_defect_blocks_a_swa_redispatch():
+    """An open slice_defect means the slice itself was rejected. Re-decomposing it
+    reproduces the same rejection and appends a second open DI — leaving two live
+    rejections and burning a re-design round wf-sa never ran."""
+    proj = make_project(["T1"])
+    (proj / ".wf" / "transient" / "sprint.yaml").unlink()
+    (proj / ".wf" / "transient" / "design-issues.yaml").write_text(yaml.safe_dump({
+        "issues": [{"id": "DI-SLICE-1", "task_id": None, "fix_kind": "slice_defect",
+                    "status": "open", "blockers": [{"id": "B1"}]}]}))
+    orch, state, git, dispatcher = make_orch(proj, ["T1"])
+    try:
+        asyncio.run(orch.run())
+        bad("open slice defect", "no Escalation raised")
+        return
+    except driver.Escalation:
+        pass
+    if "wf-swa" not in dispatcher.agents_dispatched():
+        ok("open slice defect: wf-swa NOT re-dispatched against an already-rejected slice")
+    else:
+        bad("open slice defect re-dispatch", dispatcher.agents_dispatched())
+
+
+def test_blockers_not_a_list_still_escalates():
+    """`blockers` is LLM-written: a scalar must not crash the very function whose job is
+    to report the rejection."""
+    proj = make_project(["T1"])
+    (proj / ".wf" / "transient" / "sprint.yaml").unlink()
+    (proj / ".wf" / "transient" / "design-issues.yaml").write_text(yaml.safe_dump({
+        "issues": [{"id": "DI-SLICE-1", "task_id": None, "fix_kind": "slice_defect",
+                    "status": "open", "blockers": 5}]}))
+    orch, _state, _git, _dispatcher = make_orch(proj, ["T1"])
+    try:
+        asyncio.run(orch.run())
+        bad("non-list blockers", "no Escalation raised")
+    except driver.Escalation as exc:
+        if "DI-SLICE-1" in str(exc):
+            ok("non-list blockers: still escalates naming the DI, no TypeError")
+        else:
+            bad("non-list blockers message", str(exc))
+    except TypeError as exc:
+        bad("non-list blockers", f"crashed instead of escalating: {exc!r}")
+
+
+def test_non_slice_design_issue_is_not_read_as_a_slice_rejection():
+    """A task-scoped DI shares the design-issues file. It is not a slice rejection: with
+    no sprint and no slice_defect, wf-swa produced NEITHER — the opposite report."""
+    proj = make_project(["T1"])
+    (proj / ".wf" / "transient" / "sprint.yaml").unlink()
+    (proj / ".wf" / "transient" / "design-issues.yaml").write_text(yaml.safe_dump({
+        "issues": [{"id": "DI-1", "task_id": "T1", "fix_kind": "spec_amendment",
+                    "status": "open", "blockers": [{"id": "B1"}]}]}))
+    orch, _state, _git, _dispatcher = make_orch(proj, ["T1"])
+    try:
+        asyncio.run(orch.run())
+        bad("non-slice DI", "no Escalation raised")
+    except driver.Escalation as exc:
+        if "neither" in str(exc):
+            ok("non-slice DI: reported as 'neither', not as a slice rejection")
+        else:
+            bad("non-slice DI message", str(exc))
+
+
+def test_slice_rejection_deletes_the_rejected_cuts_sprint():
+    """§1a deletes $SPRINT before routing because `wf sprint check` compares requirement
+    IDS, not statements (sprint.py A1) — so an id-stable re-cut leaves the REJECTED cut's
+    decomposition still passing the gate. The driver only reports the rejection (C33), but
+    the human's /wf-sa re-cut closes the DI and never touches the sprint, so if the driver
+    leaves it the next run executes the rejected cut against the new slice."""
+    proj = make_project(["T1"])
+    sprint = proj / ".wf" / "transient" / "sprint.yaml"   # decomposed from the rejected cut
+    (proj / ".wf" / "transient" / "design-issues.yaml").write_text(yaml.safe_dump({
+        "issues": [{"id": "DI-SLICE-1", "task_id": None, "fix_kind": "slice_defect",
+                    "status": "open", "blockers": [{"id": "B1"}]}]}))
+    orch, _state, _git, _dispatcher = make_orch(proj, ["T1"])
+    try:
+        asyncio.run(orch.run())
+        bad("slice rejection delete", "no Escalation raised")
+    except driver.Escalation as exc:
+        if sprint.exists():
+            bad("slice rejection delete", f"the rejected cut's sprint survived: {exc}")
+        else:
+            ok("slice rejection: the rejected cut's sprint is deleted, not left to execute")
+
+
+def test_garbled_sprint_check_is_not_a_pass():
+    """`_sprint_usable` must require verdict == "pass", not merely != "fail": StateRunner
+    .json() returns {} when the check dies (unreadable config, a race on the sprint file),
+    and an absent verdict is "not verified", never "verified good"."""
+    proj = make_project(["T1"])
+    orch, state, _git, dispatcher = make_orch(proj, ["T1"])
+    state.sprint_check_verdicts = [""]          # the check produced no verdict at all
+    try:
+        asyncio.run(orch.run())
+    except driver.Escalation:
+        pass
+    if "wf-swa" in dispatcher.agents_dispatched():
+        ok("garbled sprint check: not treated as a pass — wf-swa re-decomposes")
+    else:
+        bad("garbled sprint check", "an unverified sprint was executed as good")
 
 
 def test_ensure_branch_gates():
@@ -1121,6 +1340,16 @@ if __name__ == "__main__":
     test_component_defect_reclassified_in_same_dispatch()
     test_reclassified_di_rerouted_to_new_kind()
     test_reroute_loop_guard_max_one()
+    test_slice_rejection_escalates_naming_the_design_issue()
+    test_no_sprint_and_no_slice_defect_escalates_distinctly()
+    test_resolved_slice_defect_is_not_read_as_a_rejection()
+    test_sprint_failing_its_own_check_is_not_executed()
+    test_stale_sprint_after_a_recut_is_re_decomposed()
+    test_open_slice_defect_blocks_a_swa_redispatch()
+    test_blockers_not_a_list_still_escalates()
+    test_non_slice_design_issue_is_not_read_as_a_slice_rejection()
+    test_slice_rejection_deletes_the_rejected_cuts_sprint()
+    test_garbled_sprint_check_is_not_a_pass()
     test_ensure_branch_gates()
     test_add_worktree_stale_base()
     test_di_rerun_at_current_attempt()

@@ -1,6 +1,6 @@
 ---
 name: wf-sa
-description: Solution Architect — turns capabilities and learnings into a shaped change (component-level architecture decisions, component requirements, ADRs) handed to the Software Architect as a design-slice; in fix mode surgically amends the spec to resolve one design issue.
+description: Solution Architect — turns capabilities and learnings into a shaped change (component-level architecture decisions, component requirements, ADRs) handed to the Software Architect as a design-slice; in fix mode resolves one design issue — spec amendment or slice re-design.
 ---
 
 # wf-sa
@@ -8,8 +8,8 @@ description: Solution Architect — turns capabilities and learnings into a shap
 **Read `wf-basics` first** for the `.wf/` layout and the telemetry handshake.
 Record the session start stamp now per `wf-basics` §2. Resolve every path below from `.wf/config.yaml`:
 
-- `CAPABILITIES`   = `paths.capabilities`   (user-voice needs — read; **drain** what you design in)
-- `LEARNINGS`      = `paths.learnings`      (project learnings — read; **drain** what you design in)
+- `CAPABILITIES`   = `paths.capabilities`   (user-voice needs — read; **drain** what is built)
+- `LEARNINGS`      = `paths.learnings`      (project learnings — read; **drain** what is built)
 - `BRIEF`          = `paths.discover_brief` (discover's system digest — read)
 - `TESTS`          = `paths.tests`          (the test-tree roots — a **list**; pass every one to each scanner)
 - `DRILL_CACHE`    = `paths.drill_cache`    (shared scout digests — read; append via wf-drill)
@@ -18,6 +18,8 @@ Record the session start stamp now per `wf-basics` §2. Resolve every path below
 - `DESIGN_SLICE`   = `paths.design_slice`   (the cut you hand wf-swa — transient; drained at sprint close)
 - `DESIGN_VIEW`    = `paths.design_view`    (the design diagram you render — transient)
 - `DOMAIN_VIEW`    = `paths.domain_view`    (the entity/domain-model diagram — transient)
+- `DESIGN_ISSUES`  = `paths.design_issues`  (build-raised design issues — read; you close the one you resolve)
+- `DECISION_PREP`  = `paths.decision_prep`  (decisions a fix-mode escalation prepared — transient)
 - `ARCHIVE`        = `paths.archive`         (maintainer research archive — you snapshot drained inputs into it; committed)
 
 You are the Solution Architect. You take the capabilities and learnings in scope and
@@ -33,9 +35,24 @@ that altitude is the capability, and a system requirement only restates it.
 
 ## Mode
 
-When your dispatch envelope names `mode: fix` (it carries a `di_id`), you resolve **one**
-spec design issue: read `references/fix-mode.md` and follow it, then record telemetry per
-Phase 7 — no other section below applies, and you work autonomously (no human alignment).
+When your dispatch envelope names `mode: fix` (it carries a `di_id`), you resolve that
+**one** design issue: read `references/fix-mode.md` and follow it — it names which phases
+below apply to the issue's `fix_kind` — then record telemetry per Phase 7. You work
+autonomously: no human alignment, and Phase 4 never runs.
+
+Otherwise, when `$DECISION_PREP` exists, read the `di_id` it is headed with and look that id
+up in `$DESIGN_ISSUES`. **If it is absent there, or its `status` is not `open`, delete
+`$DECISION_PREP` and run default mode** — the escalation it prepared is already settled, and
+resuming it puts a dead run's decisions to the human.
+
+Otherwise you are resuming that escalation: **skip Phase 1's drain** — nothing has shipped
+since the escalation. Ground from the entry's `blockers[]` and `working_notes[]`,
+`$DECISION_PREP` itself, the backlog design, and `$DESIGN_SLICE`, and **derive the
+requirement register** as Phase 1's grounding does — a redirection at Phase 4 folds back into
+Phase 3, which triages against it. Then enter at Phase 4 and put each prepared decision to
+the human, and carry on through Phase 6 — its step 3 re-cuts the slice and closes the entry.
+**Delete `$DECISION_PREP` once the re-cut lands**; left behind, it hijacks the next run.
+
 Otherwise you are in **default mode**: everything below applies.
 
 ## Scouting & the drill-cache
@@ -50,20 +67,21 @@ digest looks stale against the current tree, re-drill rather than trust it.
 
 ## The drain pipeline & the design backlog
 
-You sit in a pipeline of draining logs: each role appends to its output and removes from its
-input whatever it has refined. **Capabilities** (wf-po appends) and **learnings**
-(wf-retrospective appends) are your inputs; the **design backlog** (`$DESIGN_BACKLOG`,
-committed) is your output — your designed-but-unbuilt work. You:
+You sit in a pipeline of draining logs: each role appends to its output and drains its input.
+**Capabilities** (wf-po appends) and **learnings** (wf-retrospective appends) are your
+inputs; the **design backlog** (`$DESIGN_BACKLOG`, committed) is your output — your
+designed-but-unbuilt work. You:
 
 - **drain the built** — a backlog id is built when a proving test carries its tag: `[REQ:<id>]`
   for a component requirement, `[SYS-TC:<id>]` for a system test case. Run **reconcile**
   (`<paths.tools>/reconcile/reconcile.py`, see its README) against the test tree and remove
-  every built id (then any emptied design) from the backlog. Nothing stores "done"; reconcile
-  derives it from the tests.
-- **design new input** — shape a solution for each in-scope capability/learning, append it to
-  the backlog, then **remove that capability/learning from its input log** — a design that
-  fully covers it *is* its refinement, so the input is digested. Cover it fully before you
-  drain it; what you drop here is lost.
+  every built id (then any emptied design) from the backlog — and drain each capability and
+  learning along with the last design serving it. Nothing stores "done"; reconcile derives it
+  from the tests.
+- **design new input** — shape a solution for each in-scope capability/learning and append it
+  to the backlog. Its driver stays in its input log until the design's work ships; a capability
+  or learning is already designed when a surviving backlog design serves it, which you read by
+  grepping `$DESIGN_BACKLOG` for its id.
 - **cut a slice** — hand wf-swa a **design-slice**: a buildable increment of the backlog (the
   whole backlog if it fits one slice). The slice is transient — retained through the build and
   drained at sprint close — while the backlog persists until its work ships.
@@ -75,26 +93,58 @@ codebase's (re-derived by discover); only the ADRs remain.
 
 ### Phase 1 — Ground the change
 
-**First, drain the backlog of what shipped.** Reconcile `$DESIGN_BACKLOG` against the test
-tree (see **The drain pipeline**) and remove every now-built requirement and any emptied
-design, committing the trim. When a design you drain carries a **Supersedes** list, sweep
-its ids before removing the design:
+**First, drain what shipped.** Take steps 1–6 in that order: the driver drain (step 5) reads
+the `— serves` header of every design the trim (step 4) removes, so trimming first destroys
+the input it needs.
 
-```sh
-python3 <paths.tools>/reconcile/retired.py --ids <the superseded ids> \
-  --tests <root> [--tests <root> ...]        # every root in $TESTS
-```
+1. **Reconcile.** Run reconcile against the test tree (see **The drain pipeline**) to derive
+   which backlog ids are now built. A design whose ids are **all** built is *emptied*.
+2. **Collect the drivers of the emptied designs.** For each emptied design, read the ids in
+   its `— serves CAP-NNN / L-NNN` header and note them — this is step 5's input. Step 4
+   deletes those headers; an id you fail to collect here is unrecoverable, and its driver
+   then sits in `$CAPABILITIES` forever as a shipped-feature catalog entry.
+3. **Sweep the Supersedes list of each emptied design**, before step 4 removes it:
 
-Pass a `--tests` for **each** root in `$TESTS`; it sweeps their union. Dropping one hides
-the tags it holds, so a superseded id reads as swept when it is still in the tree.
+   ```sh
+   python3 <paths.tools>/reconcile/retired.py --ids <the superseded ids> \
+     --tests <root> [--tests <root> ...]        # every root in $TESTS
+   ```
 
-A non-zero exit lists superseded tags still in the test tree — the build failed to remove
-them. Record each survivor as a finding and fold its removal into the next slice; never
-drain past it silently. Then ground the new change:
+   Pass a `--tests` for **each** root in `$TESTS`; it sweeps their union. Dropping one hides
+   the tags it holds, so a superseded id reads as swept when it is still in the tree.
+
+   A non-zero exit lists superseded tags still in the test tree — the build failed to remove
+   them. Record each survivor as a finding and fold its removal into the next slice; never
+   drain past it silently.
+4. **Trim the backlog.** Remove every now-built requirement from `$DESIGN_BACKLOG`, and every
+   emptied design.
+5. **Drain the drivers whose last design just went.** For each id collected in step 2, grep
+   the **now-trimmed** `$DESIGN_BACKLOG` for it:
+   - **a hit** — another surviving design still serves it: **leave it** in its log.
+   - **no hit** — nothing designs it any more: it drains.
+
+   Snapshot a log before you remove anything from it — an unsnapshotted drain is
+   unrecoverable:
+
+   ```sh
+   python3 <paths.tools>/cli/wf archive add $CAPABILITIES --label capabilities
+   python3 <paths.tools>/cli/wf archive add $LEARNINGS --label learnings
+   ```
+
+   Then remove the draining ids from `$CAPABILITIES` and `$LEARNINGS`.
+6. **Commit the trim**, staging `$DESIGN_BACKLOG`, the drained logs, and `$ARCHIVE` (staging
+   the whole dir also commits any closeout snapshots left pending from the last sprint). If
+   the environment forbids committing (sandbox, CI, detached-HEAD or read-only worktree), the
+   drain is already written — report the trim as uncommitted and carry on; that is a clean
+   outcome, not a failure.
+
+Then ground the new change:
 
 1. Read `$CAPABILITIES` and `$LEARNINGS` — your inputs. Both are first-class drivers; a
    change may be motivated by a capability, a learning, or both. Identify what this run
-   serves; if the scope is unclear, ask the human.
+   serves; if the scope is unclear, ask the human. Grep `$DESIGN_BACKLOG` for each id you
+   consider: one a surviving design already serves is in flight — skip it unless the human
+   scopes it in deliberately, or step 5 sends you to re-cut the very design serving it.
 2. Read `$BRIEF` for the current system shape. **HALT if it is absent** — ask the user
    to run `wf-discover` first, or to confirm the repo is greenfield (design from the
    drivers alone, no existing components to ground against).
@@ -115,6 +165,12 @@ drain past it silently. Then ground the new change:
    Skipping this means designing from the brief's one-liners alone. The only exemption
    is scope that is genuinely greenfield — it introduces only new components, with
    nothing existing to drill; state which items you exempted and why.
+5. **Read `$DESIGN_ISSUES` before Phase 2.** If it holds an entry with `fix_kind:
+   slice_defect` and `status: open`, `$DESIGN_SLICE` was rejected as undecomposable and you
+   are re-cutting it: read that entry's `blockers[]` — each names what must be decided or
+   minted — and its `working_notes[]`, and design so every blocker is answered. Re-deriving
+   the slice from scratch reproduces the rejection it already found. Phase 6 step 3 closes
+   the entry.
 
 Summarize what you found before shaping anything.
 
@@ -155,6 +211,11 @@ learning that drove it. Where a capability names a concept your components call
 something else, the requirement is where you **map** user-voice to structure — keep the
 capability's words in the trace, name your component in the requirement; do not reconcile
 the mismatch by renaming the capability.
+
+**Cover each driver in full.** The requirements you write for a capability or learning must
+satisfy all of it. If they cannot, the driver is too big to design whole — **surface it to
+the human and stop**. Never design part of one, and never split, renumber, or reword a driver
+yourself.
 
 **Triage every requirement against the in-scope register entries** (Phase 1):
 - **unrelated** — no shipped requirement overlaps: new id, proceed;
@@ -336,18 +397,18 @@ The judgement already happened; this is capture.
 
 1. **Finalize the ADRs** drafted in Phase 2 — apply `references/adr-rules.md`'s
    threshold once more, write each survivor from `assets/adr.md.tmpl`, drop the rest.
-2. **Append the design to the backlog.** Add a block to `$DESIGN_BACKLOG` (shape per
-   `assets/design-backlog.md.tmpl`): the design's component requirements (each with its
-   repo-unique id and owner), its **system test cases** (each `SYS-TC-<n>`, covering a
-   capability), its **Supersedes** list (each superseded id with its one-line reason and
-   successor id, or "retired, no successor"), the architecture moves, and the ADRs that
-   bind it. Reference the brief and drill-cache by path — do **not** restate structure.
-3. **Archive, then drain, the inputs you designed in.** Snapshot each input log you drain
-   from before you edit it: `python3 <paths.tools>/cli/wf archive add $CAPABILITIES --label
-   capabilities` (and the same with `--label learnings` for `$LEARNINGS`). Then remove from
-   `$CAPABILITIES` each capability now covered by a backlog design, and from `$LEARNINGS`
-   each learning likewise — cover it fully first, per **The drain pipeline**.
-4. **Cut the design-slice.** Fill `$DESIGN_SLICE` from `assets/design-slice.md.tmpl` with a
+2. **Record the design in the backlog.** Add a block to `$DESIGN_BACKLOG` — but when this run
+   re-cut against a design issue, **amend that design's existing block in place**: append a
+   second block for the same drivers and the defective one's never-to-be-built ids linger
+   there forever, so the design never empties and its drivers never drain. Shape per
+   `assets/design-backlog.md.tmpl`, headed `## <design title> — serves CAP-NNN / L-NNN`
+   naming **every** driver the design serves: the design's component requirements (each with
+   its repo-unique id, owner, and driver), its **system test cases** (each `SYS-TC-<n>`,
+   covering a capability), its **Supersedes** list (each superseded id with its one-line
+   reason and successor id, or "retired, no successor"), the architecture moves, and the ADRs
+   that bind it. A driver missing from that header never drains — Phase 1's drain reads it
+   there. Reference the brief and drill-cache by path — do **not** restate structure.
+3. **Cut the design-slice.** Fill `$DESIGN_SLICE` from `assets/design-slice.md.tmpl` with a
    **buildable increment** of the backlog — the whole backlog if it fits one slice, else a
    coherent subset along the dependency spine: its requirements (with owners and drivers), the
    **system test cases** for its end-to-end behaviours, the moves, the **interface contracts**
@@ -355,30 +416,32 @@ The judgement already happened; this is capture.
    entry ratified at Phase 4), the binding ADRs (new + standing),
    the **assumptions requiring confirmation** (each ratified at Phase 4 and marked CONFIRMED),
    the Phase 5 soundness verdicts, and any risk for wf-swa.
-   **Gate: run `python3 <paths.tools>/cli/wf slice check`. Do not proceed to step 5 until it
+   **Gate: run `python3 <paths.tools>/cli/wf slice check`. Do not proceed to step 4 until it
    reports `verdict: pass` (exit 0)** — a failure names an assumption the human never
    ratified; return to Phase 4 and close it, never edit the marker to silence the gate.
    Point at the backlog/brief/drill-cache by path; restate no structure.
-5. **Confirm before commit.** Present a brief summary of the decisions and ADRs the alignment
+   Once the gate passes, if you designed against a design issue — one Phase 1's
+   `$DESIGN_ISSUES` gate found, one `$DECISION_PREP` named, or the `di_id` a fix envelope
+   carried — **set that entry's `status: resolved` in `$DESIGN_ISSUES`**: this re-cut slice
+   is its resolution, and left open it re-routes a defect you have already fixed.
+4. **Confirm before commit.** Present a brief summary of the decisions and ADRs the alignment
    settled, reopen `$DESIGN_VIEW`, and ask for the go-ahead to commit. If the human declines,
    or the environment forbids committing (sandbox, CI, detached-HEAD or read-only worktree),
-   the durable files are already written (steps 1–3) — **report exactly what is left
+   the durable files are already written (steps 1–2) — **report exactly what is left
    uncommitted and stop. A clean outcome, not a failure.**
-6. On approval, commit the **durable** files — the new/changed ADRs, the `$DESIGN_BACKLOG`,
-   the drained `$CAPABILITIES` / `$LEARNINGS`, and the `$ARCHIVE` snapshots (staging the
-   whole dir also commits any closeout snapshots left pending from the last sprint). The
-   design-slice is gitignored (transient) — nothing to commit for it. Stage explicit paths
-   — never `git add .`:
+5. On approval, commit the **durable** files — the new/changed ADRs and the
+   `$DESIGN_BACKLOG`. The design-slice is gitignored (transient) — nothing to commit for it.
+   Stage explicit paths — never `git add .`:
    ```sh
-   git add $ADRS/<new-or-changed ADRs> $DESIGN_BACKLOG $CAPABILITIES $LEARNINGS $ARCHIVE
+   git add $ADRS/<new-or-changed ADRs> $DESIGN_BACKLOG
    git diff --cached --stat   # verify nothing unexpected is staged
    ```
-7. Glance at recent commit style (`git log --oneline -5`) and commit with a subject like
-   `design: <short scope>`, the body listing the decisions, the backlog designs added, and
-   the inputs drained. Pass the message via HEREDOC. If a commit you were told to make then
+6. Glance at recent commit style (`git log --oneline -5`) and commit with a subject like
+   `design: <short scope>`, the body listing the decisions and the backlog designs added.
+   Pass the message via HEREDOC. If a commit you were told to make then
    fails (hook, identity), do **not** bypass — never `--no-verify`, never `--amend`. Report
    the exact error and halt.
-8. Report: the commit hash, the `$DESIGN_SLICE` path for wf-swa to consume, and the suggested
+7. Report: the commit hash, the `$DESIGN_SLICE` path for wf-swa to consume, and the suggested
    next step (`wf-swa`).
 
 ### Phase 7 — Telemetry (REQUIRED)

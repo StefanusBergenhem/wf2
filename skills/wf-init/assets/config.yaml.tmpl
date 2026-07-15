@@ -36,7 +36,7 @@ paths:
                                               # token/tool rows. wf-retrospective drains it to
                                               # paths.archive at closeout, so it holds one cycle,
                                               # not all history (bounds the retrospective's own read).
-  capabilities: ".wf/CAPABILITIES.yaml"       # User-voice capabilities (wf-po appends; wf-sa drains when designed). Committed.
+  capabilities: ".wf/CAPABILITIES.yaml"       # User-voice capabilities (wf-po appends; wf-sa drains when built). Committed.
 
   # Test-tree roots — every root the tag scanners sweep for [REQ:]/[SYS-TC:] tags
   # (reconcile.py, register.py, retired.py, next_id.py, render_design.py). A LIST, because
@@ -48,7 +48,7 @@ paths:
 
   # Learnings — distilled from telemetry by wf-retrospective. First-class design
   # inputs (peer of capabilities); each entry is one actionable observation.
-  learnings: ".wf/LEARNINGS.yaml"             # Project-code learnings (wf-retrospective appends; wf-sa drains when designed). Committed.
+  learnings: ".wf/LEARNINGS.yaml"             # Project-code learnings (wf-retrospective appends; wf-sa drains when built). Committed.
   wf_learnings: ".wf/wf-learnings.yaml"       # wf-toolkit friction, for the wf maintainer. Committed.
   retro_report: ".wf/transient/retro-report.md"  # wf-retrospective's human-facing digest of ONE run: proposed AGENTS.md edits (gotchas), this run's new/reinforced learnings, and the execution summary. The maintainer's inbox — read after a run, then acted on. Overwritten each run; derived from telemetry + the learnings files, so transient.
 
@@ -60,15 +60,16 @@ paths:
   design_slice: ".wf/transient/design-slice.md"   # wf-sa cuts this from the backlog for wf-swa; retained through build, drained at complete-sprint. Transient.
   design_view: ".wf/transient/design-view.html"   # wf-sa interactive design diagram (render_design.py). Transient.
   domain_view: ".wf/transient/domain-view.html"   # wf-sa entity/domain-model diagram (render_design.py entity mode). Transient.
+  decision_prep: ".wf/transient/decision-prep.md" # wf-sa fix-mode escalation: decisions it prepared but could not take (briefs + render_design decisions fields); the human's next wf-sa run presents them, then deletes it. Transient.
   drill_cache: ".wf/transient/drill-cache"        # Shared scout digests (wf-po/wf-sa dispatch wf-drill, which appends; both read). Transient dir.
   sprint: ".wf/transient/sprint.yaml"             # wf-swa task DAG the orchestrator executes. Transient.
 
   # Maintainer research archive (committed). WRITE-ONLY: the drain sites snapshot each
-  # artifact here as it leaves the working set (capabilities/learnings at wf-sa design;
-  # slice + sprint + shipped backlog at complete-sprint). NO wf role is ever instructed to
-  # read it — it exists solely so the wf2 maintainer can study run quality offline. It is
-  # OUTSIDE the governed working set, so the governor's derive-don't-store rule does not
-  # apply: nothing consumes it as truth, so it cannot rot.
+  # artifact here as it leaves the working set (capabilities/learnings when wf-sa drains
+  # their shipped design; slice + sprint + shipped backlog at complete-sprint). NO wf role
+  # is ever instructed to read it — it exists solely so the wf2 maintainer can study run
+  # quality offline. It is OUTSIDE the governed working set, so the governor's
+  # derive-don't-store rule does not apply: nothing consumes it as truth, so it cannot rot.
   archive: ".wf/archive"
 
   # Orchestration (the build pipeline). pipeline-state is the live run state the brain
@@ -86,7 +87,12 @@ paths:
   review_ready: ".wf/transient/review-ready.yaml"      # build → review handoff (build done, gates green).
   build_blocked: ".wf/transient/build-blocked.yaml"    # build halted: needs a scope amendment.
   feedback: ".wf/transient/feedback.yaml"              # review → build rejection feedback.
-  design_issues: ".wf/transient/design-issues.yaml"    # build/review-raised design issues (fix_kind taxonomy → dispatch-fix routing).
+
+  # Design issues — the one artifact above with a host-side life too: build/review raise one
+  # in their worktree and the orchestrator copies it here; wf-swa raises a slice_defect
+  # straight here in preparing, when no worktree exists yet. dispatch-fix routes each entry
+  # by fix_kind; sweep-transients prunes the closed ones. Transient.
+  design_issues: ".wf/transient/design-issues.yaml"
 
 parallel:
   max_concurrent_tasks: 4                     # within-stage concurrency cap — independent tasks run in parallel worktrees.

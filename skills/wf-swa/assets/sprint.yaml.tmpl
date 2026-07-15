@@ -14,7 +14,6 @@ sprint:
 tasks:
   - id: T1
     title: "<imperative, one line>"
-    component: "<component the slice names>"
     depends_on: []
     covers: [REQ-1]
     requirements:               # one entry per id in covers — statement verbatim from the slice
@@ -52,7 +51,6 @@ tasks:
   # requirements DRIVEN BY the capability the case covers, so it runs the assembled path.
   - id: T2
     title: "System test: <the case's behaviour>"
-    component: "<the e2e test home — e.g. e2e/ ; establish one if none exists>"
     depends_on: [T1]            # the tasks building the reqs driven by CAP-NNN
     covers: []                  # an e2e task proves a SYS-TC (below), not a component requirement
     requirements: []            # empty like covers — the case's text lives in system_tests[].description
@@ -70,4 +68,5 @@ tasks:
     out_of_scope:
       - "Any component logic — the e2e task only exercises the assembled path."
     implementation_notes:
-      - "<the SA case verbatim from the slice; the existing e2e home + how it runs>"
+      - "<the SA case verbatim from the slice; the e2e home + how it runs — e.g. e2e/ ;
+         establish one if none exists>"

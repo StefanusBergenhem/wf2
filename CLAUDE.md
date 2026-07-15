@@ -32,11 +32,15 @@ over time.
 
 Most documents are transient handovers between roles. The durable set is small:
 
-- **Capabilities** — the *why*, kept as an **open work-set** of *un-designed* demand:
-  user-voice needs the PO has raised but the SA has not yet designed. The SA drains a
-  capability once it designs a solution for it — its essence moves to the design backlog,
-  then (after build) to the code's `[REQ]` tags + any ADR — so the set never becomes an
-  accumulating catalog of shipped features.
+- **Capabilities** — the *why*, kept as an **open work-set** of *un-shipped* demand:
+  user-voice needs the PO has raised whose solution is not yet built. The SA drains a
+  capability when the backlog design serving it drains — i.e. when `reconcile` finds its
+  work shipped and its essence now lives in the code's `[REQ]` tags + any ADR — so the set
+  never becomes an accumulating catalog of shipped features. The drain is keyed on *shipped
+  evidence*, never on the SA's own "I designed it" — like every other drain here, it derives
+  from a fact rather than a role's self-report. So a slice that gets rejected or re-cut
+  leaves the *why* intact for the re-design to reason from, including fix mode's judgement
+  of whether the driving capability is itself wrong.
 - **Design backlog** — the SA's *committed but draining* record of designed-but-unbuilt
   work. The SA appends a design and removes it as `reconcile` shows it shipped; it empties
   to nothing, so it is working state, not a durable spec (its load-bearing decisions live
@@ -57,9 +61,9 @@ Everything else (the repo map, component descriptions, plans, contracts) is
 derived on demand or discarded after the step that produced it.
 
 **The maintainer archive is outside all of this.** As each transient drains from the
-working set (capabilities/learnings at SA-design; slice + sprint + backlog snapshot at
-sprint close), a copy is written to `paths.archive` — a **write-only** sink for the wf2
-maintainer to study run quality offline. It is *not* part of the durable working set and
+working set (capabilities/learnings when the SA drains their shipped design; slice, sprint,
+and backlog snapshot at sprint close), a copy is written to `paths.archive` — a
+**write-only** sink for the wf2 maintainer to study run quality offline. It is *not* part of the durable working set and
 **no wf role is ever instructed to read it**. The governor forbids storing what code can
 re-derive because a role would consume it as truth and it would rot; the archive is exempt
 because nothing consumes it — it is research exhaust, peer to the telemetry log, never a

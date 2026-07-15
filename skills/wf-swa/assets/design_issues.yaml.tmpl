@@ -1,0 +1,21 @@
+# A slice-rejection design issue: the design slice cannot be decomposed as written.
+# Transient, host-side. Written before you halt; one entry per rejection, carrying every
+# blocker — never one entry per blocker.
+# Append the entry to the existing `issues:` list; create the file only if absent. Never
+# rewrite the file — the entries already in it are this slice's re-design round count.
+issues:
+  - id: "DI-SLICE-<n>"        # ascending: 1 + the highest DI-SLICE-<n> already in the file
+    task_id: null             # slice-scoped — raised before any task exists
+    detected_by: swa
+    fix_kind: slice_defect
+    severity: high
+    status: open
+    summary: "<one line: why the slice cannot be decomposed as written>"
+    blockers:                 # every defect that must be resolved before decomposition
+      - id: B1
+        requirement: "<the implicated REQ id, or null for a slice-level defect>"
+        summary: "<what is wrong with it>"
+        evidence: "<what you read or measured that proves it — file:line, command + output>"
+        needs: "<what the SA must decide or mint to unblock it>"
+    working_notes:            # decomposition you worked out that does NOT block
+      - "<a measurement, a signature that unblocks a REQ, a trap the next cut must avoid>"

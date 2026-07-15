@@ -108,18 +108,19 @@ class OrchestrateRunner:
 
 class StateRunner:
     """Invokes the wf run-state verbs: `wf pipeline <verb>` for mutations, `wf telemetry
-    <verb>` for the session record. Soft-failing for telemetry; hard verbs raise on a
-    non-zero exit."""
+    <verb>` for the session record, `wf sprint check` for the sprint's own gate. Soft-
+    failing for telemetry; hard verbs raise on a non-zero exit."""
 
-    _TELEMETRY = {"record_session"}
+    # subcmd -> (noun, verb) for the verbs that are not `wf pipeline <subcmd-dashed>`.
+    _NOUNS = {"record_session": ("telemetry", "record-session"),
+              "sprint_check": ("sprint", "check")}
 
     def __init__(self, wf_entry: str, config_path: str):
         self.wf_entry = wf_entry
         self.config_path = config_path
 
     def run(self, subcmd: str, *args: str, soft: bool = False) -> subprocess.CompletedProcess:
-        noun = "telemetry" if subcmd in self._TELEMETRY else "pipeline"
-        verb = subcmd.replace("_", "-")
+        noun, verb = self._NOUNS.get(subcmd, ("pipeline", subcmd.replace("_", "-")))
         proc = subprocess.run(
             [sys.executable, self.wf_entry, noun, verb, *map(str, args),
              "--config", self.config_path],
@@ -355,6 +356,44 @@ class Orchestrator:
         except Exception:  # noqa: BLE001 — telemetry never masks the run's outcome
             pass
 
+    def _design_issues_path(self):
+        return common.resolve_path(self.config_path, "design_issues", None)
+
+    def _open_slice_defect(self) -> dict | None:
+        """The live slice rejection, if wf-swa refused to decompose the design slice.
+        The entries accumulate one per round, ascending — the last is this round's."""
+        issues = common.load_yaml(self._design_issues_path(), optional=True).get("issues") or []
+        open_defects = [i for i in issues if isinstance(i, dict)
+                        and i.get("fix_kind") == "slice_defect"
+                        and (i.get("status") or "open") == "open"]
+        return open_defects[-1] if open_defects else None
+
+    def _sprint_usable(self) -> bool:
+        """wf-swa writes $SPRINT BEFORE its own `wf sprint check` gate runs and leaves it
+        on disk when the gate fails — so presence is not a verdict. Re-run the gate."""
+        if not self.sprint_path.exists():
+            return False
+        return (self.state.json("sprint_check").get("verdict") or "") == "pass"
+
+    def _unusable_sprint_reason(self) -> str:
+        """Three opposite meanings share one symptom (no sprint to execute): wf-swa
+        REFUSED to decompose the slice, it produced a sprint that fails its own gate, or
+        it produced nothing at all. Only the open slice_defect tells the first apart.
+        Resolving a rejection is wf-sa's (skill §1a); the driver reports it rather than
+        routing it (see doc/CANDIDATES.md C33)."""
+        di = self._open_slice_defect()
+        if di is not None:
+            b = di.get("blockers")
+            n = len(b) if isinstance(b, list) else 0
+            return (f"wf-swa rejected the design slice: {n} blocker(s) recorded as "
+                    f"{di.get('id')} in {self._design_issues_path()}. "
+                    "The re-design is wf-sa's — run /wf-sa.")
+        if self.sprint_path.exists():
+            return (f"{self.sprint_path} fails its own `wf sprint check` gate and wf-swa "
+                    "raised no slice defect; cannot execute a sprint")
+        return (f"wf-swa produced neither {self.sprint_path} nor a slice defect; "
+                "cannot execute a sprint")
+
     async def _run(self) -> RunResult:
         # Kickoff / resume safety (mirrors wf-orchestrate §0): sweep already-consumed
         # handoffs and reclaim orphaned building/reviewing slots left by an interrupted
@@ -362,12 +401,24 @@ class Orchestrator:
         self.scripts.run("sweep-transients", "--config", self.config_path)
         self.state.run("reclaim_stale", soft=True)
 
-        # preparing (§1)
+        # preparing (§1 step 1). Route in the skill's order: a live slice rejection is
+        # wf-sa's to resolve — re-decomposing the same slice only reproduces it — and a
+        # sprint counts only when it passes its own gate, never on presence.
         self.state.run("transition", "--to", "preparing", soft=True)
-        if not self.sprint_path.exists():
+        if self._open_slice_defect():
+            # Delete the rejected cut's sprint before reporting (mirrors SKILL.md §1a's
+            # gate). `wf sprint check` compares requirement ids, not statements, so an
+            # id-stable re-cut leaves this decomposition passing against the NEW slice —
+            # and the human's /wf-sa re-cut closes the DI without touching the sprint. Left
+            # here, the next run executes the rejected cut's contracts.
+            self.sprint_path.unlink(missing_ok=True)
+            raise Escalation(self._unusable_sprint_reason())
+        if not self._sprint_usable():
+            # An unusable sprint here is stale (wf-sa re-cut the slice under it) or
+            # failed; wf-swa overwrites it from the current slice.
             await asyncio.to_thread(self.dispatcher.dispatch, AGENT_SWA, self._swa_envelope(), None)
-            if not self.sprint_path.exists():
-                raise Escalation(f"wf-swa did not produce {self.sprint_path}; cannot execute a sprint")
+            if not self._sprint_usable():
+                raise Escalation(self._unusable_sprint_reason())
         sprint_branch = self._sprint_branch()
         self.git.ensure_branch(sprint_branch, self._base_branch())
         self.state.run("compute_stages")

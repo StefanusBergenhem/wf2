@@ -453,3 +453,182 @@ heavy check after it merges.
 
 **Trigger to act:** the first autonomous (SDK-driver) run that hits a stage-fix design issue
 — until the driver is actually used for a sprint with heavy checks, the skill path covers it.
+
+---
+
+## C32 — wf-sa Phase 4: dry-run the decomposition before the human ratifies
+
+**Date:** 2026-07-14
+**Context:** two dems `/wf-orchestrate` runs on 2026-07-14 (111 minutes apart) both halted in
+`preparing` with wf-swa rejecting the slice. The second rejection was on `REQ-141` — a
+requirement wf-sa *minted* during the 92-minute interactive re-design that round 1 triggered.
+Both rounds failed on the same class of defect: requirement ownership vs. the real atomic edit
+set. wf-swa flagged the repeat itself ("same class as the previous cut's B3/B4").
+
+The order of operations is the cause: wf-sa Phase 4 is the interactive core where the human
+ratifies, but decomposition — the only step that empirically tests whether the design is
+buildable — runs in wf-swa on the *next* orchestrate run, after ratification. So the human
+ratifies buildability they cannot assess, and the SA's only real feedback arrives one lap later.
+
+**Observation:** dispatch wf-swa read-only against the draft slice inside Phase 4, before the
+human ratifies — "can every requirement be owned by one component, and is each atomic edit set
+inside it?" A ~6–17 minute autonomous check gating a 92-minute interactive session.
+
+**Why it is deferred rather than done:** the slice-rejection route (`slice_defect` → wf-sa fix
+mode → re-dispatch wf-swa, bounded at `_MAX_REDESIGN_ROUNDS`) now makes each lap autonomous and
+cheap, which was the same note's cheaper mitigation. The human-session cost the dry-run exists to
+protect only materializes on an ADR / unratified-assumption / capability escalation. Part of the
+observed pain also came from the boundaries-are-law vs. atomic-edit-set collision, which is now
+resolved — round 2's `SortOrder` blocker would not be a blocker today, so the residual defect rate
+is unmeasured.
+
+**Trigger to act:** `dispatch-fix`'s round bound actually fires on a real run, or two consecutive
+interactive wf-sa runs produce slices that need a re-cut. Either says the loop is not converging
+and the feedback belongs before the ratification gate, not after.
+
+---
+
+## C33 — driver: route a slice rejection, don't just report it
+
+**Date:** 2026-07-14
+**Context:** `wf-orchestrate` §1a now resolves a rejected design slice autonomously —
+`dispatch-fix` routes the `slice_defect` DI to wf-sa fix mode, which re-cuts the slice, and
+the orchestrator re-dispatches wf-swa against it, bounded by `_MAX_REDESIGN_ROUNDS`. The live
+driver (`_run`, preparing) only *reports* the rejection: `_no_sprint_reason` reads the open
+`slice_defect` and escalates naming the DI, the blocker count, and `/wf-sa`. It does not run
+dispatch-fix, does not dispatch wf-sa, and does not re-loop.
+
+**Observation:** bring the driver to parity — the same dispatch-fix → wf-sa → re-dispatch
+wf-swa loop, reusing the existing `_resolve_design_issues` machinery for the route and
+`dispatch-fix`'s exit 1 for the round bound. Unlike C31's stage-fix case there is no
+awkward re-entry: preparing is a straight loop back to the wf-swa dispatch, with no DAG node
+to place.
+
+**Trigger to act:** the first autonomous (SDK-driver) run that hits a slice rejection. Both
+dems runs that motivated this work used the skill path; until the driver actually drives a
+sprint, its honest escalation costs one human `/wf-sa` invocation — the same thing the skill
+path did before §1a existed. Cf. **C31** (same driver/skill parity class, one phase later).
+
+---
+
+## C34 — `wf slice check`: gate unratified supersessions, not just assumptions
+
+**Date:** 2026-07-14
+**Context:** wf-sa Phase 3 requires every **supersession** (a shipped `REQ-<n>` / `SYS-TC-<n>`
+this design invalidates or retires) to be ratified by the human at Phase 4, and
+`assets/design-slice.md.tmpl`'s Supersedes section says as much — "alignment before it may
+appear here". Nothing enforces it. `wf slice check` (`tools/cli/slice.py`) greps for
+`UNCONFIRMED` assumption lines and nothing else, so an unratified supersession reaches wf-swa
+silently. Assumptions have a marker and a gate; supersessions have neither.
+
+**Observation:** give the Supersedes section a ratification marker of its own and fail
+`slice check` on an unratified entry, exactly as it fails an `UNCONFIRMED` assumption. That
+makes the Phase 4 supersession rule mechanical instead of a prose promise, in both modes.
+
+**Why now-ish:** wf-sa fix mode (`slice_defect` path) runs autonomously with no Phase 4, so it
+carries a fourth escalation trigger — "resolving a blocker would supersede a shipped
+requirement → halt" — written *only because* this gate does not exist. **Delete that trigger
+when this candidate ships**; it is a hand-held substitute for a mechanical check. In default
+mode the hole is older and softer: a human is present at Phase 4 and sees the supersession
+presented, so it takes an SA omission to slip through.
+
+**Trigger to act:** a supersession reaching a sprint unratified (from either mode), or the
+next time `slice.py` is opened for other work — the marker + check is small, and it retires
+a prose rule in fix-mode.md.
+
+---
+
+## C35 — wf-po: guard against revising a capability whose work is in flight
+
+**Date:** 2026-07-14
+**Context:** capabilities now drain at **build**, not at design (wf-sa Phase 1). Under the old
+model anything sitting in `$CAPABILITIES` was by definition un-designed, so `wf-po`'s rule —
+"you may revise an un-built capability with the user's assent" — was safe by construction.
+It no longer is: an un-built capability may be designed, in the backlog, cut into a live
+slice, and building right now. wf-po has no `paths.design_backlog` binding, never reads it,
+and is explicitly forbidden from surfacing wf-voice to the user, so neither the agent nor the
+user can tell. wf-sa got exactly this guard in the same change ("grep `$DESIGN_BACKLOG` for
+each id you consider: one a surviving design already serves is in flight"); wf-po did not —
+and wf-po is the role that actually rewrites the text.
+
+**Observation:** give wf-po a read-only `DESIGN_BACKLOG` binding and gate the revise rule —
+grep the backlog for the id; a hit means the work is underway, so name that to the user and
+get explicit assent to changing work in flight, or add a new capability instead.
+
+**Failure it prevents:** wf-po rewrites CAP-9 while a sprint builds requirements traced to
+CAP-9's old wording. Every `serves: CAP-9` trace then points at intent nobody agreed to, and
+nothing detects it — the requirement still names a live id.
+
+**Trigger to act:** the first wf-po run that revises (not adds) a capability while a sprint is
+in flight. Deliberately parked rather than fixed with the drain change: the hazard needs that
+exact sequence to bite, and no run has done it. Note this was **created** by the drain change,
+not inherited — if it fires, it fires on us.
+
+---
+
+## C36 — `wf sprint check` passes a sprint it never checked against a slice
+
+**Date:** 2026-07-14
+**Context:** `wf-orchestrate` §1 step 1 now gates on `wf sprint check` reporting `verdict: pass`
+rather than on `$SPRINT`'s presence — presence cannot distinguish a good sprint from one that
+failed its own gate. But `sprint.py`'s verdict is `"fail" if errors or (args.strict and warns)`,
+and a **missing design-slice is `warn("A0")`** ("slice not found; ran intra-sprint checks only"),
+not an error. So `sprint check` against no slice returns `verdict: pass`, and §1 step 1 accepts a
+sprint whose entire slice-conformance family (A0/A1) never ran.
+
+**Observation:** A0 is the one warning that means "I could not perform the check you asked for",
+which is categorically different from C5's "this is allowed but consider splitting". Either make
+A0 an error, or give the verdict a third state the orchestrator can route on (`pass` /
+`unverified` / `fail`). `--strict` is NOT the fix — it would also promote C5 (>5 files) to an
+error, and an atomic edit set legitimately exceeds 5 files, which is why C5 is a warning.
+
+**Why deferred:** unreachable in normal operation — `complete-sprint` drains the slice and the
+sprint together, and a crash between the two self-heals (the phase is still `end_of_sprint`, so
+the next run re-runs closeout). No run has produced a stale-sprint-without-slice state.
+
+**Trigger to act:** any run where `sprint check` reports A0, or a second consumer starts routing
+on its verdict. Noted because it is the same shape as the bug §1 step 1 was just fixed for — a
+check that cannot tell "verified good" from "not verified" — and that shape has now bitten this
+pipeline three times in one change.
+
+---
+
+## C37 — skill prose is the one wf2 surface with no mechanical check, and it is where the bugs are
+
+**Date:** 2026-07-14
+**Context:** the slice-rejection change (this same day) took **five adversarial review passes, and
+every pass found a critical defect**. All of them lived in **skill prose**, none was caught by a
+test, and 284 tests were green throughout — including while the feature was dead code on its main
+path. The Python was clean from pass 3 onward; its tests have teeth (mutation-verified). The prose
+had eleven files of load-bearing instructions verified only by careful reading, and the defect rate
+never dropped. Representative kills: §1a unreachable because wf-swa leaves a failed `$SPRINT` on
+disk; the drain ordered so it never drains; fix mode's "commit nothing" colliding with the sprint
+branch's clean-tree gate (the loop's *success* path); a skill claiming `wf slice check` closes a
+design issue, which it has never done.
+
+This contradicts wf2's own governor — *anything a script can verify, a script verifies* — on the
+surface where wf2 spends most of its correctness budget.
+
+**Observation, in two halves. Be honest about which is which:**
+
+*The cheap half — a `wf skills check` linter.* Mechanically decidable today: every `$TOKEN` a
+SKILL/reference uses is declared in that skill's path list; every `paths.X` named exists in the
+config template; every `assets/X` and `references/X.md` referenced exists; `description` ≤ 280
+chars; every cross-file phase/step reference ("Phase 6 steps 5–6") resolves to a step that exists.
+**Of this change's ~8 serious defects it would have caught exactly one** (wf-sa was told to read
+`$DESIGN_ISSUES` with no binding for it). Worth building — it is small, TDD-able, and forever — but
+it does not touch the class that actually hurt.
+
+*The expensive half — the semantic-contradiction class.* Prose contradicting prose across files,
+or prose asserting behaviour a tool does not have. Seven of eight defects. No linter decides these.
+What demonstrably DID find them: an adversarial agent told to **trace flows end-to-end naming
+file:line at each hop**, and to **verify every tool claim against the tool's source**. That is a
+role, not a script — a wf-review for the spec layer, or a standing "trace the state machine" step
+before any multi-skill change lands.
+
+**Trigger to act:** the next change touching 3+ skills, or the next dogfood run that halts on a
+skill instruction that was wrong rather than a defect it correctly caught. The linter half can be
+built any time `tools/cli/` is open. The role half needs a decision about whether wf2 gets a spec-layer
+reviewer — cf. the standing rule that if SA output needs review, you introduce a reviewer role rather
+than bolting checks onto the next consumer. That rule was written about the slice; it applies to the
+skills themselves.

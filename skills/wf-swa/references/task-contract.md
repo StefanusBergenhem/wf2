@@ -16,7 +16,6 @@ Contents:
 ```yaml
 - id: T1
   title: <imperative, one line>
-  component: <the component this task belongs to>
   depends_on: []                 # task ids that must land first
   covers: [REQ-1, REQ-2]         # the slice requirements this task satisfies
   requirements:                  # one entry per id in covers — the requirement's text
@@ -73,7 +72,7 @@ For each requirement a task `covers`, write the testable conditions that prove i
   an incomplete set.
 - **Within the requirement.** Do not invent criteria for behaviour the requirement
   doesn't call for — that is scope creep. A requirement you cannot make testable from
-  the source is a flag to the SA, not a guess.
+  the source is a design issue you raise per your mode's procedure, never a guess.
 - **Gate-verified, not test-provable.** When a criterion is enforced by an existing
   mechanical gate (a preflight command, a CI check) rather than a test — e.g. "generated
   code is never stale" enforced by a codegen-drift gate — keep it as an acceptance
@@ -150,11 +149,26 @@ read-only reference material — a note that tells the build to edit a file outs
 **A signature or field change carries its consumers.** When a task changes a function
 signature, renames or relocates a field, or otherwise alters a shape other code depends
 on, `files_to_touch` must list **every caller and fixture that won't compile or pass
-until it is updated too** — not just the file the change originates in. Trace the changed
-symbol through the source (its integration- and system-test callers, any shared test
-fixture that constructs it) and add each to scope; the atomic edit set is the origin file
-plus its dependents. A consumer left out of `files_to_touch` halts the build mid-task,
-because the change is unbuildable without editing a file the contract forbids.
+until it is updated too** — not just the file the change originates in, and whatever
+component each one sits in. Trace the changed symbol through the source (its integration-
+and system-test callers, any shared test fixture that constructs it) and add each to scope;
+the atomic edit set is the origin file plus its dependents. A consumer left out of
+`files_to_touch` halts the build mid-task, because the change is unbuildable without editing
+a file the contract forbids — and splitting the set across two tasks does the same to both
+halves, since neither compiles without the other.
+
+**Widening a seam: add alongside, or change in place.** When the slice's **Interface
+contracts** section fixes the seam's shape, build to that shape. When it does not, you
+decide:
+
+- **Add a new method alongside the existing one** when that keeps the task inside the
+  sizing guidance *and* the old method has consumers outside this slice's scope — those
+  consumers stay untouched and out of `files_to_touch`.
+- **Change the shape in place** when the old shape must die — every consumer then goes into
+  `files_to_touch`, per the paragraph above.
+
+A twin you add that must eventually be removed gets its removal as a task **in this sprint**,
+carrying the old method's consumers in that task's `files_to_touch`.
 
 ## Behavior-level wording
 
