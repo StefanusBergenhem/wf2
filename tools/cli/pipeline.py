@@ -350,7 +350,6 @@ def _task_state(rest):
             "task_id": args.task_id,
             "state": ts.get("status", "pending"),
             "attempt_counter": ts.get("attempt_counter", 0),
-            "scope_amendment_count": ts.get("scope_amendment_count", 0),
             "pass_index": ts.get("pass_index", 0),
             "branch": ts.get("branch", ""),
             "worktree_path": ts.get("worktree_path", ""),
@@ -406,15 +405,6 @@ def _attempt_counter(rest):
     args = p.parse_args(rest)
     ts = (_load_state(args).get("task_states", {}) or {}).get(args.task_id) or {}
     common.emit({"value": ts.get("attempt_counter", 0)}, args.format)
-    return 0
-
-
-def _scope_amendment_count(rest):
-    p = common.base_parser("pipeline scope-amendment-count")
-    p.add_argument("task_id")
-    args = p.parse_args(rest)
-    ts = (_load_state(args).get("task_states", {}) or {}).get(args.task_id) or {}
-    common.emit({"value": ts.get("scope_amendment_count", 0)}, args.format)
     return 0
 
 
@@ -649,24 +639,6 @@ def _resolve_design_issue(rest):
         ts["status"] = "pending"
     doc.setdefault("history", []).append({
         "ts": _now(), "event": "design_issue_resolved", "di_id": args.di_id,
-    })
-    _save_state(args, doc)
-    return 0
-
-
-def _scope_amendment(rest):
-    p = common.base_parser("pipeline scope-amendment")
-    p.add_argument("task_id")
-    p.add_argument("--added", required=True)
-    args = p.parse_args(rest)
-
-    doc = _load_state(args)
-    files = [f.strip() for f in args.added.split(",") if f.strip()]
-    ts = doc.setdefault("task_states", {}).setdefault(args.task_id, {})
-    ts["scope_amendment_count"] = int(ts.get("scope_amendment_count", 0)) + 1
-    doc.setdefault("history", []).append({
-        "ts": _now(), "event": "scope_amendment_applied", "task_id": args.task_id,
-        "added_files": files, "scope_amendment_count": ts["scope_amendment_count"],
     })
     _save_state(args, doc)
     return 0
@@ -925,7 +897,6 @@ COMMANDS = {
     ("pipeline", "unresolved-design-issues"): _unresolved_design_issues,
     ("pipeline", "blocked-tasks"): _blocked_tasks,
     ("pipeline", "attempt-counter"): _attempt_counter,
-    ("pipeline", "scope-amendment-count"): _scope_amendment_count,
     ("pipeline", "history-tail"): _history_tail,
     # run-state mutations
     ("pipeline", "transition"): _transition,
@@ -937,7 +908,6 @@ COMMANDS = {
     ("pipeline", "reclaim-stale"): _reclaim_stale,
     ("pipeline", "record-design-issue"): _record_design_issue,
     ("pipeline", "resolve-design-issue"): _resolve_design_issue,
-    ("pipeline", "scope-amendment"): _scope_amendment,
     # staged-model mutations
     ("pipeline", "advance-stage"): _advance_stage,
     ("pipeline", "propagate-blocks"): _propagate_blocks,

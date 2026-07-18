@@ -12,7 +12,7 @@ Record the session start stamp now per `wf-basics` §2. You run the whole sprint
 - `SPRINT`        = `paths.sprint`         — the task DAG (you never edit it)
 - `CURRENT_TASK`  = `paths.current_task`   — the per-worktree contract you extract for each build
 - `commands.stage_check` — the **heavy checks** run only at a stage boundary (empty → skip)
-- `review.passes`      — the ordered build→review chain (e.g. `[wf-review]`); `review.max_attempts`; `review.max_scope_amendments`
+- `review.passes`      — the ordered build→review chain (e.g. `[wf-review]`); `review.max_attempts`
 - `closeout`           — the ordered end-of-sprint steps (e.g. `[wf-retrospective, ship]`)
 - `orchestrate.history_cap` — keep at most this many live history entries
 
@@ -31,11 +31,9 @@ verdict the helper emits — never echo a diff or test output into your own cont
   `paths.pipeline_state` directly, and never re-inspect a worktree or `$SPRINT` to
   second-guess a helper's verdict — read an artifact only where a protocol below
   names the field, and treat the verbs' output as authoritative.
-- **You never widen scope.** Never edit `$SPRINT`, a task's contract, or its
-  `files_to_touch` on your own judgement — the single permitted contract edit is the
-  classifier-gated § Scope amendment; every other scope or design problem routes through
-  `dispatch-fix` (§2b). An inline widening bypasses classification and review — the
-  amendment ships unaudited.
+- **You never edit contracts.** Never edit `$SPRINT` or a task's contract on your own
+  judgement — every scope or design problem routes through `dispatch-fix` (§2b). An
+  inline edit bypasses review — it ships unaudited.
 - **Minimal context.** Each sub-agent gets only its envelope (DISPATCH.md).
 
 ## Process
@@ -136,7 +134,7 @@ python3 <paths.tools>/cli/wf orchestrate dispatch-fix <di-id>
   `paths.design_issues`:
   - `status: resolved` → `wf pipeline resolve-design-issue <di-id>` (it also resets the
     parked task to `pending`), then delete any stale `paths.feedback`,
-    `paths.review_ready`, `paths.build_blocked`, or `paths.design_issues` in the task's
+    `paths.review_ready`, or `paths.design_issues` in the task's
     worktree. Then route on the entry's final `fix_kind`:
     - `component_defect` → the fixer appended a follow-up task the parked task now
       depends on: `wf pipeline compute-stages --force`, then return to the stage loop —
@@ -157,7 +155,27 @@ python3 <paths.tools>/cli/wf orchestrate dispatch-fix <di-id>
 2. **Batch-merge** the `approved` set (from `next`): for each, merge its worktree to the
    sprint branch (see [GIT_OPERATIONS.md](assets/GIT_OPERATIONS.md) § Merge), then
    `wf pipeline complete-task <id> --commit <build_sha> --merge <merge_sha>`, then remove
-   the worktree. A merge conflict → HALT.
+   the worktree. **A conflicted merge** → abort it (`git merge --abort`), then repair it
+   in a repair worktree — never resolve the conflicts yourself:
+   - **Set up the repair.** Synthetic task id `MERGE-FIX-<task-id>`; create its worktree
+     off the sprint branch (§ Worktree). Write two artifacts into it: `$CURRENT_TASK` —
+     a contract titled `Integrate task branch <task-branch> into the sprint branch`,
+     with empty `covers`/`files_to_touch`, `out_of_scope: [any change not needed to
+     integrate <task-branch>]`, `implementation_notes` naming the conflicting task
+     branch and instructing to merge it in the repair worktree and resolve every
+     conflict by reconciling both sides (e.g. re-run codegen after combining
+     migrations), and one acceptance criterion `verified_by` `commands.stage_check`
+     (`commands.preflight` when stage_check is empty; the merge command itself when
+     both are); and `paths.feedback` naming the conflicted merge (so build runs in fix
+     mode).
+   - **Run build → review** (the same dispatch pattern as the heavy-check repair in
+     step 3), bounded by `review.max_attempts`. On `approved` → merge the repair
+     worktree to the sprint branch and `wf pipeline complete-task <id>` with that merge
+     sha. On a `design_issue` → record it (§ Return protocols → Design issues), then
+     treat the repair as failed. A failed repair (a recorded design issue, attempts
+     exhausted, or any other verdict) → remove the repair worktree, `wf pipeline
+     block-task <id> --reason <…>`, report the escalation, and continue the boundary
+     with the remaining merges.
 3. **Heavy checks** — if `commands.stage_check` is empty, skip. Otherwise run it on the
    sprint branch (piped to `/tmp`); green → step 4. On failure, repair it in a worktree —
    never edit the sprint branch directly, and never judge the failure yourself:
@@ -178,7 +196,7 @@ python3 <paths.tools>/cli/wf orchestrate dispatch-fix <di-id>
      - **`design_issue`** (build or review) → record it (§ Return protocols → Design issues)
        with `--task STAGE-FIX-<sprint-id>`, resolve it now via §2b, then set up the repair
        afresh (new worktree). Never hand-author a design-issue file.
-     - **`build_blocked`, `escalate_no_artifacts`, or attempts exhausted** → remove the
+     - **`escalate_no_artifacts`, or attempts exhausted** → remove the
        worktree and escalate the boundary.
 4. `wf pipeline stage-summary --stage <N>`; `wf pipeline stage-end --stage <N>`; if history
    exceeds `orchestrate.history_cap`, `wf pipeline archive-history --cap <history_cap>`.
@@ -221,22 +239,7 @@ python3 <paths.tools>/cli/wf orchestrate inspect-build-return <worktree> <task-i
 |:--|:--|
 | `ready_for_review` | dispatch `review.passes[0]` (Review envelope); `wf pipeline dispatch --agent <pass> --task <id> --attempt <n> --pass 0`. |
 | `design_issue` | park, don't review — record it (Design issues, below); the verdict carries `di_id`. |
-| `build_blocked` | scope-amendment (below). |
 | `escalate_no_artifacts` | escalate; `wf pipeline block-task <id> --reason <…>`. |
-
-**Scope amendment** (`build_blocked`) — the one contract edit you may ever make, and
-only with the classifier's verdict; widening on your own judgement bypasses
-classification and review, so the amendment ships unaudited. Read `required_files` from
-the artifact; write the worktree diff (`git -C <worktree> diff HEAD`) to a file; run
-`wf orchestrate classify-amendment --task-id <id> --diff <diff-file> [--claim <kind>]`
-and route on the bare word it prints:
-
-- `reject` → escalate: `wf pipeline block-task <id> --reason <…>`.
-- `feature` → consumes one of `review.max_scope_amendments`; over budget → escalate.
-  Within budget: append the `required_files` to `files_to_touch` in the **worktree's**
-  `$CURRENT_TASK` (never in `$SPRINT`), `wf pipeline scope-amendment <id> --added
-  <files>`, delete the artifact, re-dispatch build at the **same** attempt.
-- `mechanical_follow_on` → free: same as `feature` but skip `wf pipeline scope-amendment`.
 
 ### Review-pass return
 
@@ -277,7 +280,8 @@ Stop and surface to the user when:
 
 - `wf pipeline next` reports `terminal.halt` (dependency cycle, or all remaining work blocked).
 - A sub-agent HALTs, or `dispatch-fix` returns the human gate (exit 1).
-- A merge conflict, or a heavy-check fix cycle that exhausts `review.max_attempts`.
+- A heavy-check fix cycle that exhausts `review.max_attempts` (a merge-fix cycle that
+  exhausts them blocks its task and the boundary continues — not a halt).
 - No usable `$SPRINT` and §1a cannot get one: wf-swa raised no slice defect, `dispatch-fix`
   gated the re-design to a human, or wf-sa escalated the rejection.
 - The pipeline-state file is corrupt, or config cannot be resolved.

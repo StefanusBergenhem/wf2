@@ -7,9 +7,8 @@ sub-agent's prose — compliance by mechanism.
 
   inspect-build-return   Build Return Protocol detector
   inspect-review-return  Review Return Protocol detector
-  preserve-uncommitted   commit in-scope uncommitted work before re-dispatch
+  preserve-uncommitted   commit uncommitted work before re-dispatch
   sweep-transients       session-start broom (resume safety)
-  classify-amendment     scope amendment: feature / mechanical_follow_on / reject
   dispatch-fix           design-issue routing by fix_kind
 
 Unlike the query verbs (which route through common.emit), every verb here prints
@@ -105,14 +104,11 @@ def _inspect_build_return(rest):
     except _MalformedYAML as exc:
         return _err(f"error: parse {config_file}: {exc}")
 
-    p_build_blocked = _config_path_value(config_doc, "build_blocked") or \
-        ".wf/transient/build-blocked.yaml"
     p_design_issues = _config_path_value(config_doc, "design_issues") or \
         ".wf/transient/design-issues.yaml"
     p_review_ready = _config_path_value(config_doc, "review_ready") or \
         ".wf/transient/review-ready.yaml"
 
-    abs_build_blocked = worktree_path / p_build_blocked
     abs_design_issues = worktree_path / p_design_issues
     abs_review_ready = worktree_path / p_review_ready
 
@@ -123,10 +119,7 @@ def _inspect_build_return(rest):
     di_id = ""
 
     di = _open_design_issue_for_task(abs_design_issues, task_id)
-    if abs_build_blocked.is_file():
-        verdict = "build_blocked"
-        artifact_rel = p_build_blocked
-    elif di:
+    if di:
         verdict = "design_issue"
         artifact_rel = p_design_issues
         di_id = di
@@ -277,29 +270,6 @@ def _preserve_uncommitted(rest):
     if not _is_git_worktree(worktree_path):
         return _err(f"error: {rest[0]} is not a git worktree")
 
-    # Resolve paths.current_task from the worktree's config (canonical default).
-    current_task_rel = ".wf/transient/current-task.yaml"
-    worktree_config = worktree_path / ".wf" / "config.yaml"
-    try:
-        config_doc = _load_yaml_file(worktree_config)
-    except _MalformedYAML:
-        config_doc = {}
-    resolved = _config_path_value(config_doc, "current_task")
-    if resolved:
-        current_task_rel = resolved
-
-    current_task_file = worktree_path / current_task_rel
-
-    # Parse files_to_touch into an in-scope set (empty if file missing/absent key).
-    in_scope: set[str] = set()
-    try:
-        ct_doc = _load_yaml_file(current_task_file)
-    except _MalformedYAML:
-        ct_doc = {}
-    for p in (ct_doc.get("files_to_touch") or []):
-        if p:
-            in_scope.add(str(p))
-
     # git status --porcelain=v1 — read RAW stdout (not stripped): the porcelain format
     # is column-sensitive (X = index status at col 0, Y = worktree status at col 1), so
     # stripping would corrupt a leading-space column like " M path".
@@ -315,7 +285,7 @@ def _preserve_uncommitted(rest):
     status_output = st.stdout
 
     tracked_files: list[str] = []
-    new_in_scope_files: list[str] = []
+    new_untracked_files: list[str] = []
 
     for line in status_output.splitlines():
         if not line:
@@ -334,34 +304,32 @@ def _preserve_uncommitted(rest):
             path_field = path_field[1:]
 
         if x == "?" and y == "?":
-            if path_field in in_scope:
-                new_in_scope_files.append(path_field)
+            # Untracked = task work in flight (ignored files never reach porcelain
+            # v1 without --ignored). All of it is preserved — the expected write
+            # set is a planning signal, never a filter on what survives a halt.
+            new_untracked_files.append(path_field)
         elif x in "MADRC" or y in "MADRC":
             tracked_files.append(path_field)
-        # `!!` (ignored) and other states fall through.
 
-    total = len(tracked_files) + len(new_in_scope_files)
+    total = len(tracked_files) + len(new_untracked_files)
     if total == 0:
         print("clean")
         return 0
 
-    files_to_stage = tracked_files + new_in_scope_files
+    files_to_stage = tracked_files + new_untracked_files
 
     body_lines = ""
     if tracked_files:
         body_lines += f"Tracked (modified/staged): {len(tracked_files)} file(s)\n"
         for f in tracked_files:
             body_lines += f"  • {f}\n"
-    if new_in_scope_files:
-        body_lines += (
-            f"New in scope (untracked, matched files_to_touch): "
-            f"{len(new_in_scope_files)} file(s)\n"
-        )
-        for f in new_in_scope_files:
+    if new_untracked_files:
+        body_lines += f"New (untracked): {len(new_untracked_files)} file(s)\n"
+        for f in new_untracked_files:
             body_lines += f"  • {f}\n"
 
     commit_message = (
-        f"chore({task_id}): preserve uncommitted files from prior build_blocked halt\n"
+        f"chore({task_id}): preserve uncommitted files from a prior halted dispatch\n"
         "\n"
         "Auto-committed by `wf orchestrate preserve-uncommitted` before re-dispatch\n"
         "to prevent a silent merge drop.\n"
@@ -584,7 +552,6 @@ def _sweep_transients(rest):
 
     sweep(resolve("feedback", ".wf/transient/feedback.yaml"))
     sweep(resolve("review_ready", ".wf/transient/review-ready.yaml"))
-    sweep(resolve("build_blocked", ".wf/transient/build-blocked.yaml"))
     sweep_design_issues(resolve("design_issues", ".wf/transient/design-issues.yaml"))
 
     print(json.dumps({"deleted": deleted, "pruned": pruned, "skipped": skipped},
@@ -593,107 +560,7 @@ def _sweep_transients(rest):
 
 
 # ===========================================================================
-# 5. classify-amendment
-# ===========================================================================
-
-_DEFAULT_TEST_PATTERNS = [
-    r"_test\.go$",
-    r"\.test\.(ts|tsx|js|jsx)$",
-    r"\.spec\.(ts|tsx|js|jsx)$",
-    r"_test\.py$",
-    r"(^|/)test_[^/]+\.py$",
-    r"(^|/)tests?/",
-    r"(^|/)spec/",
-]
-
-_NEW_TEST_DECL_PATTERNS = [
-    r"^\+\s*func\s+Test[A-Z_]",        # Go
-    r"^\+\s*func\s+Benchmark[A-Z_]",   # Go benchmarks
-    r"^\+\s*describe\s*\(",            # Jest/Vitest/Jasmine/Mocha JS
-    r"^\+\s*it\s*\(",                  # JS test cases
-    r"^\+\s*test\s*\(",               # JS test cases
-    r"^\+\s*def\s+test_",              # Python pytest / unittest
-    r"^\+\s*class\s+Test[A-Z_]",       # Python unittest TestCase class
-]
-
-
-def _classify_amendment(rest):
-    task_id = ""
-    diff_path = ""
-    claim = ""
-    extra_patterns: list[str] = []
-
-    i = 0
-    while i < len(rest):
-        a = rest[i]
-        if a == "--task-id":
-            if i + 1 >= len(rest):
-                return _err("unknown arg: --task-id")
-            task_id = rest[i + 1]
-            i += 2
-        elif a == "--diff":
-            if i + 1 >= len(rest):
-                return _err("unknown arg: --diff")
-            diff_path = rest[i + 1]
-            i += 2
-        elif a == "--test-pattern":
-            if i + 1 >= len(rest):
-                return _err("unknown arg: --test-pattern")
-            extra_patterns.append(rest[i + 1])
-            i += 2
-        elif a == "--claim":
-            if i + 1 >= len(rest):
-                return _err("unknown arg: --claim")
-            claim = rest[i + 1]
-            i += 2
-        else:
-            return _err(f"unknown arg: {a}")
-
-    if not task_id or not diff_path:
-        return _err("error: --task-id and --diff are required")
-
-    diff_file = Path(diff_path)
-    if not diff_file.is_file():
-        return _err(f"error: diff file not found at {diff_path}")
-
-    diff_text = diff_file.read_text(errors="replace")
-
-    all_patterns = _DEFAULT_TEST_PATTERNS + extra_patterns
-    test_re = re.compile("|".join(all_patterns))
-
-    # Extract files from the diff: `diff --git a/.. b/..` → the b/<path>.
-    files_changed: list[str] = []
-    b_re = re.compile(r" b/([^ ]+)$")
-    for line in diff_text.splitlines():
-        if line.startswith("diff --git "):
-            mm = b_re.search(line)
-            if mm:
-                files_changed.append(mm.group(1))
-
-    if not files_changed:
-        print("feature")
-        return 0
-
-    non_test_files = [f for f in files_changed if not test_re.search(f)]
-
-    # Any non-test file touched → feature (or reject if claimed mechanical).
-    if non_test_files:
-        print("reject" if claim == "mechanical_follow_on" else "feature")
-        return 0
-
-    # All-test amendment: any new test declarations among the added (+) lines?
-    decl_re = re.compile("|".join(_NEW_TEST_DECL_PATTERNS))
-    has_new_decl = any(decl_re.search(line) for line in diff_text.splitlines())
-    if has_new_decl:
-        print("reject" if claim == "mechanical_follow_on" else "feature")
-        return 0
-
-    print("mechanical_follow_on")
-    return 0
-
-
-# ===========================================================================
-# 6. dispatch-fix
+# 5. dispatch-fix
 # ===========================================================================
 
 # fix_kind → (subagent, human_gate). Build/review classify a design issue from their
@@ -846,6 +713,5 @@ COMMANDS = {
     ("orchestrate", "inspect-review-return"): _inspect_review_return,
     ("orchestrate", "preserve-uncommitted"): _preserve_uncommitted,
     ("orchestrate", "sweep-transients"): _sweep_transients,
-    ("orchestrate", "classify-amendment"): _classify_amendment,
     ("orchestrate", "dispatch-fix"): _dispatch_fix,
 }

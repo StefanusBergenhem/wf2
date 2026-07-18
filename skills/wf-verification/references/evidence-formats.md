@@ -27,9 +27,11 @@ PREFLIGHT:
 
 ```
 SCOPE CHECK:
-  files_to_touch: [list from contract]
   git diff --name-only: [actual output]
-  Match: YES / NO (explain discrepancy)
+  Serves covers/ACs (or mechanical consequence): YES / NO per file
+    (name the AC/requirement each file serves, or the mechanical reason —
+    regenerated file, updated consumer, test home)
+  out_of_scope untouched: YES / NO
 ```
 
 ### 4. No suppression directives — check command
@@ -100,6 +102,6 @@ Any of the following instantly disqualifies a "done" claim:
 | Summarized evidence | "All tests pass" without showing the output |
 | Assumed evidence | "This should work because..." |
 | Suppressed failures | Adding `skip` to failing tests |
-| Scope violations | Files changed that aren't in `files_to_touch` |
+| Scope violations | A changed file serving no `covers`/AC, or a change to something `out_of_scope` names |
 | Lingering debug code | `console.log` left in production code |
 | Untested error paths | Every error/exception path in the implementation written for this task must have a corresponding test. If the implementation has N distinct error returns/throws, there must be at least N error-path tests. "Only happy-path tests exist" is a disqualifier. |

@@ -271,11 +271,6 @@ wf "$PROJ_M" pipeline resolve-design-issue DI-2 >/dev/null
     && ok "resolve-design-issue leaves a non-parked task status alone" || bad "DI resolve non-parked" \
     "$(wf "$PROJ_M" pipeline task-state T5 --format json)"
 
-# scope-amendment bumps the count
-wf "$PROJ_M" pipeline scope-amendment T2 --added "a.go,b.go" >/dev/null
-[ "$(jget "$(wf "$PROJ_M" pipeline scope-amendment-count T2 --format json)" "d['value']")" = "1" ] \
-    && ok "scope-amendment bumps count" || bad "scope count" ""
-
 # reclaim-stale flips an orphan slot back to pending
 PROJ_R="$(echo "$DIAMOND" | new_proj)"
 seed_state "$PROJ_R" <<'YAML'

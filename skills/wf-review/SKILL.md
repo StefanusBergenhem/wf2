@@ -53,9 +53,13 @@ the build to have done.
 - **Security.** Scan the diff for injection (string-built queries), hardcoded
   secrets/credentials, auth bypass, missing input validation, secrets leaked in errors.
   → `security_violation`.
-- **Scope.** `git diff --name-only` against `files_to_touch` (wf-verification §3). A
-  changed file outside the set rejects — or, when the contract genuinely needs it, is a
-  design issue. → `scope_violation`.
+- **Scope.** Read `git diff --name-only` and judge every changed file against the
+  contract (wf-verification §3): each one must serve the task's `covers`/acceptance
+  criteria or be a mechanical consequence of serving them (a regenerated file, an
+  updated consumer, a test home). A file outside `files_to_touch` is fine when it
+  passes that test — the list is the expected write set, not a fence. An unrelated
+  drive-by change rejects, and so does any change to something `out_of_scope` names.
+  → `scope_violation`.
 - **Proving-tag coverage + AC↔test.** For every requirement id in the contract's `covers`,
   find a test carrying its `[REQ:<id>]` tag that **genuinely exercises** the requirement (not
   a vacuous assertion); for every `system_tests[].id` on an e2e task, find an end-to-end test

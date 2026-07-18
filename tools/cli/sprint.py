@@ -386,7 +386,9 @@ def _check(rest):
             err("B6", f"{tid}: interface_contract_ref present but interface_contract "
                       f"is not inlined — run `wf sprint materialize`")
 
-        # B7 + C2 — test entries: a known level; a unit test's target file in scope
+        # B7 + C2 — test entries: a known level; a unit test's target file declared in
+        # the expected write set (C2 is a planning-quality hint — files_to_touch is
+        # advisory, so an undeclared target warns, never fails)
         for ac in ac_entries:
             for te in (ac.get("tests") or []):
                 lvl = te.get("level")
@@ -396,15 +398,16 @@ def _check(rest):
                 elif lvl == "unit":
                     fpath = (te.get("target") or "").split(":", 1)[0].strip()
                     if not fpath:
-                        err("C2", f"{tid}: AC {ac.get('id')} unit test names no target")
+                        warn("C2", f"{tid}: AC {ac.get('id')} unit test names no target")
                     elif fpath not in files:
-                        err("C2", f"{tid}: unit target '{fpath}' not in files_to_touch")
+                        warn("C2", f"{tid}: unit target '{fpath}' not in files_to_touch "
+                                   f"— declare it so overlaps become ordering edges")
 
-        # C3 — mandated tests need a file to live in
+        # C3 — mandated tests should declare a file home (planning-quality hint)
         if any(ac.get("tests") for ac in ac_entries) and not any(_is_test_path(f) for f in files):
-            err("C3", f"{tid}: acceptance criteria mandate tests but files_to_touch "
-                      f"has no test file (*_test.*, test_*.*, *.test.*, *.spec.*, "
-                      f"tests/ ...) — the mandated tests have no home")
+            warn("C3", f"{tid}: acceptance criteria mandate tests but files_to_touch "
+                       f"declares no test file (*_test.*, test_*.*, *.test.*, *.spec.*, "
+                       f"tests/ ...) — declare the test home in the expected write set")
 
         # C4 — e2e task shape (B6 when the case text is not materialized yet)
         if systests:
@@ -474,10 +477,11 @@ def _check(rest):
         if len(owners) > 1:
             err("C7", f"AC {ac} claimed by multiple tasks {owners} — a criterion lands in exactly one")
 
-    # C10 — two tasks whose files_to_touch overlap must be ordered by a dependency edge.
-    # Unordered, they can land in the same parallel stage, edit the same file in separate
-    # worktrees, and collide at the stage merge. A transitive edge either direction orders
-    # them and satisfies the check.
+    # C10 — two tasks whose declared write sets overlap and carry no dependency edge
+    # can land in the same parallel stage and edit the same file in separate worktrees.
+    # A planning-quality hint: the choice is to add an edge OR accept the merge-conflict
+    # risk (the stage boundary repairs a conflicted merge on demand). A transitive edge
+    # either direction orders them and quiets the warning.
     reach = _reachable(tasks)
     files_by = {t.get("id"): set(t.get("files_to_touch") or []) for t in tasks}
     ordered = [t.get("id") for t in tasks]
@@ -486,9 +490,9 @@ def _check(rest):
             a, b = ordered[i], ordered[j]
             shared = files_by.get(a, set()) & files_by.get(b, set())
             if shared and b not in reach.get(a, set()) and a not in reach.get(b, set()):
-                err("C10", f"{a} and {b} share files_to_touch {sorted(shared)} with no "
-                           f"dependency edge — they can land in the same parallel stage and "
-                           f"collide in separate worktrees; add a depends_on edge to order them")
+                warn("C10", f"{a} and {b} share files_to_touch {sorted(shared)} with no "
+                            f"dependency edge — add a depends_on edge to order them, or "
+                            f"accept the merge-conflict risk at the stage boundary")
 
     # ---- Family A: slice -> sprint completeness (needs the slice) ----
     slice_path = _slice_path(args)

@@ -22,9 +22,8 @@ other task except as Step 4 directs.
 Decide where the defect lives — walk these checks in order and take the first that holds:
 
 - **The contract is wrong** (the requirement is right; the contract diverges from it) — an
-  acceptance criterion contradicts another, is untestable or ambiguous as written,
-  `files_to_touch` omits a file the task genuinely needs, or a `depends_on` edge is
-  missing. → `fix_kind: contract_amendment`; go to Step 3.
+  acceptance criterion contradicts another, is untestable or ambiguous as written, or a
+  `depends_on` edge is missing. → `fix_kind: contract_amendment`; go to Step 3.
 - **Already-merged component code is wrong** (the contract and its requirement are both
   right; code merged by an earlier task violates them, and the defect is not in the
   current task's diff) — e.g. a persistence call dropping a field, wiring that was never

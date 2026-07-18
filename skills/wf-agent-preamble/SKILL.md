@@ -65,23 +65,24 @@ character, rejects.
 
 ## Scope discipline
 
-- **File boundaries.** Modify only files listed in `files_to_touch` from `paths.current_task`.
-  If compilation or tests require touching another file, HALT — do not expand scope yourself.
-  The role-specific halt artifact: `paths.build_blocked` for build, a design issue for review.
-- **No silent additions.** A new file not in `files_to_touch` may not be picked up by the
-  orchestrator's `preserve-uncommitted` step. If a new file is genuinely needed, name it in
-  your halt artifact rather than creating it silently.
+- **The contract bounds the work, not the file list.** `files_to_touch` in
+  `paths.current_task` is the expected write set — start there, and write beyond it when
+  the task genuinely needs it (a consumer that won't compile otherwise, a test-file home,
+  a regenerated file). Every file you change must serve the contract's `covers`/acceptance
+  criteria; `out_of_scope` is binding, and an unrelated drive-by change is a review
+  rejection.
+- **Commit every file you create** with the task's work — the merge to the sprint
+  branch carries only committed files.
 
 ## Halt-report format
 
 When a HALT fires, the report MUST contain:
 
-1. **The exact trigger** — quote the rule (worktree path discipline, scope expansion,
-   suppression ban, …).
+1. **The exact trigger** — quote the rule (worktree path discipline, suppression ban, …).
 2. **Minimal evidence** — file path + line, or the exact command + last 20 lines of output,
    or the contract field that contradicts reality. Citations, not narrative.
-3. **The artifact you wrote** — most halts produce one (`build_blocked`, `design_issues`,
-   `feedback`). Name the file and summarize its contents.
+3. **The artifact you wrote** — most halts produce one (`design_issues`, `feedback`).
+   Name the file and summarize its contents.
 4. **What's safe to do next** — re-dispatch with an amended contract / route to `wf-swa`
    fix-mode / escalate to human. Match your role skill's halt protocol; do not invent states.
 

@@ -452,16 +452,19 @@ PY
 OUT="$(wf sprint check --format json)"
 [ "$(has "$OUT" C1)" = "True" ] && ok "check: C1 flags a dangling depends_on" || bad "C1-dangling" "$OUT"
 
-# C2 — a unit target file outside files_to_touch
+# C2 — a unit target file outside files_to_touch (planning-quality hint: files_to_touch
+# is the ADVISORY expected write set, so a missing declaration warns, never fails)
 write_clean_sprint
 "$PYTHON" - "$SPRINT" <<'PY'
 import sys, yaml
 p=sys.argv[1]; d=yaml.safe_load(open(p))
-d['tasks'][0]['files_to_touch']=['other.go']  # target core/widget.go no longer in scope
+d['tasks'][0]['files_to_touch']=['other.go']  # target core/widget.go not declared
 open(p,'w').write(yaml.safe_dump(d, sort_keys=False))
 PY
-OUT="$(wf sprint check --format json)"
-[ "$(has "$OUT" C2)" = "True" ] && ok "check: C2 flags a unit target outside files_to_touch" || bad "C2" "$OUT"
+OUT="$(wf sprint check --format json)"; RC=$?
+[ "$(has "$OUT" C2 warnings)" = "True" ] && ok "check: C2 warns on a unit target outside files_to_touch" || bad "C2" "$OUT"
+[ "$(has "$OUT" C2)" = "False" ] && ok "check: C2 is a warning, not an error" || bad "C2-sev" "$OUT"
+[ "$RC" -eq 0 ] && ok "check: C2 alone still exits 0" || bad "C2 exit" "rc=$RC $OUT"
 
 # C2 — a unit test entry with no target at all
 write_clean_sprint
@@ -472,7 +475,7 @@ d['tasks'][0]['acceptance_criteria'][0]['tests']=[{'level':'unit'}]
 open(p,'w').write(yaml.safe_dump(d, sort_keys=False))
 PY
 OUT="$(wf sprint check --format json)"
-[ "$(has "$OUT" C2)" = "True" ] && ok "check: C2 flags a unit test with no target" || bad "C2-notarget" "$OUT"
+[ "$(has "$OUT" C2 warnings)" = "True" ] && ok "check: C2 warns on a unit test with no target" || bad "C2-notarget" "$OUT"
 
 # C4 — an e2e task that also carries REQ covers
 write_clean_sprint
@@ -551,9 +554,12 @@ d['tasks'][1]['files_to_touch']=['e2e/widget_test.go','core/widget.go']  # now o
 open(p,'w').write(yaml.safe_dump(d, sort_keys=False))
 PY
 OUT="$(wf sprint check --format json)"; RC=$?
-[ "$RC" -eq 1 ] && ok "check: C10 overlap -> exit 1" || bad "C10 exit" "rc=$RC $OUT"
-[ "$(has "$OUT" C10)" = "True" ] && ok "check: C10 flags overlapping files_to_touch with no edge" || bad "C10" "$OUT"
-[ "$(jget "$OUT" "any('core/widget.go' in f['msg'] for f in d['errors'])")" = "True" ] && ok "check: C10 names the shared file" || bad "C10 name" "$OUT"
+[ "$RC" -eq 0 ] && ok "check: C10 overlap alone -> exit 0 (warning)" || bad "C10 exit" "rc=$RC $OUT"
+[ "$(has "$OUT" C10 warnings)" = "True" ] && ok "check: C10 warns on overlapping files_to_touch with no edge" || bad "C10" "$OUT"
+[ "$(has "$OUT" C10)" = "False" ] && ok "check: C10 is a warning, not an error" || bad "C10-sev" "$OUT"
+[ "$(jget "$OUT" "any('core/widget.go' in f['msg'] for f in d['warnings'])")" = "True" ] && ok "check: C10 names the shared file" || bad "C10 name" "$OUT"
+[ "$(jget "$OUT" "any('merge-conflict' in f['msg'] for f in d['warnings'] if f['code']=='C10')")" = "True" ] \
+    && ok "check: C10 names the choice — add an edge or accept the merge-conflict risk" || bad "C10 msg" "$OUT"
 
 # C10 — the same overlap is fine when a dependency edge orders the two tasks
 write_clean_sprint
@@ -564,7 +570,7 @@ d['tasks'][1]['files_to_touch']=['e2e/widget_test.go','core/widget.go']  # overl
 open(p,'w').write(yaml.safe_dump(d, sort_keys=False))
 PY
 OUT="$(wf sprint check --format json)"
-[ "$(has "$OUT" C10)" = "False" ] && ok "check: C10 accepts overlap when an edge orders the tasks" || bad "C10-edge" "$OUT"
+[ "$(has "$OUT" C10 warnings)" = "False" ] && ok "check: C10 accepts overlap when an edge orders the tasks" || bad "C10-edge" "$OUT"
 
 # C3 — mandated unit tests with no plausible test file in files_to_touch
 write_clean_sprint
@@ -574,8 +580,10 @@ p=sys.argv[1]; d=yaml.safe_load(open(p))
 d['tasks'][0]['files_to_touch']=['core/widget.go']  # AC tests stay, test-file home gone
 open(p,'w').write(yaml.safe_dump(d, sort_keys=False))
 PY
-OUT="$(wf sprint check --format json)"
-[ "$(has "$OUT" C3)" = "True" ] && ok "check: C3 flags AC tests with no test-file home" || bad "C3" "$OUT"
+OUT="$(wf sprint check --format json)"; RC=$?
+[ "$(has "$OUT" C3 warnings)" = "True" ] && ok "check: C3 warns on AC tests with no declared test-file home" || bad "C3" "$OUT"
+[ "$(has "$OUT" C3)" = "False" ] && ok "check: C3 is a warning, not an error" || bad "C3-sev" "$OUT"
+[ "$RC" -eq 0 ] && ok "check: C3 alone still exits 0" || bad "C3 exit" "rc=$RC $OUT"
 
 # C3 — integration-level tests alone also need a test-file home
 write_clean_sprint
@@ -589,7 +597,7 @@ for ac in t['acceptance_criteria']:
 open(p,'w').write(yaml.safe_dump(d, sort_keys=False))
 PY
 OUT="$(wf sprint check --format json)"
-[ "$(has "$OUT" C3)" = "True" ] && ok "check: C3 flags integration tests with no test-file home" || bad "C3-integ" "$OUT"
+[ "$(has "$OUT" C3 warnings)" = "True" ] && ok "check: C3 warns on integration tests with no test-file home" || bad "C3-integ" "$OUT"
 
 # C3 — a test directory counts as a test-file home (heuristic is language-agnostic)
 write_clean_sprint
@@ -600,7 +608,7 @@ d['tasks'][0]['files_to_touch']=['core/widget.go','__tests__/widget.js']
 open(p,'w').write(yaml.safe_dump(d, sort_keys=False))
 PY
 OUT="$(wf sprint check --format json)"
-[ "$(has "$OUT" C3)" = "False" ] && ok "check: C3 accepts a test-directory file as the home" || bad "C3-dir" "$OUT"
+[ "$(has "$OUT" C3 warnings)" = "False" ] && ok "check: C3 accepts a test-directory file as the home" || bad "C3-dir" "$OUT"
 
 # C3 — every AC gate-verified -> no tests -> no test-file home required
 write_clean_sprint
@@ -615,7 +623,7 @@ for ac in t['acceptance_criteria']:
 open(p,'w').write(yaml.safe_dump(d, sort_keys=False))
 PY
 OUT="$(wf sprint check --format json)"; RC=$?
-[ "$(has "$OUT" C3)" = "False" ] && ok "check: C3 stays quiet when no AC mandates a test" || bad "C3-none" "$OUT"
+[ "$(has "$OUT" C3 warnings)" = "False" ] && ok "check: C3 stays quiet when no AC mandates a test" || bad "C3-none" "$OUT"
 [ "$RC" -eq 0 ] && ok "check: gate-verified-only task exits 0" || bad "C3-none exit" "rc=$RC $OUT"
 
 # C9 — implementation_notes naming a file absent from files_to_touch warns

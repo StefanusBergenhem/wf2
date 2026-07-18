@@ -30,7 +30,7 @@ at issue), the implicated requirement's entry in `$DESIGN_SLICE` and in its
 Walk these checks in order and take the first that holds:
 
 - **The spec is right and the contract diverges from it** — the requirement/ADR is
-  buildable as written; the defect is in an acceptance criterion, `files_to_touch`, or a
+  buildable as written; the defect is in an acceptance criterion or a
   `depends_on` edge. Below your altitude: do **not** amend anything. Set the `di_id`
   entry's `fix_kind: contract_amendment` in `$di_artifact`, **leave its `status: open`**,
   and report the one-line reason — the orchestrator re-routes the issue to `wf-swa`. Go to

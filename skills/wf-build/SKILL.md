@@ -5,14 +5,14 @@ description: TDD developer procedure — executes one task contract red→green�
 
 # wf-build — execute one task contract
 
-You execute the contract at `paths.current_task` under TDD. You do not plan, expand
-scope, or read the spec layer (ADRs, design slice) — the contract is complete for what
-this task builds. Resolve every path and command from `.wf/config.yaml`:
+You execute the contract at `paths.current_task` under TDD. You do not plan or read the
+spec layer (ADRs, design slice) — the contract is complete for what this task builds.
+Resolve every path and command from `.wf/config.yaml`:
 
 - `CONTRACT` = `paths.current_task` — what to build (the single source)
 - `FEEDBACK` = `paths.feedback` — a prior review's rejection; present → Fix mode
 - `commands.preflight` — the mechanical gate to pass before handoff
-- result artifacts you may write: `paths.review_ready`, `paths.build_blocked`, `paths.design_issues`
+- result artifacts you may write: `paths.review_ready`, `paths.design_issues`
 
 ## Step 0 — Mode
 
@@ -27,6 +27,10 @@ this task builds. Resolve every path and command from `.wf/config.yaml`:
    an e2e task, `system_tests`, and when the task introduces a component or widens a
    shared seam, `interface_contract`: the exact signature/struct/endpoint shape to
    implement. Deviating from it is a contract problem (Step 3b), not a judgement call.
+   `files_to_touch` is the **expected write set** — your starting pointers, not a fence.
+   Write beyond it when the task genuinely needs it (a consumer that won't compile
+   otherwise, a test-file home, a regenerated file); what bounds your work is `covers`,
+   the acceptance criteria, and `out_of_scope`, which is binding.
 2. Read only the source the contract points at — the files in `files_to_touch` and any
    path named in `implementation_notes`. No wider exploration.
 3. A completed `depends_on` task is already merged into the branch your worktree was cut
@@ -44,8 +48,8 @@ From the contract alone — never re-derive from prose elsewhere:
   `check`. An AC carrying `verified_by` instead of `tests` is proven by that gate running
   green in Step 4, not by a test you write.
 
-An AC you cannot turn into a test from the contract (it contradicts the source, or its
-test would need a file outside `files_to_touch`) is a contract problem → Step 3b.
+An AC you cannot turn into a test from the contract (it contradicts the source) is a
+contract problem → Step 3b.
 
 ## Step 3 — TDD
 
@@ -96,9 +100,9 @@ commented-out code, no suppression directive.
 ### Step 3b — Design issue (contract or merged code)
 
 If the blocker is **not your own code** — an AC contradicts the source, a requirement is
-self-inconsistent, `files_to_touch` cannot satisfy an AC, the contract asks for something
-the source makes impossible, or an AC fails because **already-merged code** (a dependency
-task's work, not this task's diff) is defective — do not retry or work around it. Write
+self-inconsistent, the contract asks for something the source makes impossible, or an AC
+fails because **already-merged code** (a dependency task's work, not this task's diff) is
+defective — do not retry or work around it. Write
 `paths.design_issues` from `assets/design_issues.yaml.tmpl`:
 
 - `fix_kind: component_defect` when the defect lives in already-merged code;
@@ -120,9 +124,9 @@ because its environment is unavailable is a HALT, not a pass — do not write `r
 ## Step 5 — Hand off
 
 1. Run the `wf-verification` checklist — every applicable item, with evidence.
-2. Commit the source, staging **only** `files_to_touch`:
+2. Commit the task's work, staging everything in the worktree:
    ```
-   git commit -m "<task-id> <title>"
+   git add -A && git commit -m "<task-id> <title>"
    ```
    Do not push — the orchestrator merges at the stage boundary.
 3. Write `paths.review_ready` from `assets/review_ready.yaml.tmpl` — a presence marker. Its
@@ -135,22 +139,14 @@ because its environment is unavailable is a HALT, not a pass — do not write `r
 1. Read `FEEDBACK` — address only its listed failures, each with the minimal change. Do
    not rewrite, and do not touch anything it does not name.
 2. If a fix reveals a contract problem (Step 3b criteria), write the design issue and HALT.
-3. If a fix needs a file outside `files_to_touch`, HALT with a scope block (below).
-4. Re-run the gate (Step 4) and the verification checklist, re-commit, delete
+3. Re-run the gate (Step 4) and the verification checklist, re-commit, delete
    `FEEDBACK`, then write `paths.review_ready` — in that order.
-
-## Scope-expansion HALT (`paths.build_blocked`)
-
-A file outside `files_to_touch` must change → do not change it. Write `paths.build_blocked`
-from `assets/build_blocked.yaml.tmpl` (`required_files`, `reason`), remove any stale
-`review_ready`, and HALT. The orchestrator widens the contract and re-dispatches you.
 
 ## Halt conditions
 
 - A test fails 3 times with no identified root cause.
 - The contract is contradictory or unbuildable as specified → Step 3b.
 - `commands.preflight` is unset, or a mandatory gate cannot run (environment down).
-- A file outside `files_to_touch` is required → scope block.
 
 Report per the `wf-agent-preamble` halt-report format.
 

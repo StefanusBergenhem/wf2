@@ -18,7 +18,8 @@ tasks:
     title: "<imperative, one line>"
     depends_on: []
     covers: [REQ-1]             # requirements + serves are materialized from the slice
-    files_to_touch:             # through the impact gate (task-contract.md Scope consistency)
+    files_to_touch:             # expected write set — a planning signal, cut with the
+                                # impact tool (task-contract.md Scope consistency)
       - "<path>"
       - "<the test file the mandated tests live in>"
     acceptance_criteria:

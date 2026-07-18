@@ -42,8 +42,8 @@ one or more requirements and carries their criteria. Every criterion lands in ex
 one task; every requirement is fully covered across the task set.
 
 For each task, author its **complete thin** contract per `references/task-contract.md`:
-`covers`, `files_to_touch` (through the impact gate), the per-criterion `tests`,
-`out_of_scope`, and pointer-only `implementation_notes`. Do **not** write `requirements`,
+`covers`, `files_to_touch` (the expected write set, cut with the impact tool), the
+per-criterion `tests`, `out_of_scope`, and pointer-only `implementation_notes`. Do **not** write `requirements`,
 `serves`, or `interface_contract` by hand — `wf sprint materialize` (Phase 5) inlines them
 from the slice. When a task builds a component or widens a seam the slice's **Interface
 contracts** section fixes a shape for, set `interface_contract_ref` to that contract's
@@ -79,10 +79,12 @@ interface, a migration, a type another task imports). Tasks with no edge between
 run in parallel. The graph must be acyclic — a cycle is a decomposition error; resolve
 it by splitting a task or merging two.
 
-**Two tasks whose `files_to_touch` overlap must have an edge between them** — unordered,
-they land in the same parallel stage and edit the same file in separate worktrees, which
-collides at the stage merge. `wf sprint check` fails (C10) on any such pair; add the edge
-(or, better, factor the shared file into its own upstream task so the leaf tasks partition).
+**Two tasks whose `files_to_touch` overlap need an edge between them, or an accepted
+risk** — unordered, they land in the same parallel stage and edit the same file in
+separate worktrees, which can conflict at the stage merge. `wf sprint check` warns (C10)
+on any such pair: add the edge (or, better, factor the shared file into its own upstream
+task so the leaf tasks partition), or accept the merge-conflict risk — the stage boundary
+repairs a conflicted merge on demand.
 When numbered artifacts are pre-allocated across tasks (migrations, ordered fixtures), give
 them numbers that ascend with merge order — a lower number merging after a higher one
 replays out of order against a persistent store.
@@ -100,11 +102,11 @@ replays out of order against a persistent store.
 3. **Gate: run `python3 <paths.tools>/cli/wf sprint check`. Do not proceed until it
    reports `verdict: pass` (exit 0).** It checks the sprint against the slice — every
    slice requirement covered, every criterion carried by exactly one task and carrying
-   tests (or gate-verified via `verified_by`), every mandated test with a test-file
-   home in `files_to_touch`, every requirement's driver in the task's `serves`, every
-   SYS-TC carried by an e2e task, no UNCONFIRMED assumption, an acyclic DAG. On an error
-   finding, fix the decomposition in `$SPRINT`, **re-run materialize**, and re-run the
-   check. A finding you cannot resolve without minting or changing a requirement is a
+   tests (or gate-verified via `verified_by`), every requirement's driver in the task's
+   `serves`, every SYS-TC carried by an e2e task, no UNCONFIRMED assumption, an acyclic
+   DAG. On an error finding, fix the decomposition in `$SPRINT`, **re-run materialize**,
+   and re-run the check. Read its warnings too — an undeclared test home or an unordered
+   `files_to_touch` overlap is a planning-quality hint worth fixing while you are here. A finding you cannot resolve without minting or changing a requirement is a
    slice defect — halt per **Halt conditions**, never invent a criterion to silence it.
 4. Return a summary: the task count, the dependency shape, and the gate verdict. Leave
    `$DESIGN_SLICE` in place — it is drained at sprint close, not here.

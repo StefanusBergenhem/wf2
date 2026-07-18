@@ -36,15 +36,21 @@ def _now_iso() -> str:
 
 
 class Escalation(Exception):
-    """A branch the driver cannot resolve autonomously (build_blocked denied, merge
-    conflict, ambiguous review, max-attempts, human-gated DI, heavy-check failure).
-    Carries a task id when applicable; the outer loop collects these instead of
-    crashing so other tasks keep running."""
+    """A branch the driver cannot resolve autonomously (ambiguous review,
+    max-attempts, human-gated DI, heavy-check failure). Carries a task id when
+    applicable; the outer loop collects these instead of crashing so other tasks
+    keep running."""
 
     def __init__(self, reason: str, task_id: str | None = None):
         super().__init__(reason)
         self.reason = reason
         self.task_id = task_id
+
+
+class MergeConflict(Escalation):
+    """A stage-boundary git merge that stopped on conflicts. The merge is already
+    aborted when this is raised; the boundary routes it into a merge-fix cycle
+    instead of halting."""
 
 
 @dataclass
@@ -202,7 +208,7 @@ class GitOps:
         r = self._git("merge", "--no-ff", "-m", f"{branch}: merge", branch)
         if r.returncode != 0:
             self._git("merge", "--abort")
-            raise Escalation(f"merge conflict merging {branch} into {into}")
+            raise MergeConflict(f"merge conflict merging {branch} into {into}")
         return self.head_sha(self.repo_root)
 
     def remove_worktree(self, worktree: str) -> None:
@@ -252,7 +258,6 @@ class Orchestrator:
         review = cfg.get("review") or {}
         self.passes = list(review.get("passes") or ["wf-review"])
         self.max_attempts = int(review.get("max_attempts") or 3)
-        self.max_scope_amendments = int(review.get("max_scope_amendments") or 1)
         self.history_cap = int((cfg.get("orchestrate") or {}).get("history_cap") or 50)
 
         self.sprint_path = common.resolve_path(config_path, "sprint", None)
@@ -524,10 +529,6 @@ class Orchestrator:
             elif bv == "design_issue":
                 di = self._record_design_issue(worktree, tid, bres.get("di_id"))
                 return TaskOutcome(tid, "design_issue", f"design issue {di}")
-            elif bv == "build_blocked":
-                if await asyncio.to_thread(self._handle_build_blocked, tid, worktree):
-                    continue
-                raise Escalation("build_blocked: scope amendment denied or unavailable", tid)
             elif bv == "escalate_no_artifacts":
                 raise Escalation("build returned no artifacts", tid)
             else:
@@ -655,7 +656,7 @@ class Orchestrator:
             # clear stale handoff artifacts left in the surviving worktree. The worktree
             # DI copy is still `open` (the fixer edits the HOST file); left in place it
             # would re-park the re-run at inspect-build-return.
-            for key in ("feedback", "review_ready", "build_blocked", "design_issues"):
+            for key in ("feedback", "review_ready", "design_issues"):
                 try:
                     self._worktree_artifact(worktree, key).unlink()
                 except OSError:
@@ -685,60 +686,6 @@ class Orchestrator:
         return next((i for i in (host.get("issues") or [])
                      if isinstance(i, dict) and i.get("id") == di_id), None) or {}
 
-    # --- scope amendment (build_blocked) ----------------------------------
-
-    def _handle_build_blocked(self, tid: str, worktree: str) -> bool:
-        bb = common.load_yaml(self._worktree_artifact(worktree, "build_blocked"), optional=True)
-        # required_files entries are canonically plain strings; tolerate {path: …} dicts.
-        files = []
-        for r in bb.get("required_files") or []:
-            if isinstance(r, str) and r:
-                files.append(r)
-            elif isinstance(r, dict) and r.get("path"):
-                files.append(str(r["path"]))
-        if not files:
-            return False
-        classification = (self.scripts.run(
-            "classify-amendment", "--task-id", tid, "--diff", self._write_worktree_diff(worktree)
-        ).stdout or "").strip()
-        if classification == "reject":
-            return False
-        if classification != "mechanical_follow_on" and self._scope_amendment_count(tid) >= self.max_scope_amendments:
-            return False
-        self._add_files_to_scope(worktree, files)
-        if classification != "mechanical_follow_on":
-            self.state.run("scope_amendment", tid, "--added", ",".join(files), soft=True)
-        try:
-            self._worktree_artifact(worktree, "build_blocked").unlink()
-        except OSError:
-            pass
-        return True
-
-    def _scope_amendment_count(self, tid: str) -> int:
-        try:
-            return int(self.state.json("scope_amendment_count", tid).get("value", 0))
-        except (ValueError, AttributeError):
-            return 0
-
-    def _write_worktree_diff(self, worktree: str) -> str:
-        import tempfile
-        fd = tempfile.NamedTemporaryFile("w", suffix=".diff", delete=False)
-        fd.write(self.git.diff(worktree) or "")
-        fd.close()
-        return fd.name
-
-    def _add_files_to_scope(self, worktree: str, files: list[str]) -> None:
-        import yaml as _yaml
-        ct = self._worktree_artifact(worktree, "current_task")
-        doc = common.load_yaml(ct, optional=True)
-        ftt = list(doc.get("files_to_touch") or [])
-        for f in files:
-            if f not in ftt:
-                ftt.append(f)
-        doc["files_to_touch"] = ftt
-        ct.parent.mkdir(parents=True, exist_ok=True)
-        ct.write_text(_yaml.safe_dump(doc, sort_keys=False))
-
     # --- helper wrappers (verdict-from-disk) ------------------------------
 
     def _preserve(self, worktree: str, tid: str) -> None:
@@ -765,7 +712,20 @@ class Orchestrator:
         for tid in frontier.get("approved", []):
             build_sha = self._task_state(tid).get("build_commit") or ""
             worktree = self._worktree_for(tid)
-            merge_sha = self.git.merge(self._branch_for(worktree), sprint_branch)
+            branch = self._branch_for(worktree)
+            try:
+                merge_sha = self.git.merge(branch, sprint_branch)
+            except MergeConflict:
+                # The merge is already aborted; repair it with a bounded build→review
+                # fix cycle in a worktree cut from the sprint branch.
+                merge_sha = await self._merge_fix_cycle(tid, branch, sprint_branch)
+                if merge_sha is None:
+                    reason = (f"merge conflict merging {branch} into {sprint_branch} "
+                              "could not be repaired")
+                    self.state.run("block_task", tid, "--reason", reason, soft=True)
+                    self.result.escalated.append((tid, reason))
+                    self.git.remove_worktree(worktree)
+                    continue
             self.state.run("complete_task", tid, "--commit", build_sha, "--merge", merge_sha)
             self.git.remove_worktree(worktree)
             self.result.completed.append(tid)
@@ -834,6 +794,89 @@ class Orchestrator:
                 return False
         finally:
             self.git.remove_worktree(worktree)
+
+    async def _merge_fix_cycle(self, tid: str, task_branch: str, sprint_branch: str) -> str | None:
+        """Repair a conflicted stage-boundary merge of <task_branch>: run a bounded
+        build→review fix cycle (the STAGE-FIX pattern, capped by review.max_attempts)
+        in a fresh worktree cut from the sprint branch, whose synthesized contract says
+        to integrate the branch by reconciling both sides. On approval, merge the fix
+        branch and return its merge sha; None when the repair fails."""
+        fix_id = f"MERGE-FIX-{tid}"
+        worktree = self._worktree_for(fix_id)
+        branch = self._branch_for(worktree)
+        self.git.add_worktree(worktree, branch, sprint_branch)
+        try:
+            self._write_merge_fix_contract(worktree, fix_id, task_branch, sprint_branch)
+            attempt = 1
+            while True:
+                await asyncio.to_thread(self.dispatcher.dispatch, AGENT_BUILD,
+                                        self._build_envelope(fix_id, worktree), worktree)
+                await asyncio.to_thread(self._preserve, worktree, fix_id)
+                bres = await asyncio.to_thread(self._inspect_build, worktree, fix_id)
+                if bres["verdict"] != "ready_for_review":
+                    if bres["verdict"] == "design_issue":
+                        self._record_design_issue(worktree, fix_id, bres.get("di_id"))
+                    return None
+                build_sha = self.git.head_sha(worktree)
+                await asyncio.to_thread(self.dispatcher.dispatch, self.passes[0],
+                                        self._review_envelope(fix_id, worktree, self.passes[0], sprint_branch), worktree)
+                rres = await asyncio.to_thread(self._inspect_review, worktree, fix_id, build_sha)
+                rv = rres["verdict"]
+                if rv == "approved":
+                    return self.git.merge(branch, sprint_branch)
+                if rv == "design_issue":
+                    self._record_design_issue(worktree, fix_id, rres.get("di_id"))
+                    return None
+                if rv == "rejected" and attempt < self.max_attempts:
+                    attempt += 1
+                    continue
+                return None
+        finally:
+            self.git.remove_worktree(worktree)
+
+    def _write_merge_fix_contract(self, worktree: str, fix_id: str,
+                                  task_branch: str, sprint_branch: str) -> None:
+        """Write the merge-fix task contract (task-contract.md shape) and the rejection
+        feedback (feedback.yaml.tmpl shape) so the build runs in fix mode: integrate
+        <task_branch> into the sprint-branch lineage, reconciling both sides of every
+        conflict. The AC is verified_by the stage check (or preflight when unset)."""
+        import yaml as _yaml
+        cmds = self.cfg.get("commands") or {}
+        cmd = cmds.get("stage_check") or cmds.get("preflight") or ""
+        cmd_str = cmd if isinstance(cmd, str) else " ".join(map(str, cmd))
+        merge_cmd = f"git merge --no-ff {task_branch}"
+        verified_by = cmd_str or merge_cmd
+        ct = self._worktree_artifact(worktree, "current_task")
+        fb = self._worktree_artifact(worktree, "feedback")
+        ct.parent.mkdir(parents=True, exist_ok=True)
+        ct.write_text(_yaml.safe_dump({
+            "id": fix_id,
+            "title": f"Integrate task branch {task_branch} into the sprint branch",
+            "covers": [],
+            "files_to_touch": [],
+            "acceptance_criteria": [
+                {"id": "MERGE-FIX.AC-1",
+                 "check": f"`{merge_cmd}` completes with every conflict reconciled "
+                          f"and committed, and `{verified_by}` exits 0",
+                 "verified_by": verified_by}],
+            "out_of_scope": [f"any change not needed to integrate {task_branch}"],
+            "implementation_notes": [
+                f"the conflicting task branch: {task_branch}",
+                f"this worktree is cut from the sprint branch ({sprint_branch}) — "
+                f"merge {task_branch} here and resolve every conflict by reconciling "
+                "both sides (e.g. re-run codegen after combining migrations)"],
+        }, sort_keys=False))
+        fb.parent.mkdir(parents=True, exist_ok=True)
+        fb.write_text(_yaml.safe_dump({
+            "task_id": fix_id,
+            "failures": [{
+                "type": "acceptance_criteria_unmet",
+                "file": "(stage-boundary merge)",
+                "detail": f"merging {task_branch} into {sprint_branch} stops on conflicts",
+                "required_action": f"merge {task_branch} into this worktree and reconcile "
+                                   "both sides of every conflict, then commit the merge",
+            }],
+        }, sort_keys=False))
 
     def _write_fix_contract(self, worktree: str, fix_id: str, cmd) -> None:
         """Write the stage-fix task contract (task-contract.md shape) and the rejection

@@ -2,7 +2,7 @@
 
 A task contract is the unit the build pipeline executes against. It must be complete
 enough that a developer who has read only the contract (plus the source it points to)
-can build the task correctly and a reviewer can judge it mechanically.
+can build the task correctly and a reviewer can judge the diff against it alone.
 
 Contents:
 - The fields
@@ -20,7 +20,7 @@ Contents:
   title: <imperative, one line>
   depends_on: []                 # task ids that must land first
   covers: [REQ-1, REQ-2]         # the slice requirements this task satisfies
-  files_to_touch: [path, path]   # every file the build phase may write
+  files_to_touch: [path, path]   # the expected write set — a planning signal, not a fence
   acceptance_criteria:           # YOU author these — one testable condition per entry
     - id: REQ-1.AC-1
       check: <testable statement with named inputs and expected outputs>
@@ -130,33 +130,38 @@ mock what they wire, never substitute for it.
 
 ## Scope consistency
 
-**Gate: compute the mechanical floor of `files_to_touch` before you finish a
-contract.** For every symbol, field, table, or column the task changes, and every
-file it edits, run:
+`files_to_touch` is the task's **expected write set** — a planning signal, not a fence.
+It feeds two things: **stage ordering** (two tasks whose declared sets overlap need a
+dependency edge, or they risk a merge conflict at the stage boundary — an honest set is
+what makes the overlap visible) and the **build agent's starting pointers**. The build
+may write beyond the set when the task genuinely needs it; what bounds the build is
+`covers`, the acceptance criteria, and `out_of_scope`.
+
+**Cut an honest expected set with the impact tool.** For every symbol, field, table, or
+column the task changes, and every file it edits, run:
 
 ```
 python3 <paths.tools>/cli/wf impact files --symbol <changed-symbol> [--symbol ...] [--file <edited-file> ...]
 ```
 
-Fold every `candidates` entry into `files_to_touch` — the consumer files (source and
-test) plus the companion fan-out (a migration's `down.sql` sibling, config-declared
-codegen outputs). A candidate you deliberately exclude gets a one-line reason in
-`out_of_scope`. Skip this gate and the omissions surface as mid-build scope halts,
-one live amendment at a time.
+Fold the `candidates` entries you expect the build to write into `files_to_touch` — the
+consumer files (source and test) plus the companion fan-out (a migration's `down.sql`
+sibling, config-declared codegen outputs). The tool's consumer/companion output is what
+surfaces cross-task overlaps for ordering edges. A candidate you deliberately exclude
+from the task gets a one-line reason in `out_of_scope`.
 
 **A signature or field change carries its consumers.** When a task changes a function
 signature, renames or relocates a field, or otherwise alters a shape other code depends
-on, `files_to_touch` must list **every caller and fixture that won't compile or pass
-until it is updated too** — the impact gate enumerates them; you decide nothing is
-missing. The atomic edit set is the origin file plus its dependents, whatever component
-each sits in. A consumer left out halts the build mid-task, and splitting the set
-across two tasks does the same to both halves, since neither compiles without the other.
+on, declare the callers and fixtures that must update with it in `files_to_touch` — the
+impact tool enumerates them. The atomic edit set is the origin file plus its dependents,
+whatever component each sits in; declaring the consumers is what turns a cross-task
+overlap into an ordering edge instead of a stage-boundary merge conflict.
 
-**Every mandated test gets a file home.** For each AC `tests` entry, the test file it
-lives in appears in `files_to_touch`, placed per the package's test convention — a Go
+**Declare each mandated test's file home.** For each AC `tests` entry, the test file it
+lives in belongs in `files_to_touch`, placed per the package's test convention — a Go
 unit test as `<file>_test.go` beside its target, a Go integration test as its own
 `//go:build integration` file, a JS test as `*.test.*` / `*.spec.*` or under
-`__tests__/`. A unit `target`'s file must itself be in `files_to_touch`.
+`__tests__/`. Declare a unit `target`'s file too.
 
 **Widening a seam: add alongside, or change in place.** When the slice's **Interface
 contracts** section fixes the seam's shape, build to that shape. When it does not, you
@@ -166,7 +171,7 @@ decide:
   sizing guidance *and* the old method has consumers outside this slice's scope — those
   consumers stay untouched and out of `files_to_touch`.
 - **Change the shape in place** when the old shape must die — every consumer then goes into
-  `files_to_touch`, per the impact gate above.
+  `files_to_touch`, per the impact tool above.
 
 A twin you add that must eventually be removed gets its removal as a task **in this sprint**,
 carrying the old method's consumers in that task's `files_to_touch`.
@@ -189,8 +194,9 @@ what it holds is either behaviour (an acceptance criterion), a shape (an
 
 ## Out of scope
 
-An entry earns its place only when no mechanism already enforces it: a cross-slice
-deferral the build might reach for (*"REQ-58 is NOT in this slice"*), an adjacent
-behaviour a diligent developer would 'helpfully' absorb, or an impact-gate candidate
-deliberately excluded (with the reason). Never restate that a file is outside
-`files_to_touch` — scope enforcement is mechanical, and a prose copy of it is noise.
+An entry earns its place when it forbids something a diligent developer might otherwise
+do: a cross-slice deferral the build might reach for (*"REQ-58 is NOT in this slice"*),
+an adjacent behaviour a developer would 'helpfully' absorb, or an impact-tool candidate
+deliberately excluded (with the reason). `out_of_scope` is binding — the build may not
+touch what it names, and the reviewer rejects a diff that does — so never waste an entry
+restating that a file is merely absent from `files_to_touch`.

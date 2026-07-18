@@ -29,13 +29,9 @@ gitc() { git -C "$1" -c core.hooksPath=/dev/null commit -q --allow-empty -m "$2"
 
 # ── inspect-build-return ─────────────────────────────────────────────────────
 # One result artifact per outcome; verdict from presence, in priority order:
-#   build_blocked → design_issue → review_ready → escalate_no_artifacts.
+#   design_issue → review_ready → escalate_no_artifacts.
 
 R="$(mkrepo)"
-: > "$R/.wf/transient/build-blocked.yaml"
-[ "$(jget "$(wf orchestrate inspect-build-return "$R" T1)" "d['verdict']")" = "build_blocked" ] \
-    && ok "inspect-build: build_blocked present → build_blocked" || bad "ib build_blocked" ""
-rm "$R/.wf/transient/build-blocked.yaml"
 
 # design issue: an open issue for the task → design_issue + di_id
 printf 'issues:\n  - id: DI-1\n    task_id: T1\n    fix_kind: contract_amendment\n    status: open\n' \
@@ -107,37 +103,19 @@ echo x > "$R/tracked.txt"; git -C "$R" add tracked.txt; git -C "$R" -c core.hook
 echo y >> "$R/tracked.txt"
 OUTP="$(wf orchestrate preserve-uncommitted "$R" T1)"
 [ "${OUTP%% *}" = "committed" ] && ok "preserve: tracked-modified → committed" || bad "pres tracked" "$OUTP"
-# untracked file IN files_to_touch → committed; NOT in scope → left alone
+# every untracked file is task work — preserved whether or not files_to_touch names it
 printf 'files_to_touch:\n  - in_scope.txt\n' > "$R/.wf/transient/current-task.yaml"
-echo a > "$R/in_scope.txt"; echo b > "$R/out_of_scope.txt"
+echo a > "$R/in_scope.txt"; echo b > "$R/beyond_expected.txt"
 OUTP2="$(wf orchestrate preserve-uncommitted "$R" T1)"
-[ "${OUTP2%% *}" = "committed" ] && ok "preserve: untracked in-scope file → committed" || bad "pres in_scope" "$OUTP2"
-git -C "$R" status --porcelain=v1 | grep -q "out_of_scope.txt" \
-    && ok "preserve: out-of-scope untracked file left uncommitted" || bad "pres out_of_scope" "got committed"
-
-# ── classify-amendment ───────────────────────────────────────────────────────
-
-D="$(mktemp -d)"
-cat > "$D/feature.diff" <<'DIFF'
-diff --git a/src/foo.go b/src/foo.go
-+func New() {}
-DIFF
-[ "$(wf orchestrate classify-amendment --task-id T1 --diff "$D/feature.diff")" = "feature" ] \
-    && ok "classify: non-test file → feature" || bad "cls feature" ""
-cat > "$D/newtest.diff" <<'DIFF'
-diff --git a/src/foo_test.go b/src/foo_test.go
-+func TestNew(t *testing.T) {}
-DIFF
-[ "$(wf orchestrate classify-amendment --task-id T1 --diff "$D/newtest.diff")" = "feature" ] \
-    && ok "classify: test file w/ new test decl → feature" || bad "cls newtest" ""
-cat > "$D/follow.diff" <<'DIFF'
-diff --git a/src/foo_test.go b/src/foo_test.go
-+    assert.Equal(t, want, Renamed())
-DIFF
-[ "$(wf orchestrate classify-amendment --task-id T1 --diff "$D/follow.diff")" = "mechanical_follow_on" ] \
-    && ok "classify: test-only, no new decl → mechanical_follow_on" || bad "cls follow" ""
-[ "$(wf orchestrate classify-amendment --task-id T1 --diff "$D/feature.diff" --claim mechanical_follow_on)" = "reject" ] \
-    && ok "classify: non-test file claimed mechanical → reject" || bad "cls reject" ""
+[ "${OUTP2%% *}" = "committed" ] && ok "preserve: untracked declared file → committed" || bad "pres declared" "$OUTP2"
+git -C "$R" status --porcelain=v1 | grep -q "beyond_expected.txt" \
+    && bad "pres beyond" "left uncommitted" || ok "preserve: untracked file beyond the expected set → committed too"
+# an ignored file is never swept up
+echo "junk.log" > "$R/.gitignore"; git -C "$R" add .gitignore; git -C "$R" -c core.hooksPath=/dev/null commit -q -m ignore
+echo z > "$R/junk.log"
+wf orchestrate preserve-uncommitted "$R" T1 >/dev/null
+git -C "$R" -c core.hooksPath=/dev/null log --name-only -1 --pretty=format: | grep -q "junk.log" \
+    && bad "pres ignored" "ignored file committed" || ok "preserve: gitignored file stays out"
 
 # ── dispatch-fix ─────────────────────────────────────────────────────────────
 
@@ -253,7 +231,6 @@ paths:
   pipeline_state: ".wf/transient/pipeline-state.yaml"
   feedback: ".wf/transient/feedback.yaml"
   review_ready: ".wf/transient/review-ready.yaml"
-  build_blocked: ".wf/transient/build-blocked.yaml"
 YAML
     printf 'task_id: T1\nverdict: REJECTED\n' > "$p/.wf/transient/feedback.yaml"
     if [ -n "$1" ]; then

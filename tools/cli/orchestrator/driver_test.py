@@ -55,9 +55,8 @@ def make_project(tasks):
         "  current_task: .wf/transient/current-task.yaml\n"
         "  review_ready: .wf/transient/review-ready.yaml\n"
         "  feedback: .wf/transient/feedback.yaml\n"
-        "  build_blocked: .wf/transient/build-blocked.yaml\n"
         "parallel: {max_concurrent_tasks: 4, worktree_base: .wf/transient/worktrees}\n"
-        "review: {passes: [wf-review], max_attempts: 3, max_scope_amendments: 1}\n"
+        "review: {passes: [wf-review], max_attempts: 3}\n"
         "commands: {preflight: '', stage_check: ''}\n"
         "closeout: [wf-retrospective, ship]\n"
         "orchestrate: {history_cap: 50}\n"
@@ -127,8 +126,6 @@ class FakeState:
             return {"verdict": (self.sprint_check_verdicts.pop(0)
                                 if len(self.sprint_check_verdicts) > 1
                                 else self.sprint_check_verdicts[0])}
-        if subcmd == "scope_amendment_count":
-            return {"value": 0}
         if subcmd == "attempt_counter":
             return {"value": self.attempt_counters.get(args[0], 0)}
         return {}
@@ -158,17 +155,16 @@ class FakeBrain:
 class FakeScripts:
     """Returns scripted helper verdicts. ``build[tid]`` / ``review[tid]`` are per-task
     verdict queues; each entry is a bare verdict string or a dict ``{verdict, di_id}``.
-    They default to a steady 'ready_for_review' / 'approved'. ``classify`` is the
-    classify-amendment verdict; dispatch-fix routes by the HOST entry's fix_kind
-    (the real _ROUTING table, exit 0 for the autonomous kinds)."""
+    They default to a steady 'ready_for_review' / 'approved'. dispatch-fix routes by
+    the HOST entry's fix_kind (the real _ROUTING table, exit 0 for the autonomous
+    kinds)."""
 
     _ROUTING = {"contract_amendment": "wf-swa", "spec_amendment": "wf-sa",
                 "component_defect": "wf-swa"}
 
-    def __init__(self, review=None, build=None, classify="feature"):
+    def __init__(self, review=None, build=None):
         self.review = review or {}
         self.build = build or {}
-        self.classify = classify
 
     @staticmethod
     def _norm(entry, default):
@@ -194,8 +190,6 @@ class FakeScripts:
             return _proc(json.dumps({"task_id": tid, "verdict": v["verdict"], "head_sha": "h",
                                      "build_commit_sha": args[2], "artifact": None,
                                      "di_id": v.get("di_id")}))
-        if verb == "classify-amendment":
-            return _proc(self.classify + "\n")
         if verb == "dispatch-fix":
             # Faithful to the real helper: an unknown or already-resolved DI in the
             # HOST design-issues artifact is exit 2 (no routing decision to make);
@@ -238,9 +232,6 @@ class FakeGit:
     def head_sha(self, wt):
         return "bsha"
 
-    def diff(self, wt):
-        return ""
-
     def merge(self, branch, into):
         self.merges.append((branch, into))
         return "msha"
@@ -250,6 +241,22 @@ class FakeGit:
 
     def open_pr(self, title, body, head, base=None):
         self.prs.append((title, head, base, body))
+
+
+class ConflictGit(FakeGit):
+    """merge() conflicts the FIRST time the given branch is merged; every other
+    merge (the repair cycle's fix branch) succeeds."""
+
+    def __init__(self, conflict_branch):
+        super().__init__()
+        self.conflict_branch = conflict_branch
+        self.conflicts_raised = 0
+
+    def merge(self, branch, into):
+        if branch == self.conflict_branch and self.conflicts_raised == 0:
+            self.conflicts_raised += 1
+            raise driver.MergeConflict(f"merge conflict merging {branch} into {into}")
+        return super().merge(branch, into)
 
 
 class ScriptedGit(driver.GitOps):
@@ -318,8 +325,7 @@ class HaltBrain:
         }
 
 
-def make_orch(proj, tasks, review=None, build=None, classify="feature",
-              brain=None, dispatcher=None):
+def make_orch(proj, tasks, review=None, build=None, brain=None, dispatcher=None):
     state = FakeState()
     git = FakeGit()
     dispatcher = dispatcher or FakeDispatcher()
@@ -327,7 +333,7 @@ def make_orch(proj, tasks, review=None, build=None, classify="feature",
         str(proj / ".wf" / "config.yaml"),
         dispatcher,
         brain=brain(state) if brain else FakeBrain(state, tasks),
-        scripts=FakeScripts(review, build, classify),
+        scripts=FakeScripts(review, build),
         state=state,
         git=git,
         write_task=lambda tid, dest: None,
@@ -335,14 +341,12 @@ def make_orch(proj, tasks, review=None, build=None, classify="feature",
     return orch, state, git, dispatcher
 
 
-def seed_worktree(proj, name, di=None, build_blocked=None, current_task=None):
+def seed_worktree(proj, name, di=None, current_task=None):
     """Create a fake worktree dir with the given artifacts; returns its path."""
     wt = proj / "worktrees" / name
     (wt / ".wf" / "transient").mkdir(parents=True, exist_ok=True)
     if di is not None:
         (wt / ".wf" / "transient" / "design-issues.yaml").write_text(yaml.safe_dump(di))
-    if build_blocked is not None:
-        (wt / ".wf" / "transient" / "build-blocked.yaml").write_text(yaml.safe_dump(build_blocked))
     if current_task is not None:
         (wt / ".wf" / "transient" / "current-task.yaml").write_text(yaml.safe_dump(current_task))
     return wt
@@ -464,60 +468,6 @@ def test_review_envelope_carries_sprint_branch():
         ok("review envelope carries sprint_branch (worktree diff base)")
     else:
         bad("review envelope sprint_branch", f"envelope missing sprint_branch: {env}")
-
-
-def test_build_blocked_string_required_files_amends():
-    # The canonical build_blocked artifact lists required_files as plain strings; a
-    # mechanical_follow_on classification widens the scope, removes the artifact, and
-    # re-dispatches the build.
-    proj = make_project(["T1"])
-    wt = seed_worktree(
-        proj, "sprint-T1",
-        build_blocked={"task_id": "T1", "required_files": ["src/extra.py"],
-                       "reason": "needs the helper"},
-        current_task={"task_id": "T1", "files_to_touch": ["src/main.py"]})
-    orch, state, git, dispatcher = make_orch(
-        proj, ["T1"], build={"T1": ["build_blocked"]}, classify="mechanical_follow_on")
-    outcome = asyncio.run(orch._run_task({"task_id": "T1", "worktree": str(wt)}, "sprint/test"))
-
-    if outcome.status == "approved":
-        ok("build_blocked: string required_files → amended, task completes")
-    else:
-        bad("build_blocked amend outcome", f"{outcome.status} {outcome.reason}")
-    ct = yaml.safe_load((wt / ".wf" / "transient" / "current-task.yaml").read_text())
-    if "src/extra.py" in (ct.get("files_to_touch") or []):
-        ok("build_blocked: required file appended to files_to_touch")
-    else:
-        bad("build_blocked files_to_touch", ct)
-    if not (wt / ".wf" / "transient" / "build-blocked.yaml").exists():
-        ok("build_blocked: artifact removed after the amendment")
-    else:
-        bad("build_blocked artifact removal", "still present")
-    if dispatcher.agents_dispatched().count("wf-build") == 2:
-        ok("build_blocked: build re-dispatched after the amendment")
-    else:
-        bad("build_blocked re-dispatch", dispatcher.agents_dispatched())
-
-
-def test_build_blocked_reject_escalates():
-    proj = make_project(["T1"])
-    wt = seed_worktree(
-        proj, "sprint-T1",
-        build_blocked={"task_id": "T1", "required_files": ["src/extra.py"],
-                       "reason": "wants a feature"},
-        current_task={"task_id": "T1", "files_to_touch": ["src/main.py"]})
-    orch, state, git, dispatcher = make_orch(
-        proj, ["T1"], build={"T1": ["build_blocked"]}, classify="reject")
-    outcome = asyncio.run(orch._run_task({"task_id": "T1", "worktree": str(wt)}, "sprint/test"))
-
-    if outcome.status == "escalated" and "T1" in state.blocked:
-        ok("build_blocked: reject classification escalates the task")
-    else:
-        bad("build_blocked reject", f"status={outcome.status} blocked={state.blocked}")
-    if dispatcher.agents_dispatched().count("wf-build") == 1:
-        ok("build_blocked: no re-dispatch on reject")
-    else:
-        bad("build_blocked reject re-dispatch", dispatcher.agents_dispatched())
 
 
 def _resolving_fixer(proj):
@@ -969,8 +919,8 @@ def test_di_rerun_at_current_attempt():
 
 def test_di_rerun_clears_stale_worktree_artifacts():
     # A fresh build after a resolved DI must start in BUILD mode against the amended
-    # contract — stale handoff artifacts (feedback, review_ready, build_blocked) in
-    # the surviving worktree are removed before the re-dispatch.
+    # contract — stale handoff artifacts (feedback, review_ready) in the surviving
+    # worktree are removed before the re-dispatch.
     proj = make_project(["T1"])
     wt1 = seed_worktree(proj, "sprint-T1", di={"issues": [
         {"id": "DI-1", "task_id": "T1", "fix_kind": "contract_amendment",
@@ -978,7 +928,6 @@ def test_di_rerun_clears_stale_worktree_artifacts():
     stale = {
         "feedback": wt1 / ".wf" / "transient" / "feedback.yaml",
         "review_ready": wt1 / ".wf" / "transient" / "review-ready.yaml",
-        "build_blocked": wt1 / ".wf" / "transient" / "build-blocked.yaml",
         # the worktree DI copy stays `open` (the fixer edits the HOST file); left in
         # place it would re-park the re-run at inspect-build-return
         "design_issues": wt1 / ".wf" / "transient" / "design-issues.yaml",
@@ -1279,6 +1228,102 @@ def test_stage_fix_artifacts_schema():
         bad("stage-fix feedback shape", fb)
 
 
+def test_gitops_merge_conflict_aborts_and_raises():
+    # A failing stage-boundary merge is aborted cleanly and surfaces as MergeConflict
+    # (the repair route's trigger), never a generic Escalation.
+    g = ScriptedGit([(("merge", "--no-ff"), _proc(rc=1))])
+    try:
+        g.merge("task-T1", "sprint/s1")
+        bad("GitOps.merge conflict", "no MergeConflict raised")
+    except driver.MergeConflict:
+        if ("merge", "--abort") in g.calls:
+            ok("GitOps.merge: conflict → merge aborted + MergeConflict raised")
+        else:
+            bad("GitOps.merge abort", g.calls)
+
+
+def test_stage_merge_conflict_repair():
+    # A conflicted stage-boundary merge routes into a bounded build→review fix cycle
+    # in a worktree cut from the sprint branch: the synthesized contract names the
+    # conflicting task branch, its AC is verified_by the stage/preflight command, and
+    # on approval the fix branch merges and the task completes.
+    proj = make_project(["T1"])
+    orch, state, git, dispatcher = make_orch(proj, ["T1"])
+    cgit = ConflictGit("sprint-T1")
+    orch.git = cgit
+    orch.cfg.setdefault("parallel", {})["worktree_base"] = str(proj / "worktrees")
+    orch.cfg["commands"] = {"preflight": "", "stage_check": "make stage-check"}
+
+    async def _green(cmd):
+        return True
+    orch._run_check = _green
+    result = asyncio.run(orch.run())
+
+    if result.completed == ["T1"] and not result.escalated:
+        ok("merge-fix: conflicted merge repaired, task completes")
+    else:
+        bad("merge-fix completion", result.as_dict())
+    builds = [json.loads(c.envelope)["task_id"] for c in dispatcher.calls_for_agent("wf-build")]
+    reviews = [json.loads(c.envelope)["task_id"] for c in dispatcher.calls_for_agent("wf-review")]
+    if "MERGE-FIX-T1" in builds and "MERGE-FIX-T1" in reviews:
+        ok("merge-fix: repair ran the build→review chain on the synthesized contract")
+    else:
+        bad("merge-fix dispatches", f"builds={builds} reviews={reviews}")
+    if ("sprint-MERGE-FIX-T1", "sprint/sprint") in cgit.merges and "T1" in state.completed:
+        ok("merge-fix: approved fix branch merged, task marked complete")
+    else:
+        bad("merge-fix merge", f"merges={cgit.merges} completed={state.completed}")
+
+    wt = proj / "worktrees" / "sprint-MERGE-FIX-T1"
+    ct = yaml.safe_load((wt / ".wf" / "transient" / "current-task.yaml").read_text())
+    acs = ct.get("acceptance_criteria") or []
+    if (ct.get("id") == "MERGE-FIX-T1"
+            and "sprint-T1" in str(ct.get("implementation_notes"))
+            and acs and acs[0].get("verified_by") == "make stage-check"
+            and ct.get("out_of_scope")):
+        ok("merge-fix: contract names the task branch, AC verified_by the stage check")
+    else:
+        bad("merge-fix contract", ct)
+    fb = yaml.safe_load((wt / ".wf" / "transient" / "feedback.yaml").read_text())
+    if fb.get("task_id") == "MERGE-FIX-T1" and "sprint-T1" in str(fb.get("failures")):
+        ok("merge-fix: feedback names the conflicted branch (build runs in fix mode)")
+    else:
+        bad("merge-fix feedback", fb)
+
+
+def test_stage_merge_conflict_repair_exhausts_attempts():
+    # The repair is bounded by the same attempt cap as stage-fix (review.max_attempts):
+    # exhausted → the task blocks + escalates, the unapproved fix branch never merges,
+    # and the boundary continues instead of crashing.
+    proj = make_project(["T1"])
+    orch, state, git, dispatcher = make_orch(
+        proj, ["T1"],
+        review={"MERGE-FIX-T1": ["rejected", "rejected", "rejected"]})
+    cgit = ConflictGit("sprint-T1")
+    orch.git = cgit
+    orch.cfg.setdefault("parallel", {})["worktree_base"] = str(proj / "worktrees")
+    result = asyncio.run(orch.run())
+
+    if "T1" in state.blocked and any(t == "T1" for t, _ in result.escalated):
+        ok("merge-fix cap: exhausted attempts block + escalate the task")
+    else:
+        bad("merge-fix cap escalation", f"blocked={state.blocked} escalated={result.escalated}")
+    fix_builds = [json.loads(c.envelope)["task_id"]
+                  for c in dispatcher.calls_for_agent("wf-build")].count("MERGE-FIX-T1")
+    if fix_builds == 3:
+        ok("merge-fix cap: exactly review.max_attempts fix builds dispatched")
+    else:
+        bad("merge-fix cap dispatches", fix_builds)
+    if not any(b == "sprint-MERGE-FIX-T1" for b, _ in cgit.merges):
+        ok("merge-fix cap: unapproved fix branch never merged")
+    else:
+        bad("merge-fix cap merge", cgit.merges)
+    if "T1" not in state.completed:
+        ok("merge-fix cap: task not completed on a failed repair")
+    else:
+        bad("merge-fix cap completed", state.completed)
+
+
 def test_record_session_on_halt():
     # Telemetry fires on EVERY exit path — a halted run records outcome=halted.
     proj = make_project(["T1"])
@@ -1332,8 +1377,6 @@ if __name__ == "__main__":
     test_build_design_issue()
     test_review_design_issue()
     test_review_envelope_carries_sprint_branch()
-    test_build_blocked_string_required_files_amends()
-    test_build_blocked_reject_escalates()
     test_design_issues_across_two_stages()
     test_fixer_leaves_di_open_escalates()
     test_component_defect_follow_up_reruns_after_merge()
@@ -1359,6 +1402,9 @@ if __name__ == "__main__":
     test_build_envelope_has_no_mode()
     test_stage_fix_artifacts_schema()
     test_stage_fix_design_issue_recorded_canonically()
+    test_gitops_merge_conflict_aborts_and_raises()
+    test_stage_merge_conflict_repair()
+    test_stage_merge_conflict_repair_exhausts_attempts()
     test_record_session_on_halt()
     print(f"\n  driver: {PASS} passed, {FAIL} failed")
     sys.exit(1 if FAIL else 0)

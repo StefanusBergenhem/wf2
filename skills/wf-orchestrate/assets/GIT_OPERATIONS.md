@@ -50,7 +50,8 @@ git merge --no-ff <task-branch> -m "<task-id>: merge"
 ```
 
 `--no-ff` keeps each task a reviewable unit on the branch. On a conflict: `git merge
---abort` and **HALT** — never auto-resolve. After a clean merge, `wf pipeline
+--abort`, then route into the merge-conflict repair cycle (SKILL.md §2c step 2) — never
+auto-resolve the conflict yourself. After a clean merge, `wf pipeline
 complete-task <id> --commit <build-sha> --merge <merge-sha>`, then remove the worktree:
 
 ```

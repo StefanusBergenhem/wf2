@@ -39,9 +39,11 @@ them — the checklist below is sufficient for routine claims.
 
 ### 3. Scope compliance
 
-- [ ] `git diff --name-only` matches `files_to_touch` from the contract.
-- [ ] No files outside scope were modified.
-- [ ] No unintended new files were created; nothing was deleted that shouldn't have been.
+- [ ] Every file in `git diff --name-only` serves the contract's `covers`/acceptance
+      criteria, or is a mechanical consequence of serving them (a regenerated file, an
+      updated consumer, a test home).
+- [ ] Nothing named in the contract's `out_of_scope` was changed.
+- [ ] No unrelated drive-by change; nothing was deleted that shouldn't have been.
 
 ### 4. No suppression directives
 

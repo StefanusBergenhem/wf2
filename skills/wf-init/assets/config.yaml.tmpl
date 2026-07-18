@@ -85,7 +85,6 @@ paths:
   # never from prose). Worktree-local + transient.
   current_task: ".wf/transient/current-task.yaml"      # the extracted task contract the build agent reads.
   review_ready: ".wf/transient/review-ready.yaml"      # build → review handoff (build done, gates green).
-  build_blocked: ".wf/transient/build-blocked.yaml"    # build halted: needs a scope amendment.
   feedback: ".wf/transient/feedback.yaml"              # review → build rejection feedback.
 
   # Design issues — the one artifact above with a host-side life too: build/review raise one
@@ -115,7 +114,6 @@ impact:
 review:
   passes: [wf-review]      # the ordered build→review chain per task; append e.g. wf-security-review to extend it (no skill change).
   max_attempts: 3          # build→review cycles per task before escalation.
-  max_scope_amendments: 1  # feature scope amendments allowed per task.
 
 closeout: [wf-retrospective, ship]   # ordered end-of-sprint steps; a wf-* entry is dispatched as an agent, `ship` is the terminal publish. Extend with e.g. wf-update-docs.
 
