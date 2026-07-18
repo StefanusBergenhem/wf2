@@ -3,6 +3,8 @@
 # Written by wf-swa from the design-slice; gitignored; consumed directly by the
 # build pipeline. Not hand-maintained, not committed, not read across changes.
 # One inline contract per task; see references/task-contract.md for the field rules.
+# Author the THIN fields only — `wf sprint materialize` inlines requirements,
+# serves, interface_contract, and the SYS-TC text from the slice.
 
 # sprint-<yyyymmdd>-<short-scope-slug> — filesystem- and branch-name-safe
 # ([a-z0-9-] only); names the task worktrees, task branches, and the archive file.
@@ -15,58 +17,44 @@ tasks:
   - id: T1
     title: "<imperative, one line>"
     depends_on: []
-    covers: [REQ-1]
-    requirements:               # one entry per id in covers — statement verbatim from the slice
-      - id: REQ-1
-        statement: "<the requirement's full EARS statement, verbatim>"
-        serves: CAP-NNN         # this requirement's driver, read off the slice
-    serves: [CAP-NNN]           # the union of the requirements' serves — never just a "primary"
-    files_to_touch:
+    covers: [REQ-1]             # requirements + serves are materialized from the slice
+    files_to_touch:             # through the impact gate (task-contract.md Scope consistency)
       - "<path>"
-      - "<the test file the mandated unit/integration tests live in>"
+      - "<the test file the mandated tests live in>"
     acceptance_criteria:
       - id: REQ-1.AC-1
         check: "<testable statement with named inputs and expected outputs>"
-      # - id: REQ-1.AC-2
+        tests:
+          - level: unit                    # unit | integration
+            target: "<file>:<function>"    # unit: the target under test
+      - id: REQ-1.AC-2
+        check: "<failure/boundary behaviour of the same requirement>"
+        tests:
+          - level: integration
+            seam: "<the real external dep or cross-component wiring exercised>"
+      # - id: REQ-1.AC-3
       #   check: "<criterion an existing mechanical gate enforces>"
-      #   verified_by: "<the gate command>"   # only when a named gate, not a test, proves it
-    testing_mandate:
-      unit_tests:
-        - target: "<file>:<function>"
-          tests:
-            - description: "<input> → <expected output> [positive]"
-              covers: REQ-1.AC-1
-            - description: "<error input> → <expected error> [negative]"
-              covers: REQ-1.AC-1
-      integration_tests: []     # real seam: external dep OR cross-component wiring; [] + justify if none
-      system_tests: []          # [] on a component task — see the e2e task below
+      #   verified_by: "<the gate command>"   # gate-verified: no tests entry
     out_of_scope:
-      - "<boundary the developer might cross>"
+      - "<a cross-slice deferral or adjacent behaviour no mechanism forbids>"
     implementation_notes:
-      - "<code pattern from source; ADR-NNN to respect>"
-    # interface_contract: |    # only when the task introduces a component / widens a shared
-    #   <shape>                # seam — the slice's contract for it, verbatim. Omit otherwise.
+      - "<pointer only: file:line · ADR-NNN + its one-clause constraint · named pattern>"
+    # interface_contract_ref: "<contract name>"   # only when the slice's Interface contracts
+    #                                             # section fixes this task's shape; materialize
+    #                                             # inlines the block verbatim
 
   # An e2e task — one per SA system test case. depends_on the tasks building the
   # requirements DRIVEN BY the capability the case covers, so it runs the assembled path.
   - id: T2
     title: "System test: <the case's behaviour>"
-    depends_on: [T1]            # the tasks building the reqs driven by CAP-NNN
-    covers: []                  # an e2e task proves a SYS-TC (below), not a component requirement
-    requirements: []            # empty like covers — the case's text lives in system_tests[].description
-    serves: [CAP-NNN]           # the capability the SYS-TC covers
+    depends_on: [T1]            # the tasks building the reqs driven by the case's capability
+    covers: []                  # an e2e task proves a SYS-TC, not a component requirement
     files_to_touch:
       - "<the e2e test file>"
     acceptance_criteria: []     # the system test case IS the acceptance; no REQ-N.AC here
-    testing_mandate:
-      unit_tests: []
-      integration_tests: []
-      system_tests:
-        - id: SYS-TC-1          # build stamps [SYS-TC:SYS-TC-1] in the e2e test
-          description: "<the SA's end-to-end scenario, over the real path> → <expected>"
-          covers: [CAP-NNN]     # the capability the case proves — never a component requirement
+    system_tests:
+      - id: SYS-TC-1            # description + covers materialized; build stamps [SYS-TC:SYS-TC-1]
     out_of_scope:
       - "Any component logic — the e2e task only exercises the assembled path."
     implementation_notes:
-      - "<the SA case verbatim from the slice; the e2e home + how it runs — e.g. e2e/ ;
-         establish one if none exists>"
+      - "<the e2e home + how it runs — e.g. e2e/ ; establish one if none exists>"

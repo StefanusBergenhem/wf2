@@ -3,6 +3,13 @@
 ``sprint task`` extracts ONE task's contract into a worktree before build, so the
 build agent reads a focused contract rather than the whole sprint.
 
+``sprint materialize`` inlines the slice's verbatim fields into the sprint: the
+SwA authors thin references (covers ids, interface_contract_ref, system_tests
+ids) and this fills in requirement statements, per-requirement drivers, the
+serves union, interface-contract shapes, and SYS-TC scenarios — mechanical
+copying stays out of the LLM's output budget. Idempotent; re-run after any
+sprint edit, before ``sprint check``.
+
 ``sprint check`` is the analyze gate: a mechanical consistency/coverage linter over
 the sprint DAG (and, when present, the slice it was cut from). It verifies the
 STRUCTURE of the requirement -> AC -> test trace, never its meaning — so the cheap
@@ -13,6 +20,7 @@ Exits non-zero on any error-severity finding.
 from __future__ import annotations
 
 import re
+import textwrap
 from pathlib import Path
 
 import common
@@ -22,14 +30,6 @@ _AC_RE = re.compile(r"^(REQ-\d+)\.AC-\d+$")          # AC id -> owning REQ
 _SLICE_REQ_RE = re.compile(r"\*\*(REQ-\d+)\*\*")     # slice "Component requirements" bullets
 _SLICE_TC_RE = re.compile(r"\b(SYS-TC-\d+)\b")
 
-# C3 test-file heuristic (deliberately simple + language-agnostic): a path is a
-# plausible test home when a directory segment is a conventional test dir, or the
-# filename carries test/spec as a delimited token (covers *_test.*, test_*.*,
-# *.test.*, *.spec.*, *-test.* ...). The goal is catching a contract that lists NO
-# test file at all, not policing which one.
-_TEST_DIRS = {"test", "tests", "__tests__", "spec", "specs", "testdata"}
-_TEST_NAME_RE = re.compile(r"(^|[._-])(test|spec)s?([._-]|$)", re.IGNORECASE)
-
 # C9 path-like note tokens (deliberately conservative): a whitespace-delimited token
 # with an optional path prefix and a letter-led extension. Prose abbreviations that
 # match the shape are skipped.
@@ -37,13 +37,7 @@ _NOTE_PATH_RE = re.compile(r"^[\w./-]*[\w-]\.[A-Za-z][A-Za-z0-9]{0,4}$")
 _NOTE_SKIP = {"e.g", "i.e"}
 
 
-def _is_test_path(path):
-    parts = [seg for seg in str(path).replace("\\", "/").split("/") if seg]
-    if not parts:
-        return False
-    if any(seg.lower() in _TEST_DIRS for seg in parts[:-1]):
-        return True
-    return bool(_TEST_NAME_RE.search(parts[-1]))
+_is_test_path = common.is_test_path  # C3's test-home heuristic, shared with `wf impact`
 
 
 def _note_paths(note):
@@ -125,6 +119,207 @@ def _slice_path(args):
     return (common.project_root(args.config) / rel).resolve()
 
 
+# ---------------------------------------------------------------------------
+# sprint materialize — slice parsing + verbatim-field inlining
+# ---------------------------------------------------------------------------
+
+# One "Component requirements" bullet: id, statement (may wrap), owner parenthetical.
+_REQ_FULL_RE = re.compile(
+    r"-\s+\*\*(REQ-\d+)\*\*\s+—\s+(.*?)\s*\*\(owner:\s*(.*?)\)\*", re.DOTALL
+)
+_DRIVER_ID_RE = re.compile(r"\b(?:CAP|L|ADR|D)-\w+\b")
+_TC_HEAD_RE = re.compile(r"-\s+\*\*(SYS-TC-\d+):\*\*\s*(.*)")
+_GWT_RE = re.compile(r"\*\*(Given|When|Then)\*\*\s*(.*)")
+_IC_HEAD_RE = re.compile(r"-\s+\*\*(.+?)\*\*")
+
+
+def _oneline(text):
+    return " ".join(str(text).split())
+
+
+def _slice_requirements(text):
+    """{REQ-id: {statement, serves}} from '## Component requirements'. The driver
+    is the FIRST id-shaped token after the owner component — later tokens
+    (binding ADRs, secondary annotations) are context, not drivers."""
+    out = {}
+    for rid, stmt, owner in _REQ_FULL_RE.findall(_section(text, "Component requirements")):
+        chunks = owner.split("·")[1:]  # chunk 0 is the owning component
+        driver = None
+        for chunk in chunks:
+            m = _DRIVER_ID_RE.search(chunk)
+            if m:
+                driver = m.group(0)
+                break
+        out[rid] = {"statement": _oneline(stmt), "serves": driver}
+    return out
+
+
+def _slice_system_testcases(text):
+    """{SYS-TC-id: {description, covers}} from '## System test cases'. The
+    description is the case title plus its Given/When/Then scenario, joined to
+    one line — the build stamps it verbatim on the [SYS-TC:] tag."""
+    out = {}
+    cur = None
+    for line in _section(text, "System test cases").splitlines():
+        head = _TC_HEAD_RE.search(line)
+        if head:
+            cur = {"title": _oneline(head.group(2)), "covers": [], "gwt": []}
+            out[head.group(1)] = cur
+            continue
+        if cur is None:
+            continue
+        if "**Covers:**" in line:
+            cur["covers"] = _DRIVER_ID_RE.findall(line.split("**Covers:**", 1)[1])
+            continue
+        gwt = _GWT_RE.search(line)
+        if gwt:
+            cur["gwt"].append(f"{gwt.group(1)} {_oneline(gwt.group(2))}")
+    return {
+        tc: {
+            "description": " — ".join([c["title"], "; ".join(c["gwt"])]) if c["gwt"] else c["title"],
+            "covers": c["covers"],
+        }
+        for tc, c in out.items()
+    }
+
+
+def _slice_interface_contracts(text):
+    """{name: shape} from '## Interface contracts'. Each bullet's name is its
+    bold text; its shape is the indented block beneath it, dedented verbatim."""
+    out = {}
+    name, block = None, []
+
+    def flush():
+        if name is not None:
+            out[name] = textwrap.dedent("\n".join(block)).strip("\n")
+
+    for line in _section(text, "Interface contracts").splitlines():
+        head = _IC_HEAD_RE.match(line.strip()) if line.lstrip().startswith("- ") else None
+        if head:
+            flush()
+            name, block = head.group(1).strip(), []
+        elif name is not None and (not line.strip() or line[:1].isspace()):
+            block.append(line)
+    flush()
+    return out
+
+
+_TASK_FIELD_ORDER = [
+    "id", "title", "depends_on", "covers", "requirements", "serves",
+    "files_to_touch", "acceptance_criteria", "system_tests", "out_of_scope",
+    "implementation_notes", "interface_contract_ref", "interface_contract",
+]
+
+
+def _ordered_task(task):
+    """Rebuild a task dict in canonical field order (unknown fields keep their
+    relative order at the end) so materialize output is stable and diffable."""
+    out = {k: task[k] for k in _TASK_FIELD_ORDER if k in task}
+    out.update({k: v for k, v in task.items() if k not in out})
+    return out
+
+
+def _materialize(rest):
+    p = common.base_parser("sprint materialize")
+    p.add_argument("--slice", help="path to the design-slice (default: paths.design_slice)")
+    args = p.parse_args(rest)
+
+    sprint_path = common.resolve_path(args.config, "sprint", None)
+    sprint = common.load_yaml(sprint_path)
+    slice_path = _slice_path(args)
+    if slice_path is None or not slice_path.exists():
+        common.die(f"design slice not found at {slice_path} — materialize needs the slice")
+    text = slice_path.read_text()
+
+    reqs = _slice_requirements(text)
+    tcs = _slice_system_testcases(text)
+    contracts = _slice_interface_contracts(text)
+
+    errors = []
+    n_reqs = n_ics = n_tcs = 0
+    tasks = sprint.get("tasks") or []
+    for i, t in enumerate(tasks):
+        tid = t.get("id", "<no-id>")
+
+        systests = t.get("system_tests") or []
+        if systests:
+            serves = []
+            for st in systests:
+                info = tcs.get(st.get("id"))
+                if info is None:
+                    errors.append(f"{tid}: system_tests names {st.get('id')}, "
+                                  f"which is not a case in the slice")
+                    continue
+                st["description"] = info["description"]
+                st["covers"] = list(info["covers"])
+                serves += [c for c in info["covers"] if c not in serves]
+                n_tcs += 1
+            if serves:
+                t["serves"] = serves
+
+        covers = _covers_of(t)
+        if covers:
+            # The slice supplies each entry; a covers id the slice lacks keeps a
+            # hand-carried requirements[] entry when one exists (a fix-mode
+            # follow-up on code shipped by an earlier sprint carries its
+            # statement from the origin task) and errors only when neither has it.
+            carried = {r.get("id"): r for r in (t.get("requirements") or [])}
+            entries, serves = [], []
+            for rid in covers:
+                info = reqs.get(rid)
+                if info is None and rid in carried:
+                    entry = carried[rid]
+                elif info is None:
+                    errors.append(f"{tid}: covers {rid}, which is not a requirement in the slice")
+                    continue
+                else:
+                    entry = {"id": rid, "statement": info["statement"],
+                             "serves": info["serves"]}
+                entries.append(entry)
+                for s in _serves_of(entry.get("serves")):
+                    if s and s not in serves:
+                        serves.append(s)
+                n_reqs += 1
+            t["requirements"] = entries
+            t["serves"] = serves
+
+        ref = t.get("interface_contract_ref")
+        if ref:
+            names = ref if isinstance(ref, list) else [ref]
+            blocks = []
+            for name in names:
+                if name not in contracts:
+                    errors.append(f"{tid}: interface_contract_ref '{name}' is not a "
+                                  f"contract in the slice")
+                else:
+                    blocks.append(contracts[name])
+            if len(blocks) == len(names):
+                t["interface_contract"] = "\n\n".join(blocks)
+                n_ics += 1
+
+        tasks[i] = _ordered_task(t)
+
+    if errors:
+        common.emit({"verdict": "fail", "errors": errors}, args.format)
+        return 1
+
+    import yaml as _yaml
+
+    sprint["tasks"] = tasks
+    sprint_path.write_text(
+        _yaml.safe_dump(sprint, sort_keys=False, default_flow_style=False, allow_unicode=True)
+    )
+    common.emit({
+        "sprint_id": sprint.get("sprint_id"),
+        "tasks": len(tasks),
+        "requirements": n_reqs,
+        "interface_contracts": n_ics,
+        "system_tests": n_tcs,
+        "verdict": "pass",
+    }, args.format)
+    return 0
+
+
 def _check(rest):
     p = common.base_parser("sprint check")
     p.add_argument("--slice", help="path to the design-slice (default: paths.design_slice)")
@@ -151,11 +346,7 @@ def _check(rest):
                 for r in (t.get("requirements") or [])}
         ac_entries = t.get("acceptance_criteria") or []
         acs = [ac.get("id") for ac in ac_entries]
-        ac_set = set(acs)
-        tm = t.get("testing_mandate") or {}
-        unit = tm.get("unit_tests") or []
-        integ = tm.get("integration_tests") or []
-        systests = tm.get("system_tests") or []
+        systests = t.get("system_tests") or []
         files = set(t.get("files_to_touch") or [])
 
         for req in covers:
@@ -166,7 +357,8 @@ def _check(rest):
         # B1 — every covered REQ carries a verbatim statement
         for req in covers:
             if req not in reqs:
-                err("B1", f"{tid}: covers {req} but has no requirements[] entry for it")
+                err("B1", f"{tid}: covers {req} but has no requirements[] entry for it "
+                          f"— run `wf sprint materialize`")
             elif not reqs[req]:
                 err("B1", f"{tid}: requirements entry {req} has an empty statement")
 
@@ -175,27 +367,13 @@ def _check(rest):
             if not any(_AC_RE.match(a or "") and _AC_RE.match(a).group(1) == req for a in acs):
                 err("B2", f"{tid}: {req} has no acceptance criterion (REQ with no AC)")
 
-        # test -> AC references (unit + integration only; system covers CAPs)
-        test_ac_refs = []
-        for u in unit:
-            for tst in (u.get("tests") or []):
-                test_ac_refs += _covers_of(tst)
-        for it in integ:
-            test_ac_refs += _covers_of(it)
-
-        # B3 — every AC is referenced by >=1 test (the silent hole this gate exists to
+        # B3 — every AC carries >=1 test entry (the silent hole this gate exists to
         # catch). An AC verified by a named mechanical gate instead of a test declares
         # `verified_by: <gate/command>` and is exempt.
-        gate_acs = {ac.get("id") for ac in ac_entries
-                    if str(ac.get("verified_by") or "").strip()}
-        for ac in acs:
-            if ac not in test_ac_refs and ac not in gate_acs:
-                err("B3", f"{tid}: AC {ac} is not referenced by any test (silent hole)")
-
-        # B4 — every AC-shaped test ref names an AC that exists in this task
-        for ref in test_ac_refs:
-            if _AC_RE.match(ref or "") and ref not in ac_set:
-                err("B4", f"{tid}: a test covers {ref}, which is not an AC in this task")
+        for ac in ac_entries:
+            if not (ac.get("tests") or []) and not str(ac.get("verified_by") or "").strip():
+                err("B3", f"{tid}: AC {ac.get('id')} has no tests and no verified_by "
+                          f"(silent hole)")
 
         # B5 — happy-path-only heuristic
         for req in covers:
@@ -203,23 +381,39 @@ def _check(rest):
             if n == 1:
                 warn("B5", f"{tid}: {req} has a single AC — verify failure/boundary is covered")
 
-        # C2 — unit target files are in scope
-        for u in unit:
-            fpath = (u.get("target") or "").split(":", 1)[0].strip()
-            if fpath and fpath not in files:
-                err("C2", f"{tid}: unit target '{fpath}' not in files_to_touch")
+        # B6 — thin references the materializer has not inlined yet
+        if t.get("interface_contract_ref") and not str(t.get("interface_contract") or "").strip():
+            err("B6", f"{tid}: interface_contract_ref present but interface_contract "
+                      f"is not inlined — run `wf sprint materialize`")
 
-        # C3 — mandated unit/integration tests need a file to live in
-        if (unit or integ) and not any(_is_test_path(f) for f in files):
-            err("C3", f"{tid}: testing_mandate names unit/integration tests but "
-                      f"files_to_touch has no test file (*_test.*, test_*.*, *.test.*, "
-                      f"*.spec.*, tests/ ...) — the mandated tests have no home")
+        # B7 + C2 — test entries: a known level; a unit test's target file in scope
+        for ac in ac_entries:
+            for te in (ac.get("tests") or []):
+                lvl = te.get("level")
+                if lvl not in ("unit", "integration"):
+                    err("B7", f"{tid}: AC {ac.get('id')} test declares level '{lvl}' "
+                              f"— must be unit or integration")
+                elif lvl == "unit":
+                    fpath = (te.get("target") or "").split(":", 1)[0].strip()
+                    if not fpath:
+                        err("C2", f"{tid}: AC {ac.get('id')} unit test names no target")
+                    elif fpath not in files:
+                        err("C2", f"{tid}: unit target '{fpath}' not in files_to_touch")
 
-        # C4 — e2e task shape
+        # C3 — mandated tests need a file to live in
+        if any(ac.get("tests") for ac in ac_entries) and not any(_is_test_path(f) for f in files):
+            err("C3", f"{tid}: acceptance criteria mandate tests but files_to_touch "
+                      f"has no test file (*_test.*, test_*.*, *.test.*, *.spec.*, "
+                      f"tests/ ...) — the mandated tests have no home")
+
+        # C4 — e2e task shape (B6 when the case text is not materialized yet)
         if systests:
             for st in systests:
                 if st.get("id"):
                     systc_ids.add(st["id"])
+                if not str(st.get("description") or "").strip():
+                    err("B6", f"{tid}: system_tests entry {st.get('id')} has no "
+                              f"description — run `wf sprint materialize`")
                 for c in _covers_of(st):
                     if str(c).startswith("REQ-"):
                         err("C4", f"{tid}: system_test {st.get('id')} covers {c} — must cover a CAP, not a REQ")
@@ -366,5 +560,6 @@ def _has_cycle(tasks):
 
 COMMANDS = {
     ("sprint", "task"): _task,
+    ("sprint", "materialize"): _materialize,
     ("sprint", "check"): _check,
 }

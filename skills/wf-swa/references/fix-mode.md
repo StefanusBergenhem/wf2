@@ -54,13 +54,16 @@ The defective code is already merged, so no existing contract can honestly absor
 — author a **new task** that repairs the component, and gate the parked task behind it:
 
 1. Append one task to `$sprint_artifact` with a complete contract per
-   `references/task-contract.md`: the next unused id in the sprint's id scheme; `covers` /
-   `requirements` naming the requirement id(s) the merged code violates (statements
-   verbatim from the task that built it); acceptance criteria that name the defective
-   behaviour and the required one; `files_to_touch` limited to the defective component's
-   files plus the mandated tests' homes; a `testing_mandate` that proves the fix;
-   `depends_on` only what the fix genuinely needs (usually nothing — the code it repairs
-   is already merged).
+   `references/task-contract.md`: the next unused id in the sprint's id scheme; `covers`
+   naming the requirement id(s) the merged code violates — when a violated id is not in
+   this slice (code shipped by an earlier sprint), carry its `{id, statement, serves}`
+   requirements entry verbatim from the task that built it; acceptance criteria that name
+   the defective behaviour and the required one, each with the `tests` that prove the fix;
+   `files_to_touch` limited to the defective component's files plus the mandated tests'
+   homes; `depends_on` only what the fix genuinely needs (usually nothing — the code it
+   repairs is already merged). A wiring defect may split the requirement-owner and the
+   defect-owner across two merged tasks — `covers` names the violated requirement,
+   `files_to_touch` names the defective files, regardless of which task built which.
 2. Add the new task's id to the **`task_id` task's `depends_on`** — the parked task may
    only re-run after the fix has merged.
 3. Do not commit: `$sprint_artifact` is transient.
@@ -69,8 +72,10 @@ Then Step 5.
 
 ## Step 5 — Mark resolved
 
-Set the `di_id` entry's `status: resolved` in `$di_artifact`. That flag is the signal the
-issue is closed.
+Run `python3 <paths.tools>/cli/wf sprint materialize` — an amendment or follow-up task
+leaves thin references the build cannot consume until they are inlined. Then set the
+`di_id` entry's `status: resolved` in `$di_artifact`. That flag is the signal the issue
+is closed.
 
 ## Halt conditions
 

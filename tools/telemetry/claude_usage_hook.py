@@ -102,8 +102,12 @@ def _scan_transcript(path):
     if not usages:
         return None
 
+    def val(u, field):
+        v = u.get(field) or 0
+        return v if isinstance(v, int) else 0
+
     def total(field):
-        return sum(u.get(field) or 0 for u in usages if isinstance(u.get(field) or 0, int))
+        return sum(val(u, field) for u in usages)
 
     tokens = {
         "input": total("input_tokens"),
@@ -111,7 +115,17 @@ def _scan_transcript(path):
         "cache_read": total("cache_read_input_tokens"),
         "cache_creation": total("cache_creation_input_tokens"),
     }
-    return tokens, len(tool_ids) + anon_tools, first and first[1], last and last[1]
+    # context_max: the largest single-request context (input + cache_read +
+    # cache_creation) — the honest per-request peak. Summed cache_creation
+    # double-counts whenever the prompt cache expires mid-session and the whole
+    # context is re-written, so it measures churn, not load; this doesn't.
+    context_max = max(
+        val(u, "input_tokens") + val(u, "cache_read_input_tokens")
+        + val(u, "cache_creation_input_tokens")
+        for u in usages
+    )
+    stats = {"requests": len(usages), "context_max": context_max}
+    return tokens, len(tool_ids) + anon_tools, first and first[1], last and last[1], stats
 
 
 def _run():
@@ -133,7 +147,7 @@ def _run():
     scanned = _scan_transcript(transcript)
     if scanned is None:
         return
-    tokens, tool_calls, started_at, ended_at = scanned
+    tokens, tool_calls, started_at, ended_at, stats = scanned
 
     record = {
         "kind": "usage",
@@ -144,6 +158,8 @@ def _run():
         "ended_at": ended_at,
         "tokens": tokens,
         "tool_calls": tool_calls,
+        "requests": stats["requests"],
+        "context_max": stats["context_max"],
     }
 
     sink = resolve_sink(sink_path, cwd=cwd)

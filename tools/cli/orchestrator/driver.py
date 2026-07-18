@@ -850,7 +850,8 @@ class Orchestrator:
             "files_to_touch": [],
             "acceptance_criteria": [
                 {"id": "STAGE-FIX.AC-1",
-                 "check": f"`{cmd_str}` exits 0 on the sprint branch"}],
+                 "check": f"`{cmd_str}` exits 0 on the sprint branch",
+                 "verified_by": cmd_str}],
             "out_of_scope": ["any change not needed to make the stage check pass"],
             "implementation_notes": [f"the failing stage check command: `{cmd_str}`"],
         }, sort_keys=False))

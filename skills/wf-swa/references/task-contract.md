@@ -6,10 +6,12 @@ can build the task correctly and a reviewer can judge it mechanically.
 
 Contents:
 - The fields
+- Materialized fields
 - Acceptance criteria
-- Testing mandate
+- Tests on criteria
 - Scope consistency
-- Behavior-level wording
+- Implementation notes are pointers
+- Out of scope
 
 ## The fields
 
@@ -18,43 +20,52 @@ Contents:
   title: <imperative, one line>
   depends_on: []                 # task ids that must land first
   covers: [REQ-1, REQ-2]         # the slice requirements this task satisfies
-  requirements:                  # one entry per id in covers — the requirement's text
-    - id: REQ-1
-      statement: "<the requirement's full EARS statement>"
-      serves: CAP-NNN            # this requirement's driver, read off the slice
-    - id: REQ-2
-      statement: "<...>"
-      serves: L-NNN
-  serves: [CAP-NNN, L-NNN]       # exactly the union of the requirements' serves — a task
-                                 # grouping requirements with different drivers lists them
-                                 # all, and lists nothing no requirement declares
   files_to_touch: [path, path]   # every file the build phase may write
   acceptance_criteria:           # YOU author these — one testable condition per entry
     - id: REQ-1.AC-1
       check: <testable statement with named inputs and expected outputs>
+      tests:
+        - level: unit            # unit | integration
+          target: "<file>:<function>"   # unit: the target under test
     - id: REQ-1.AC-2
-      check: <...>
-      verified_by: <gate command>  # ONLY when an existing mechanical gate, not a test,
-                                   # proves the criterion — see Acceptance criteria
-  testing_mandate:
-    unit_tests: [...]            # see below
-    integration_tests: [...]     # required when the task touches an external dep
+      check: <failure/boundary behaviour of the same requirement>
+      tests:
+        - level: integration
+          seam: "<the real external dep or cross-component wiring exercised>"
+    - id: REQ-1.AC-3
+      check: <criterion an existing mechanical gate enforces>
+      verified_by: <gate command>  # ONLY when a named gate, not a test, proves it
+  system_tests:                  # an e2e task ONLY: the SA's case, by id
+    - id: SYS-TC-1
   out_of_scope:
-    - <boundary the developer might be tempted to cross>
+    - <a cross-slice deferral or adjacent behaviour no mechanism forbids>
   implementation_notes:
-    - <code patterns found in the source; governing ADR-NNN to respect>
-  interface_contract: |         # ONLY when the task introduces a component or widens a
-    <signature / struct /       # shared seam: the concrete shape, verbatim from the
-     endpoint shape>            # slice's Interface contracts section. Omit otherwise.
+    - <pointer only: file:line · ADR-NNN + its one-clause constraint · named pattern>
+  interface_contract_ref: "<contract name>"  # ONLY when the slice's Interface contracts
+                                             # section fixes this task's shape; name the
+                                             # slice entry (a list when several apply)
 ```
 
-`requirements` statements are copied **verbatim** from the design slice — never
-paraphrased, never summarized.
+## Materialized fields
 
-`interface_contract` is copied **verbatim** from the slice's Interface contracts section
-when the task builds the new component or widens the seam that contract fixes — the build
-implements that shape, not one it invents. A task touching only existing interfaces omits
-the field.
+Author only the thin fields above. After writing (and after **every** later edit to
+the sprint file), run:
+
+```
+python3 <paths.tools>/cli/wf sprint materialize
+```
+
+It inlines, verbatim from the slice: each covered requirement's `requirements[]`
+entry (statement + its driver as `serves`), the task-level `serves` union, the
+`interface_contract` block each `interface_contract_ref` names, and each
+`system_tests` entry's `description` and `covers`. Never write those fields by
+hand and never paraphrase a statement — hand-written copies drift, and
+`wf sprint check` fails a sprint the materializer has not filled.
+
+One exception: a fix-mode follow-up whose `covers` names a requirement **outside
+the slice** (a defect in code shipped by an earlier sprint) carries its
+`{id, statement, serves}` entry verbatim from the task that built it; the
+materializer keeps a carried entry the slice cannot supply.
 
 ## Acceptance criteria
 
@@ -65,97 +76,87 @@ For each requirement a task `covers`, write the testable conditions that prove i
   agent must be able to write a failing test from the `check` alone, without
   re-reading the requirement.
 - **Identified and traced.** Give each criterion an id `REQ-N.AC-M` scoped to its
-  requirement, so the testing mandate and the build's test tags reference it and the
-  trace AC → requirement → driver stays intact.
+  requirement, so the build's test tags reference it and the trace
+  AC → requirement → driver stays intact.
 - **Complete for the requirement.** Cover the requirement's failure and boundary
   behaviour, not just its happy path — a requirement with only happy-path criteria is
   an incomplete set.
 - **Within the requirement.** Do not invent criteria for behaviour the requirement
   doesn't call for — that is scope creep. A requirement you cannot make testable from
   the source is a design issue you raise per your mode's procedure, never a guess.
+- **Behaviour-level wording.** A `check` describes the observable behaviour or
+  output, never the underlying API call or library function — coupling a criterion
+  to a method name makes its test break on refactors that preserve behaviour.
+  - Bad: *"value is formatted via toLocaleString"* — names the mechanism.
+  - Good: *"value renders as a non-empty locale-formatted date string"*.
 - **Gate-verified, not test-provable.** When a criterion is enforced by an existing
   mechanical gate (a preflight command, a CI check) rather than a test — e.g. "generated
-  code is never stale" enforced by a codegen-drift gate — keep it as an acceptance
-  criterion and add `verified_by: <the gate command>` to the entry; it then needs no
-  covering test in the mandate. Never use `verified_by` for a criterion a test could
-  prove — that is dodging the mandate, and the reviewer will treat it as an unmet AC.
+  code is never stale" enforced by a codegen-drift gate — add `verified_by: <the gate
+  command>` and no `tests`; it then needs no covering test. Never use `verified_by` for
+  a criterion a test could prove — that is dodging the mandate, and the reviewer will
+  treat it as an unmet AC.
 
 Good: *"For 1,000 concurrent users, median response ≤ 180ms and p99 ≤ 250ms over a 5-minute window."*
 Bad: *"The system performs well under load."*
 
-## Testing mandate
+## Tests on criteria
 
-State the tests the build phase must write — not "tests pass," but *which* tests, at the
-right level. Mandate each level where it applies:
+Each criterion's `tests` entries say **where it is proven** — the level and
+placement. The `check` already says what to prove; do not restate it as a test
+description.
 
-- **Unit** — a single target in isolation. **Group by target** when a task touches 2+
-  distinct functions/files (a flat list hides which function lacks coverage). **Every
-  target needs a positive and a negative case** — happy-path-only is incomplete.
-- **Integration** — a real seam the unit tests mock out. Required when `files_to_touch`
-  crosses an **external** boundary (database, network, filesystem, queue, cache), **exposes
-  a new interface**, or **wires in another component** (an orchestration / composition-root
-  task). Exercise the real seam, not a mock; at least one per distinct seam.
-- **System (end-to-end)** — comes from the **SA's `SYS-TC-<n>` system test case(s) in the
-  design slice**; you do not derive them. Plan each case as its **own e2e task**. The case
-  `Covers` a **capability** (`CAP-<n>`), not requirements — so the task `depends_on` the tasks
-  building **the requirements whose driver is that capability** (read the drivers off the
-  slice's component requirements), which puts it downstream of the assembled path. Its
-  `system_tests` is the case; its `files_to_touch` is the e2e test (it exercises — imports —
-  the components without owning them); the build stamps `[SYS-TC:SYS-TC-<n>]` in that test.
-  This is the level that catches a `nil`-wired dependency that compiles and silently does
-  nothing — per-component unit tests, which mock what they wire, never substitute for it.
+- **`level: unit`** — the criterion is proven against a single target in isolation;
+  `target: "<file>:<function>"` names it. Every AC provable in isolation gets one.
+- **`level: integration`** — the criterion is proven across a real seam;
+  `seam:` names the external dependency (database, network, filesystem, queue,
+  cache), the new exposed interface, or the cross-component wiring exercised.
+  **Required** on at least one criterion whenever `files_to_touch` crosses such a
+  seam — the seam is exercised for real, never mocked.
+- An AC may carry both levels when its behaviour needs proving in isolation and
+  across the seam.
+- A task whose criteria mandate no test at all (every AC gate-verified) states why
+  in `implementation_notes`.
 
-If a level genuinely does not apply, leave its list empty with a one-line justification in
-`implementation_notes` rather than an empty list with no reason.
-
-```yaml
-testing_mandate:
-  unit_tests:
-    - target: "<file>:<function>"
-      tests:
-        - description: "<input> → <expected output> [positive]"
-          covers: REQ-1.AC-1
-        - description: "<error input> → <expected error> [negative]"
-          covers: REQ-1.AC-2
-  integration_tests:
-    - description: "<real seam exercised — external dep or cross-component wiring> → <expected>"
-      covers: REQ-1.AC-3
-  system_tests:                 # an e2e task only: the SA's system test case from the slice
-    - id: SYS-TC-1              # the case's repo-unique id; build stamps [SYS-TC:SYS-TC-1]
-      description: "<the SA's end-to-end scenario, over the real path> → <expected>"
-      covers: [CAP-NNN]         # the capability the case proves — never a component requirement
-```
+**System (end-to-end)** tests come from the **SA's `SYS-TC-<n>` cases in the design
+slice**; you do not derive them. Plan each case as its **own e2e task** whose
+`system_tests` names the case id (the materializer fills its text). The case covers a
+**capability**, so the task's `depends_on` names the tasks building the requirements
+**driven by that capability** (read the drivers off the slice), putting it downstream
+of the assembled path. Its `files_to_touch` is the e2e test file (it exercises —
+imports — the components without owning them); the build stamps
+`[SYS-TC:SYS-TC-<n>]` in that test. This is the level that catches a `nil`-wired
+dependency that compiles and silently does nothing — per-component unit tests, which
+mock what they wire, never substitute for it.
 
 ## Scope consistency
 
-Every file a `testing_mandate` item names — as a `target`, in its body, or as the
-canonical home for that test type — MUST appear in `files_to_touch`. The build phase
-can only write files the contract declares in scope. This includes derived artifacts
-(snapshots, generated schemas, golden outputs) when the task changes the source they
-capture.
+**Gate: compute the mechanical floor of `files_to_touch` before you finish a
+contract.** For every symbol, field, table, or column the task changes, and every
+file it edits, run:
 
-**Gate: every mandated test gets a file home.** Before you finish a contract, for each
-non-empty `unit_tests` / `integration_tests` mandate add the test file it lives in to
-`files_to_touch`, placed per the package's test convention — a Go unit test as
-`<file>_test.go` beside its target, a Go integration test as its own
-`//go:build integration` file, a JS test as `*.test.*` / `*.spec.*` or under
-`__tests__/`. A mandate with no test file in `files_to_touch` fails `wf sprint check`,
-and if it slips through, the build halts mid-task for a scope amendment.
+```
+python3 <paths.tools>/cli/wf impact files --symbol <changed-symbol> [--symbol ...] [--file <edited-file> ...]
+```
 
-Name in `implementation_notes` only files that are in `files_to_touch` or explicitly
-read-only reference material — a note that tells the build to edit a file outside
-`files_to_touch` sends it into a scope violation.
+Fold every `candidates` entry into `files_to_touch` — the consumer files (source and
+test) plus the companion fan-out (a migration's `down.sql` sibling, config-declared
+codegen outputs). A candidate you deliberately exclude gets a one-line reason in
+`out_of_scope`. Skip this gate and the omissions surface as mid-build scope halts,
+one live amendment at a time.
 
 **A signature or field change carries its consumers.** When a task changes a function
 signature, renames or relocates a field, or otherwise alters a shape other code depends
 on, `files_to_touch` must list **every caller and fixture that won't compile or pass
-until it is updated too** — not just the file the change originates in, and whatever
-component each one sits in. Trace the changed symbol through the source (its integration-
-and system-test callers, any shared test fixture that constructs it) and add each to scope;
-the atomic edit set is the origin file plus its dependents. A consumer left out of
-`files_to_touch` halts the build mid-task, because the change is unbuildable without editing
-a file the contract forbids — and splitting the set across two tasks does the same to both
-halves, since neither compiles without the other.
+until it is updated too** — the impact gate enumerates them; you decide nothing is
+missing. The atomic edit set is the origin file plus its dependents, whatever component
+each sits in. A consumer left out halts the build mid-task, and splitting the set
+across two tasks does the same to both halves, since neither compiles without the other.
+
+**Every mandated test gets a file home.** For each AC `tests` entry, the test file it
+lives in appears in `files_to_touch`, placed per the package's test convention — a Go
+unit test as `<file>_test.go` beside its target, a Go integration test as its own
+`//go:build integration` file, a JS test as `*.test.*` / `*.spec.*` or under
+`__tests__/`. A unit `target`'s file must itself be in `files_to_touch`.
 
 **Widening a seam: add alongside, or change in place.** When the slice's **Interface
 contracts** section fixes the seam's shape, build to that shape. When it does not, you
@@ -165,21 +166,31 @@ decide:
   sizing guidance *and* the old method has consumers outside this slice's scope — those
   consumers stay untouched and out of `files_to_touch`.
 - **Change the shape in place** when the old shape must die — every consumer then goes into
-  `files_to_touch`, per the paragraph above.
+  `files_to_touch`, per the impact gate above.
 
 A twin you add that must eventually be removed gets its removal as a task **in this sprint**,
 carrying the old method's consumers in that task's `files_to_touch`.
 
-## Behavior-level wording
+## Implementation notes are pointers
 
-A `testing_mandate` item describes the **observable behavior or output**, never the
-underlying API call or library function — coupling a test to a method name makes it
-break on refactors that preserve behavior.
+A note is a pointer, never prose that re-explains the source:
 
-- Bad: *"value is formatted via toLocaleString"* — names the mechanism.
-- Good: *"value renders as a non-empty locale-formatted date string"* — names the observable.
-- Bad: *"persists via an UPDATE statement"*.
-- Good: *"after save, a subsequent read returns the new value"*.
+- a `file:line` reference (`the deletedEntitiesCTE exclusion, membership.go:41`),
+- an ADR id plus the one-clause constraint it imposes
+  (`ADR-010: the repository must not import internal/compliance`),
+- the name of a pattern to follow and where it lives.
 
-If you find yourself naming a function, method, or library API in a mandate item,
-rewrite it to describe what the caller or user observes.
+Never describe how existing code works or what it will do — the build agent reads
+the source itself, and a paraphrase that drifts from the source ships a defect
+straight into the contract. Name in a note only files that are in `files_to_touch`
+or explicitly read-only reference material. If a note needs more than one sentence,
+what it holds is either behaviour (an acceptance criterion), a shape (an
+`interface_contract_ref`), or not the contract's to say.
+
+## Out of scope
+
+An entry earns its place only when no mechanism already enforces it: a cross-slice
+deferral the build might reach for (*"REQ-58 is NOT in this slice"*), an adjacent
+behaviour a diligent developer would 'helpfully' absorb, or an impact-gate candidate
+deliberately excluded (with the reason). Never restate that a file is outside
+`files_to_touch` — scope enforcement is mechanical, and a prose copy of it is noise.

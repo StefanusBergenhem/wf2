@@ -21,20 +21,19 @@ a task.
    `implementation_notes`.
 3. Read source **targeted to the decomposition decision, not wholesale.** The slice already
    names the components and bounds the work — you do not need every named component's full
-   source in context to decompose it. Read the specific files a task will list in
-   `files_to_touch` and the seams it must trace — grep a symbol, read its definition and its
-   callers — as each decomposition decision needs it, not as a blanket up-front read of every
-   component tree. Reach for depth where a file-set, a consumer set (a changed signature's
-   callers, per `references/task-contract.md`), or an `implementation_notes` pattern turns on
-   it; the slice carries the breadth.
+   source in context to decompose it. To enumerate a changed symbol's consumers, run
+   `python3 <paths.tools>/cli/wf impact files --symbol <sym>` and read only the hits the
+   decomposition decision turns on — never hand-grep and read file after file to build the
+   list yourself. Reach for depth where a file-set, a consumer set, or an
+   `implementation_notes` pattern turns on it; the slice carries the breadth.
 
 ## Phase 2 — Author the acceptance criteria
 
 **Load `references/task-contract.md` before writing any criterion or contract** — it holds
 the AC rules (testable-from-source, the `REQ-N.AC-M` id scheme, failure/boundary
-completeness, staying within the requirement) and governs the contract you build in the
-later phases. For each requirement in the slice, author the acceptance criteria that prove
-it, per those rules.
+completeness, staying within the requirement, the per-criterion `tests` levels) and governs
+the contract you build in the later phases. For each requirement in the slice, author the
+acceptance criteria that prove it, per those rules.
 
 ## Phase 3 — Decompose into tasks
 
@@ -42,17 +41,13 @@ Cut the criteria into tasks — each one cohesive, testable unit of work that sa
 one or more requirements and carries their criteria. Every criterion lands in exactly
 one task; every requirement is fully covered across the task set.
 
-For each task, author its **complete** contract per `references/task-contract.md`:
-`files_to_touch`, the `testing_mandate` (unit positive + negative per target; an integration
-test per real seam — external dep or cross-component wiring), `out_of_scope`, and
-`implementation_notes` (source patterns + governing ADRs). Copy each covered
-requirement's EARS statement **verbatim** from the slice into the task's `requirements`
-(one `{id, statement, serves}` entry per id in `covers` — `serves` is that requirement's
-own driver, read off the slice), and set the task's `serves` to the union of those
-drivers, never collapsed to one "primary". When a task builds a component or widens a
-seam the slice's **Interface contracts** section fixes a shape for, copy that contract
-**verbatim** into the task's `interface_contract` — the build implements the agreed shape,
-never one it discovers.
+For each task, author its **complete thin** contract per `references/task-contract.md`:
+`covers`, `files_to_touch` (through the impact gate), the per-criterion `tests`,
+`out_of_scope`, and pointer-only `implementation_notes`. Do **not** write `requirements`,
+`serves`, or `interface_contract` by hand — `wf sprint materialize` (Phase 5) inlines them
+from the slice. When a task builds a component or widens a seam the slice's **Interface
+contracts** section fixes a shape for, set `interface_contract_ref` to that contract's
+name — the build implements the agreed shape, never one it discovers.
 
 **Fold in the slice's Supersedes list.** For each superseded id the slice's **Supersedes**
 section carries, locate its proving test file(s) mechanically — grep the test tree for
@@ -65,11 +60,11 @@ removal task when the entry has no successor), with an explicit note in its
 tag must not survive the sprint.
 
 **Plan the slice's system test cases.** For each `SYS-TC-<n>` case wf-sa wrote, add an e2e
-task whose `system_tests` is that case. The case `Covers` a **capability**, so its
-`depends_on` names the tasks building the requirements **driven by that capability** (read
-the drivers off the slice's component requirements) — putting it downstream of the assembled
-path. It exercises (imports) the components without owning them; the build stamps
-`[SYS-TC:SYS-TC-<n>]` in the e2e test.
+task whose `system_tests` names that case's id (the materializer fills its text). The case
+`Covers` a **capability**, so its `depends_on` names the tasks building the requirements
+**driven by that capability** (read the drivers off the slice's component requirements) —
+putting it downstream of the assembled path. It exercises (imports) the components without
+owning them; the build stamps `[SYS-TC:SYS-TC-<n>]` in the e2e test.
 
 **Sizing.** Keep a task to roughly **≤ 5 files** and **≤ 250 lines** of change. A task
 larger than that hides gaps and costs the build/review cycle its leverage — split it.
@@ -94,20 +89,24 @@ replays out of order against a persistent store.
 
 ## Phase 5 — Write and gate
 
-1. Write `$SPRINT` from `assets/sprint.yaml.tmpl`. Mint its top-level `sprint_id`
-   as `sprint-<yyyymmdd>-<short-scope-slug>` — today's date plus a short slug of the
-   sprint's scope, `[a-z0-9-]` only. The sprint is transient and gitignored — there
+1. Write `$SPRINT` from `assets/sprint.yaml.tmpl` — thin fields only. Mint its top-level
+   `sprint_id` as `sprint-<yyyymmdd>-<short-scope-slug>` — today's date plus a short slug
+   of the sprint's scope, `[a-z0-9-]` only. The sprint is transient and gitignored — there
    is nothing to commit; the build pipeline consumes the working-tree file directly.
-2. **Gate: run `python3 <paths.tools>/cli/wf sprint check`. Do not proceed until it
+2. **Run `python3 <paths.tools>/cli/wf sprint materialize`.** It inlines the slice's
+   verbatim fields (requirements, serves, interface contracts, SYS-TC text). An error
+   names a `covers` id, contract name, or SYS-TC id the slice does not carry — fix the
+   reference, or halt as a slice defect if the slice genuinely lacks it.
+3. **Gate: run `python3 <paths.tools>/cli/wf sprint check`. Do not proceed until it
    reports `verdict: pass` (exit 0).** It checks the sprint against the slice — every
-   slice requirement covered, every criterion carried by exactly one task and referenced
-   by a test (or gate-verified via `verified_by`), every mandated test with a test-file
+   slice requirement covered, every criterion carried by exactly one task and carrying
+   tests (or gate-verified via `verified_by`), every mandated test with a test-file
    home in `files_to_touch`, every requirement's driver in the task's `serves`, every
-   SYS-TC carried by an e2e task, no UNCONFIRMED assumption, an acyclic DAG. On an error finding,
-   fix the decomposition in `$SPRINT` and re-run. A finding you cannot resolve without
-   minting or changing a requirement is a slice defect — halt per **Halt conditions**,
-   never invent a criterion to silence it.
-3. Return a summary: the task count, the dependency shape, and the gate verdict. Leave
+   SYS-TC carried by an e2e task, no UNCONFIRMED assumption, an acyclic DAG. On an error
+   finding, fix the decomposition in `$SPRINT`, **re-run materialize**, and re-run the
+   check. A finding you cannot resolve without minting or changing a requirement is a
+   slice defect — halt per **Halt conditions**, never invent a criterion to silence it.
+4. Return a summary: the task count, the dependency shape, and the gate verdict. Leave
    `$DESIGN_SLICE` in place — it is drained at sprint close, not here.
 
 ## Halt conditions

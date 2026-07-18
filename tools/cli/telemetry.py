@@ -83,11 +83,15 @@ def _roles(rest):
     """Per-role context-footprint report, derived on demand from the telemetry rows —
     nothing is stored. Each `SubagentStop` usage row is one wf-role subagent's own
     transcript; it is window-joined to the skill row (`agent` + window) it overlaps
-    most. `footprint = input + cache_creation` ≈ the unique context that run loaded
-    (within one subagent run the context only grows, so this ≈ its peak). The main
-    loop (`wf-orchestrate`) is not a subagent — its `Stop` rows are cumulative
-    snapshots of the whole session transcript, so its final total per session is
-    reported separately under `main_loop`."""
+    most. Two load metrics, deliberately separate: `context_max` is the largest
+    single-request context — the honest "how much did this role hold at once" peak —
+    while `footprint = input + cache_creation` sums every cache write, so it inflates
+    whenever a slow turn expires the prompt-cache TTL and the context is re-written
+    (churn, not load). Diagnose "loaded too much" on context_max, "cache churned" on
+    a footprint far above it. Pre-upgrade rows carry no context_max and read as 0.
+    The main loop (`wf-orchestrate`) is not a subagent — its `Stop` rows are
+    cumulative snapshots of the whole session transcript, so its final total per
+    session is reported separately under `main_loop`."""
     p = common.base_parser("telemetry roles")
     p.add_argument("--sink", default=None,
                    help="explicit telemetry path; overrides paths.telemetry")
@@ -126,6 +130,8 @@ def _roles(rest):
         t = u.get("tokens") or {}
         joined.append((cands[pick]["agent"], {
             "footprint": (t.get("input") or 0) + (t.get("cache_creation") or 0),
+            "context_max": u.get("context_max") or 0,
+            "requests": u.get("requests") or 0,
             "cache_read": t.get("cache_read") or 0,
             "output": t.get("output") or 0,
             "tool_calls": u.get("tool_calls") or 0,
@@ -140,8 +146,11 @@ def _roles(rest):
         roles.append({
             "role": role,
             "runs": len(runs),
+            "context_max_avg": _stats([r["context_max"] for r in runs])["avg"],
+            "context_max_max": _stats([r["context_max"] for r in runs])["max"],
             "footprint_avg": _stats([r["footprint"] for r in runs])["avg"],
             "footprint_max": _stats([r["footprint"] for r in runs])["max"],
+            "requests_avg": _stats([r["requests"] for r in runs])["avg"],
             "output_avg": _stats([r["output"] for r in runs])["avg"],
             "output_max": _stats([r["output"] for r in runs])["max"],
             "cache_read_avg": _stats([r["cache_read"] for r in runs])["avg"],
@@ -149,7 +158,9 @@ def _roles(rest):
             "tool_calls_max": _stats([r["tool_calls"] for r in runs])["max"],
             "duration_s_avg": _stats([r["duration_s"] for r in runs])["avg"],
         })
-    roles.sort(key=lambda r: r["footprint_max"], reverse=True)  # most concerning first
+    # most concerning first: the honest peak leads; footprint breaks the tie for
+    # pre-upgrade rows that carry no context_max
+    roles.sort(key=lambda r: (r["context_max_max"], r["footprint_max"]), reverse=True)
 
     # Main loop: per session_id, the largest cumulative Stop snapshot is the final total.
     main = {}
@@ -161,6 +172,8 @@ def _roles(rest):
             main[sid] = (total, {
                 "session": sid,
                 "footprint": (t.get("input") or 0) + (t.get("cache_creation") or 0),
+                "context_max": u.get("context_max") or 0,
+                "requests": u.get("requests") or 0,
                 "cache_read": t.get("cache_read") or 0,
                 "output": t.get("output") or 0,
                 "tool_calls": u.get("tool_calls") or 0,

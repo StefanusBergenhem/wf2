@@ -124,9 +124,11 @@ the whole deliverable, and the human applies or rejects it.
    is the deliverable that reaches the maintainer; a return alone is discarded by the
    orchestrator. Include: the new and reinforced entries per stream; the count dropped as
    non-actionable; every Phase 5 proposal as a `PROPOSED AGENTS.md edit` block (target path +
-   verbatim lines, awaiting human approval); the **per-role context footprint** from
-   `python3 <paths.tools>/cli/wf telemetry roles` (which roles' context is ballooning — the
-   work-package scoping signal, most-concerning role first); and, when `$PIPELINE_STATE` was
+   verbatim lines, awaiting human approval); the **per-role context report** from
+   `python3 <paths.tools>/cli/wf telemetry roles` (most-concerning role first — read
+   `context_max` as what a role actually held at once; a `footprint` far above it is
+   cache churn from slow turns, not over-loading, so attribute cost accordingly); and,
+   when `$PIPELINE_STATE` was
    present, a one-glance execution summary — tasks completed/escalated/blocked, design issues
    by `fix_kind`, stage durations. Do not commit `$RETRO_REPORT` — it is transient. In your
    return, name `$RETRO_REPORT` and the headline counts; the file carries the detail.

@@ -21,9 +21,10 @@ this task builds. Resolve every path and command from `.wf/config.yaml`:
 
 ## Step 1 — Load the contract
 
-1. Read `CONTRACT`. It carries `acceptance_criteria`, `testing_mandate`, `covers`,
-   `requirements` (each covered id's full statement), `files_to_touch`, `out_of_scope`,
-   and `implementation_notes` — plus, when the task introduces a component or widens a
+1. Read `CONTRACT`. It carries `acceptance_criteria` (each with the `tests` that prove
+   it, or a `verified_by` gate), `covers`, `requirements` (each covered id's full
+   statement), `files_to_touch`, `out_of_scope`, and `implementation_notes` — plus, on
+   an e2e task, `system_tests`, and when the task introduces a component or widens a
    shared seam, `interface_contract`: the exact signature/struct/endpoint shape to
    implement. Deviating from it is a contract problem (Step 3b), not a judgement call.
 2. Read only the source the contract points at — the files in `files_to_touch` and any
@@ -37,12 +38,14 @@ From the contract alone — never re-derive from prose elsewhere:
 
 - Each `acceptance_criteria[].check` is a behaviour you must prove; its `check` names the
   inputs and expected output a failing test is written from.
-- Each `testing_mandate.unit_tests[].tests[]` names a case and the AC it `covers`. Write
-  every one — the negative and boundary cases, not just the positive.
-- If `testing_mandate.integration_tests` is non-empty, write those too.
+- Each criterion's `tests[]` entry says where that proof lives: `level: unit` against its
+  `target`, or `level: integration` across the real `seam` it names — exercise the seam
+  for real, never a mock. Write one test per entry, deriving the assertions from the
+  `check`. An AC carrying `verified_by` instead of `tests` is proven by that gate running
+  green in Step 4, not by a test you write.
 
-A mandate item or AC you cannot turn into a test from the contract (it contradicts the
-source, or names a file outside `files_to_touch`) is a contract problem → Step 3b.
+An AC you cannot turn into a test from the contract (it contradicts the source, or its
+test would need a file outside `files_to_touch`) is a contract problem → Step 3b.
 
 ## Step 3 — TDD
 
@@ -50,7 +53,7 @@ Announce each phase.
 
 ### Red
 
-1. Write the test for every `testing_mandate` case: set up specific inputs, invoke the
+1. Write the test for every AC `tests` entry: set up specific inputs, invoke the
    code under test, assert specific outputs.
 2. **Stamp the proving tag.** In each test, place a plain comment carrying the tag AND,
    on the same line, the full statement it proves — verbatim from the contract, no hash,

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -26,6 +27,23 @@ def die(msg: str, code: int = 2) -> "NoReturn":  # type: ignore[name-defined]
     """Mechanical failure: message to stderr, exit non-zero."""
     sys.stderr.write(f"wf: {msg}\n")
     sys.exit(code)
+
+
+# Test-file heuristic (deliberately simple + language-agnostic): a path is a
+# plausible test home when a directory segment is a conventional test dir, or the
+# filename carries test/spec as a delimited token (covers *_test.*, test_*.*,
+# *.test.*, *.spec.*, *-test.* ...). Shared by `sprint check` (C3) and `impact`.
+_TEST_DIRS = {"test", "tests", "__tests__", "spec", "specs", "testdata"}
+_TEST_NAME_RE = re.compile(r"(^|[._-])(test|spec)s?([._-]|$)", re.IGNORECASE)
+
+
+def is_test_path(path) -> bool:
+    parts = [seg for seg in str(path).replace("\\", "/").split("/") if seg]
+    if not parts:
+        return False
+    if any(seg.lower() in _TEST_DIRS for seg in parts[:-1]):
+        return True
+    return bool(_TEST_NAME_RE.search(parts[-1]))
 
 
 def load_yaml(path: Path, optional: bool = False) -> dict:

@@ -80,9 +80,14 @@ assert d["tool_calls"] == 2
 assert d["started_at"] == "2026-01-01T00:00:00.000Z"
 assert d["ended_at"] == "2026-01-01T00:00:03.000Z"
 assert d["recorded_at"]
+# requests = distinct API messages (msg_1, msg_2); context_max = the largest
+# single-request context (input+cache_read+cache_creation) — the honest peak,
+# unlike summed cache_creation, which double-counts on cache-TTL re-writes.
+assert d["requests"] == 2, d["requests"]
+assert d["context_max"] == 200, d["context_max"]
 PY
 then
-    pass "record fields: kind/session/event/tokens(deduped)/tools/timestamps"
+    pass "record fields: kind/session/event/tokens(deduped)/tools/timestamps/requests/context_max"
 else
     fail "record fields wrong: $(cat "$SINK" 2>/dev/null)"
 fi
@@ -100,6 +105,7 @@ d = json.loads(open(sys.argv[1]).readlines()[1])
 assert d["hook_event"] == "SubagentStop"
 assert d["tokens"]["input"] == 5 and d["tokens"]["output"] == 7
 assert d["tool_calls"] == 0
+assert d["requests"] == 1 and d["context_max"] == 5
 PY
 then
     pass "subagent record from agent_transcript_path"

@@ -82,9 +82,9 @@ cat > "$FIX" <<'JSONL'
 {"agent":"wf-build","started_at":"2026-07-11T10:00:00Z","ended_at":"2026-07-11T10:05:00Z","outcome":"completed"}
 {"agent":"wf-sa","started_at":"2026-07-11T10:10:00Z","ended_at":"2026-07-11T10:20:00Z","outcome":"completed"}
 {"agent":"wf-orchestrate","started_at":"2026-07-11T09:00:00Z","ended_at":"2026-07-11T21:00:00Z","outcome":"completed"}
-{"kind":"usage","session_id":"S1","hook_event":"SubagentStop","started_at":"2026-07-11T10:00:10Z","ended_at":"2026-07-11T10:04:50Z","tokens":{"input":1000,"output":2000,"cache_read":50000,"cache_creation":9000},"tool_calls":5}
+{"kind":"usage","session_id":"S1","hook_event":"SubagentStop","started_at":"2026-07-11T10:00:10Z","ended_at":"2026-07-11T10:04:50Z","tokens":{"input":1000,"output":2000,"cache_read":50000,"cache_creation":9000},"tool_calls":5,"requests":7,"context_max":60000}
 {"kind":"usage","session_id":"S1","hook_event":"SubagentStop","started_at":"2026-07-11T10:10:30Z","ended_at":"2026-07-11T10:19:00Z","tokens":{"input":2000,"output":4000,"cache_read":80000,"cache_creation":18000},"tool_calls":9}
-{"kind":"usage","session_id":"S1","hook_event":"Stop","started_at":"2026-07-11T09:00:00Z","ended_at":"2026-07-11T21:00:00Z","tokens":{"input":500,"output":3000,"cache_read":100000,"cache_creation":4500},"tool_calls":20}
+{"kind":"usage","session_id":"S1","hook_event":"Stop","started_at":"2026-07-11T09:00:00Z","ended_at":"2026-07-11T21:00:00Z","tokens":{"input":500,"output":3000,"cache_read":100000,"cache_creation":4500},"tool_calls":20,"requests":40,"context_max":104000}
 JSONL
 OUT="$(wf telemetry roles --sink "$FIX" --config "$P/.wf/config.yaml" --format json 2>&1)"; RC=$?
 [ "$RC" -eq 0 ] && ok "telemetry roles exits zero" || bad "roles exit" "rc=$RC $OUT"
@@ -98,11 +98,25 @@ rget() { "$PYTHON" -c 'import sys,json; d=json.loads(sys.argv[1]); print(eval(sy
     && ok "roles: carries output" || bad "roles output" "$OUT"
 [ "$(rget "$OUT" "next(r['tool_calls_max'] for r in d['roles'] if r['role']=='wf-sa')")" = "9" ] \
     && ok "roles: carries tool_calls" || bad "roles tools" "$OUT"
+# context_max separates "loaded too much" from cache churn: a hook-era row
+# carries it; a pre-upgrade row reads as 0 rather than breaking the report
+[ "$(rget "$OUT" "next(r['context_max_max'] for r in d['roles'] if r['role']=='wf-build')")" = "60000" ] \
+    && ok "roles: carries context_max from the usage row" || bad "roles ctx" "$OUT"
+[ "$(rget "$OUT" "next(r['context_max_max'] for r in d['roles'] if r['role']=='wf-sa')")" = "0" ] \
+    && ok "roles: a pre-upgrade row reads context_max as 0" || bad "roles ctx legacy" "$OUT"
+[ "$(rget "$OUT" "next(r['requests_avg'] for r in d['roles'] if r['role']=='wf-build')")" = "7" ] \
+    && ok "roles: carries requests" || bad "roles requests" "$OUT"
+# with context_max known, the report sorts by it first (honest peak beats
+# churn-inflated footprint)
+[ "$(rget "$OUT" "d['roles'][0]['role']")" = "wf-build" ] \
+    && ok "roles: sorts by context_max before footprint" || bad "roles sort" "$OUT"
 # wf-orchestrate must NOT be a subagent role; it appears in main_loop instead
 [ "$(rget "$OUT" "any(r['role']=='wf-orchestrate' for r in d['roles'])")" = "False" ] \
     && ok "roles: excludes wf-orchestrate from subagent roles" || bad "roles orch excl" "$OUT"
 [ "$(rget "$OUT" "d['main_loop'][0]['footprint']")" = "5000" ] \
     && ok "roles: main_loop footprint from the Stop row" || bad "roles main_loop" "$OUT"
+[ "$(rget "$OUT" "d['main_loop'][0]['context_max']")" = "104000" ] \
+    && ok "roles: main_loop carries context_max" || bad "roles main ctx" "$OUT"
 [ "$(rget "$OUT" "d['matched']")" = "2" ] && ok "roles: reports matched count" || bad "roles matched" "$OUT"
 
 echo ""

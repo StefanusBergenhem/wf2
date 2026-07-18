@@ -102,6 +102,16 @@ commands:
   preflight: ""        # per-task gate (lint + tests + build) — wf-init captures it from repo evidence at init; build runs it before every handoff.
   stage_check: ""      # heavier checks run only at a stage boundary (e2e / integration) — wf-init captures it at init; empty skips them.
 
+impact:
+  # Companion fan-out rules for `wf impact files` (the wf-swa files_to_touch
+  # computation): when a changed or consumer file matches `when`, every file the
+  # `add` globs match joins the candidate set — e.g. a migrations edit fanning out
+  # to a regenerated codegen folder. The *.up.sql → *.down.sql sibling is built in.
+  # Add a rule when a run shows a mechanical fan-out the tool missed, e.g.:
+  #   - when: "backend/migrations/*"
+  #     add: ["frontend/src/generated/public/*.ts"]
+  companions: []
+
 review:
   passes: [wf-review]      # the ordered build→review chain per task; append e.g. wf-security-review to extend it (no skill change).
   max_attempts: 3          # build→review cycles per task before escalation.
