@@ -1,8 +1,0 @@
-# OPTIONAL dependency — only needed to actually drive LIVE agents via the
-# standalone Python orchestrator (`wf pipeline run`, the ClaudeSdkDispatcher).
-#
-# The query CLI (`wf pipeline next`, `wf orchestrate ...`, etc.) and the
-# orchestrator's OWN test suite run WITHOUT this package — they use the
-# FakeDispatcher. Install it only when you want Driver 2 to spawn real Claude
-# agents:  pip install -r .wf/tools/cli/orchestrator/requirements.txt
-claude-agent-sdk

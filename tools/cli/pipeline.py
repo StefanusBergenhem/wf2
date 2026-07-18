@@ -1,7 +1,7 @@
 """wf pipeline — the orchestration decision brain.
 
-The orchestrator (the thin skill OR the standalone Python driver) holds no
-scheduling logic of its own: it asks this module what to do next. The model is
+The orchestrator (the thin skill) holds no scheduling logic of its own: it asks
+this module what to do next. The model is
 **staged** — tasks are layered into dependency stages, run one stage at a time
 with a barrier between, and within a stage the independent tasks run in parallel
 under a concurrency cap:
@@ -174,20 +174,6 @@ def _compute_stages(rest):
         "recomputed": True,
     }, args.format)
     return 0
-
-
-def _run(rest):
-    """Launch the standalone Python orchestrator — a thin driver over this same brain
-    + the inspect/dispatch helpers. Imported lazily so the optional Claude-Agent-SDK
-    dependency never loads for a plain `pipeline next` query."""
-    try:
-        from orchestrator import driver
-    except ImportError as exc:
-        common.die(
-            f"orchestrator unavailable: {exc} "
-            "(install .wf/tools/cli/orchestrator/requirements.txt for the Claude-SDK adapter)"
-        )
-    return driver.main(rest)
 
 
 # ── The frontier query (running_stage) ───────────────────────────────────────
@@ -835,7 +821,7 @@ def _complete_sprint(rest):
     of overlaying the shipped sprint's all-completed task states. When paths.archive is
     unset, the sprint slot is simply cleared (no archive).
 
-    Git is intentionally NOT touched — a pure file/state mutation both drivers share."""
+    Git is intentionally NOT touched — a pure file/state mutation."""
     args = common.base_parser("pipeline complete-sprint").parse_args(rest)
 
     doc = _load_state(args)
@@ -890,7 +876,6 @@ COMMANDS = {
     # stage computation + frontier
     ("pipeline", "compute-stages"): _compute_stages,
     ("pipeline", "next"): _next,
-    ("pipeline", "run"): _run,
     # reads
     ("pipeline", "current-phase"): _current_phase,
     ("pipeline", "task-state"): _task_state,
