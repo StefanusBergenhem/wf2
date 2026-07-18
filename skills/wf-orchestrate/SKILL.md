@@ -209,9 +209,10 @@ python3 <paths.tools>/cli/wf orchestrate dispatch-fix <di-id>
 `closeout` steps in order. For each entry:
 
 - a `wf-*` agent name → dispatch that agent (e.g. `wf-retrospective`).
-- `ship` → the terminal publish: push the sprint branch and open a PR against the base
-  branch — see [GIT_OPERATIONS.md](assets/GIT_OPERATIONS.md) § Ship — then
-  `wf pipeline complete-sprint` (archives the plan + final state, resets to `idle`).
+- `ship` → the terminal publish: `wf pipeline complete-sprint` (archives the plan + final
+  state, drains the working set, resets to `idle`), commit its archive snapshots, then push
+  the sprint branch and open a PR against the base branch — one push, everything in the PR.
+  See [GIT_OPERATIONS.md](assets/GIT_OPERATIONS.md) § Ship.
 
 Report the sprint summary and the PR URL.
 

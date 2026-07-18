@@ -6,13 +6,14 @@ once**, at ship.
 
 ## Sprint branch
 
-Created once in `preparing`. Gate first, then branch:
+Created once in `preparing`. The base is the **local** `project.base_branch` from
+`.wf/config.yaml` — never `origin/<base>`; do not fetch or consult the remote here.
+Gate first, then branch:
 
-1. Working tree clean (`git status --porcelain` empty) and the base branch not behind its
-   remote. If either fails, HALT and ask the user.
-2. `git checkout -b <sprint-branch> <base>` — name it `sprint/<sprint_id>` (the
-   `sprint_id` from `$SPRINT`); on resume, re-derive the same name — never invent a
-   variant.
+1. Working tree clean (`git status --porcelain` empty). If not, HALT and ask the user.
+2. `git checkout -b <sprint-branch> <base>` — cut from the local `<base>`; name it
+   `sprint/<sprint_id>` (the `sprint_id` from `$SPRINT`); on resume, re-derive the same
+   name — never invent a variant.
 
 ## Worktree (per task)
 
@@ -62,13 +63,23 @@ Worktree cleanup is mandatory — never leave an orphan.
 
 ## Ship (closeout)
 
-The only push of the run:
+Close the sprint first, then publish it in the run's **one** push. `complete-sprint`
+archives and drains the sprint's working set into `<paths.archive>/<sprint_id>/` and
+resets the run state; committing those snapshots before the push carries them into the PR
+instead of stranding them as an uncommitted, un-pushed dirty tree:
 
 ```
+wf pipeline complete-sprint
+git add -A -- <paths.archive>
+git commit -m "sprint close: archive <sprint-id>"     # skip if nothing was archived (empty stage)
 git push -u origin <sprint-branch>
 gh pr create --base <base> --head <sprint-branch> --title "<sprint summary>" --body "<body>"
 ```
 
-The PR body lists completed tasks, any escalated/blocked tasks, and design issues. Then
-`wf pipeline complete-sprint`. If the push or PR fails (auth, remote, conflict), HALT and
-report — do not retry blindly, and do not `complete-sprint` until the PR is open.
+The PR body lists completed tasks, any escalated/blocked tasks, and design issues.
+
+`complete-sprint` resets the run state to `idle`, so it is the point of no return: if the
+push or PR then fails (auth, remote, conflict), the sprint is already closed locally —
+**HALT and report** that the sprint branch (archive commit included) needs a manual
+`git push` + PR. Do not retry `complete-sprint`, and do not re-run the sprint from scratch
+(its `$SPRINT` and design-slice have been drained).

@@ -811,8 +811,9 @@ def _archive_history(rest):
 
 
 def _complete_sprint(rest):
-    """Close a shipped sprint and reset the pipeline for the next one. Run at the end
-    of ship. When paths.archive is set, snapshot the sprint's working set into
+    """Close the sprint and reset the pipeline for the next one. Run during ship, before
+    the push, so its archive snapshots commit into the PR. When paths.archive is set,
+    snapshot the sprint's working set into
     paths.archive/<sprint_id>/ as it drains — the sprint, the design-slice, and the
     host design-issues file are moved out (drained), the design-backlog and final run
     state are copied (reconcile drains the backlog on its own). The archive is a
