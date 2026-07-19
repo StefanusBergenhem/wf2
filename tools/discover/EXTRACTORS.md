@@ -125,16 +125,16 @@ shows the compiled case, TS the interpreted one):
    config flag your extractor needs (e.g. a `--<lang>-config` for a build manifest). Layout
    is configuration, never a constant.
 2. **Add an invocation branch**, guarded by that roots flag, mirroring the existing two:
-   resolve the built artifact under `<tools>/readview-<lang>/` and **exit with the build
-   command** if it is absent (a missing build is then a clear message, not a crash); run the
-   extractor in `-mode ir`, capturing stdout to `<out>/<name>-<lang>.ir.json`; append that
-   path to `irs`.
+   resolve the built artifact under `<tools>/readview-<lang>/` and pass it to `ensure_built`
+   with the build steps (it builds the extractor on first use, and a build failure is a clear
+   message, not a crash); run the extractor in `-mode ir`, capturing stdout to
+   `<out>/<name>-<lang>.ir.json`; append that path to `irs`.
 
 ```python
 if a.<lang>_roots:
-    art = os.path.join(TOOLS, "readview-<lang>", "<built artifact>")   # binary, or e.g. dist/extract.js
-    if not os.path.exists(art):
-        sys.exit(f"<lang> extractor not built: run `cd {TOOLS}/readview-<lang> && <build cmd>`")
+    <lang>_dir = os.path.join(TOOLS, "readview-<lang>")
+    art = os.path.join(<lang>_dir, "<built artifact>")   # binary, or e.g. dist/extract.js
+    ensure_built(art, [[<build step>], ...], <lang>_dir, f"cd {<lang>_dir} && <build cmd>")
     ir = os.path.join(a.out, f"{a.name}-<lang>.ir.json")
     # compiled -> [art, ...] ; interpreted -> [interpreter, art, ...]  (cf. the go vs ts branches)
     run([<run art>, "-repo", a.repo, "-roots", a.<lang>_roots, "-mode", "ir"], out_path=ir)

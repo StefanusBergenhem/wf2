@@ -110,5 +110,46 @@ with tempfile.TemporaryDirectory() as tmp:
     else:
         bad("routed output parent dirs missing")
 
+    # --- ensure_built: build-on-first-use, no-op when already built ----------
+    # already built → no build step runs (a failing step here would exit if it ran)
+    built = os.path.join(tmp, "already", "artifact")
+    os.makedirs(os.path.dirname(built), exist_ok=True)
+    Path(built).touch()
+    try:
+        discover.ensure_built(built, [["false"]], tmp, "hint")
+        ok("ensure_built no-ops when the artifact already exists")
+    except SystemExit:
+        bad("ensure_built rebuilt (and failed) an already-built artifact")
+
+    # missing → the build step that creates the artifact runs, then proceeds
+    bdir = os.path.join(tmp, "buildme")
+    os.makedirs(bdir, exist_ok=True)
+    marker = os.path.join(bdir, "out")
+    discover.ensure_built(marker, [["sh", "-c", f"touch '{marker}'"]], bdir, "hint")
+    if os.path.exists(marker):
+        ok("ensure_built runs the build step when the artifact is missing")
+    else:
+        bad("ensure_built did not build the missing artifact")
+
+    # a failing build step → hard exit naming the manual hint
+    try:
+        discover.ensure_built(os.path.join(tmp, "nope"), [["false"]], tmp, "run-me-by-hand")
+        bad("ensure_built should exit when a build step fails")
+    except SystemExit as e:
+        if "run-me-by-hand" in str(e):
+            ok("ensure_built exits (with the manual hint) when a build step fails")
+        else:
+            bad(f"ensure_built exit message missing hint: {e}")
+
+    # build steps 'succeed' but leave no artifact → hard exit naming the hint
+    try:
+        discover.ensure_built(os.path.join(tmp, "still-missing"), [["true"]], tmp, "build-hint")
+        bad("ensure_built should exit when the build produced no artifact")
+    except SystemExit as e:
+        if "build-hint" in str(e):
+            ok("ensure_built exits (with the manual hint) when the build makes no artifact")
+        else:
+            bad(f"ensure_built exit message missing hint: {e}")
+
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

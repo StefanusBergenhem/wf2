@@ -73,8 +73,10 @@ is missing. Required vs optional:
 
 ## One-time setup (per checkout)
 
-Run from this directory. The Python scripts are stdlib-only (no venv, no pip). Build the
-extractor for each language the repo uses:
+The Python scripts are stdlib-only (no venv, no pip). The per-language extractors build
+themselves on first use — `discover.py` runs the build in `readview-<lang>/` when the built
+artifact is absent, then proceeds (a build failure is a clear error, not a crash). To build
+them ahead of time, or after a `go`/`node` toolchain change, run from this directory:
 
 ```sh
 cd readview-go && go build -o readview .     # if the repo has Go

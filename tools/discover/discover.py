@@ -49,6 +49,25 @@ def stamp_model(model_path, repo):
         json.dump(m, f)
 
 
+def ensure_built(marker, build_steps, cwd, hint):
+    """Build an extractor on first use. If `marker` (the built artifact) is absent, run
+    each command in `build_steps` in `cwd`; a step that fails — or a build that leaves
+    `marker` still absent — is a hard exit naming the manual `hint`. A present marker is a
+    no-op: the extractor is never rebuilt on a later run. Mirrors preflight's self-bootstrap
+    of a gitignored dependency dir, so a fresh install runs discover without a manual build."""
+    if os.path.exists(marker):
+        return
+    print(f"· building extractor: {cwd}", file=sys.stderr)
+    for step in build_steps:
+        r = subprocess.run(step, cwd=cwd, capture_output=True, text=True)
+        if r.returncode != 0:
+            sys.exit(f"extractor build failed ({' '.join(step)}):\n{r.stderr[-2000:]}\n"
+                     f"build it by hand: {hint}")
+    if not os.path.exists(marker):
+        sys.exit(f"extractor build ran but produced no {os.path.basename(marker)}; "
+                 f"build it by hand: {hint}")
+
+
 def run(cmd, out_path=None, **kw):
     print("· " + " ".join(cmd[:6]) + ("…" if len(cmd) > 6 else ""), file=sys.stderr)
     if out_path:
@@ -77,17 +96,19 @@ def main():
     irs = []
 
     if a.go_roots:
-        go_bin = os.path.join(TOOLS, "readview-go", "readview")
-        if not os.path.exists(go_bin):
-            sys.exit(f"Go extractor not built: run `cd {TOOLS}/readview-go && go build -o readview .`")
+        go_dir = os.path.join(TOOLS, "readview-go")
+        go_bin = os.path.join(go_dir, "readview")
+        ensure_built(go_bin, [["go", "build", "-o", "readview", "."]], go_dir,
+                     f"cd {go_dir} && go build -o readview .")
         ir = os.path.join(a.out, f"{a.name}-go.ir.json")
         run([go_bin, "-repo", a.repo, "-roots", a.go_roots, "-gomod", a.go_mod, "-mode", "ir"], out_path=ir)
         irs.append(ir)
 
     if a.ts_roots:
-        ts_js = os.path.join(TOOLS, "readview-ts", "dist", "extract.js")
-        if not os.path.exists(ts_js):
-            sys.exit(f"TS extractor not built: run `cd {TOOLS}/readview-ts && npm install && npm run build`")
+        ts_dir = os.path.join(TOOLS, "readview-ts")
+        ts_js = os.path.join(ts_dir, "dist", "extract.js")
+        ensure_built(ts_js, [["npm", "install"], ["npm", "run", "build"]], ts_dir,
+                     f"cd {ts_dir} && npm install && npm run build")
         cmd = ["node", ts_js, "-repo", a.repo, "-roots", a.ts_roots, "-mode", "ir"]
         if a.ts_tsconfig:
             cmd += ["-tsconfig", a.ts_tsconfig]
