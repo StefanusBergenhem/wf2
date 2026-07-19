@@ -135,8 +135,6 @@ def _run():
     cwd = payload.get("cwd") or os.getcwd()
 
     config = os.path.join(cwd, CONFIG)
-    if _cfg_value(config, "telemetry", "enabled") == "false":
-        return
     sink_path = _cfg_value(config, "paths", "telemetry")
     if not sink_path:
         return

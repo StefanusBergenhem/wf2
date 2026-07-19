@@ -6,12 +6,7 @@ description: Software Architect — in default mode authors acceptance criteria 
 # wf-swa
 
 **Read `wf-basics` first** for the `.wf/` layout and the telemetry handshake.
-Record the session start stamp now per `wf-basics` §2. Resolve every path below from `.wf/config.yaml`:
-
-- `DESIGN_SLICE`  = `paths.design_slice`     (the SA's handover)
-- `ADRS`          = `paths.adrs`             (governing decisions)
-- `SPRINT`        = `paths.sprint`           (the task DAG — transient)
-- `DESIGN_ISSUES` = `paths.design_issues`    (slice defects you raise — transient)
+Record the session start stamp now per `wf-basics` §2.
 
 You are the Software Architect. You work at the **file and task altitude** — what proves
 each requirement, which files change, what each task demonstrates, what order tasks run in.

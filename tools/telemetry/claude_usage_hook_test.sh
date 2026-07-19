@@ -36,8 +36,6 @@ project:
 paths:
   tools: ".wf/tools"
   telemetry: ".wf/telemetry/sessions.jsonl"   # Append-only session log. Committed.
-telemetry:
-  enabled: true
 YAML
 }
 
@@ -184,17 +182,6 @@ then
 else
     fail "mixed transcript mishandled"
 fi
-
-echo "== telemetry.enabled false: nothing written =="
-D="$WORK/disabled"; mk_proj "$D"
-sed -i 's/enabled: true/enabled: false/' "$D/.wf/config.yaml"
-OUT="$("$PYTHON" "$HOOK" <<EOF 2>&1
-{"session_id":"s","transcript_path":"$TRANSCRIPT","hook_event_name":"Stop","cwd":"$D"}
-EOF
-)"
-[ $? -eq 0 ] && [ -z "$OUT" ] && [ ! -e "$D/.wf/telemetry/sessions.jsonl" ] \
-    && pass "disabled telemetry skips the record" \
-    || fail "disabled telemetry still wrote / errored"
 
 echo ""
 if [ "$FAILS" -eq 0 ]; then echo "ALL GREEN"; exit 0; else echo "$FAILS FAILURE(S)"; exit 1; fi

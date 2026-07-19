@@ -7,25 +7,16 @@ description: The basics every wf skill assumes — where config and workspace li
 
 ## 1 — The `.wf/` workspace
 
-Everything wf keeps in a project lives under `.wf/`. **Always resolve a path or
-setting through `.wf/config.yaml`** — never hard-code a location a config key
-already defines.
-
-| config key | holds | tracked |
-|---|---|---|
-| (`.wf/config.yaml` itself) | project configuration — the source of truth for every path and setting | committed |
-| `paths.tools` | installed toolkit machinery (extractors, scripts) | committed |
-| `paths.transient` | derived, disposable output; regenerated on demand, never hand-edited | gitignored |
-| `paths.telemetry` | append-only session log | committed |
-
-Resolve each from config; the defaults live only in the config template.
+- Everything wf keeps in a project lives under `.wf/`.
+- `.wf/config.yaml` is the central project configuration — the source of truth for
+  every path and setting. All config-key references in a skill or instruction (such
+  as `paths.tools`) resolve from `.wf/config.yaml`.
 
 ## 2 — Session telemetry
 
 One telemetry line per session. Invoking it is **mandatory** — but if the
 recorder command itself errors, continue anyway (telemetry is observability, not
-correctness). Skip the step entirely only when `telemetry.enabled: false` in
-config.
+correctness).
 
 **START — run this NOW**, before any other work. Write the start stamp to a file
 — never to an environment variable. `<agent>` is the skill/agent name you will
@@ -58,10 +49,6 @@ python3 <paths.tools>/telemetry/record_session.py \
   --sink             <paths.telemetry>
 rm -f <paths.transient>/ts-start-<agent>
 ```
-
-The sink file is created by `wf-init` at install, so this only ever appends. The
-recorder anchors a relative sink to the main checkout root, so run the command
-unchanged inside a task worktree — never rewrite the sink path.
 
 ### Session feedback — the questions
 

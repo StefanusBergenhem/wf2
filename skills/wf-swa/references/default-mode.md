@@ -1,7 +1,7 @@
 # wf-swa — default mode
 
 Build the sprint from the design slice: author the acceptance criteria that make each slice
-requirement testable, then decompose them into a per-task dependency graph in `$SPRINT`. The
+requirement testable, then decompose them into a per-task dependency graph in `paths.sprint`. The
 requirements and component boundaries are fixed — you consume them, you do not change them;
 the acceptance criteria and the task breakdown are yours.
 
@@ -11,13 +11,13 @@ a task.
 
 ## Phase 1 — Ground
 
-1. Read `$DESIGN_SLICE` — one **buildable increment** wf-sa cut from the design backlog:
+1. Read `paths.design_slice` — one **buildable increment**:
    the component requirements (each with its owner and driver), the **system test cases**
    (wf-sa wrote them; you plan each into a task), the architecture moves, the governing ADRs,
    and the **risks wf-sa flagged for you** (fragile seams, ordering constraints, external deps
    — they shape your decomposition). Its requirements are your whole scope. **HALT and report
-   if it is absent** — it is wf-sa's output.
-2. Read the relevant `$ADRS` for the rationale you must respect when writing
+   if it is absent**.
+2. Read the relevant `paths.adrs` for the rationale you must respect when writing
    `implementation_notes`.
 3. Read source **targeted to the decomposition decision, not wholesale.** The slice already
    names the components and bounds the work — you do not need every named component's full
@@ -91,7 +91,7 @@ replays out of order against a persistent store.
 
 ## Phase 5 — Write and gate
 
-1. Write `$SPRINT` from `assets/sprint.yaml.tmpl` — thin fields only. Mint its top-level
+1. Write `paths.sprint` from `assets/sprint.yaml.tmpl` — thin fields only. Mint its top-level
    `sprint_id` as `sprint-<yyyymmdd>-<short-scope-slug>` — today's date plus a short slug
    of the sprint's scope, `[a-z0-9-]` only. The sprint is transient and gitignored — there
    is nothing to commit; the build pipeline consumes the working-tree file directly.
@@ -104,12 +104,12 @@ replays out of order against a persistent store.
    slice requirement covered, every criterion carried by exactly one task and carrying
    tests (or gate-verified via `verified_by`), every requirement's driver in the task's
    `serves`, every SYS-TC carried by an e2e task, no UNCONFIRMED assumption, an acyclic
-   DAG. On an error finding, fix the decomposition in `$SPRINT`, **re-run materialize**,
+   DAG. On an error finding, fix the decomposition in `paths.sprint`, **re-run materialize**,
    and re-run the check. Read its warnings too — an undeclared test home or an unordered
    `files_to_touch` overlap is a planning-quality hint worth fixing while you are here. A finding you cannot resolve without minting or changing a requirement is a
    slice defect — halt per **Halt conditions**, never invent a criterion to silence it.
 4. Return a summary: the task count, the dependency shape, and the gate verdict. Leave
-   `$DESIGN_SLICE` in place — it is drained at sprint close, not here.
+   `paths.design_slice` in place — it is drained at sprint close, not here.
 
 ## Halt conditions
 
@@ -125,7 +125,7 @@ Halt and report with outcome `escalated` if any condition below holds.
   sentinel, or signature the code does not use.
 - Satisfying a requirement would regress a working behaviour no requirement owns.
 
-**Gate: before you halt, append one entry to `$DESIGN_ISSUES` from
+**Gate: before you halt, append one entry to `paths.design_issues` from
 `assets/design_issues.yaml.tmpl`.** One entry per rejection, carrying **every** blocker you
 found and the `working_notes` — the measurements, the signatures that unblock a requirement,
 the traps the next cut must avoid. Skip it and your findings die with the session; wf-sa
@@ -133,7 +133,7 @@ re-derives them from nothing.
 
 ### Structural halts — write no design issue
 
-- `$DESIGN_SLICE` is absent.
+- `paths.design_slice` is absent.
 - A component named in the slice cannot be located in the source — the structure has
   drifted (needs a discover re-run).
 - The tasks form a dependency cycle that cannot be broken by splitting or merging.

@@ -9,8 +9,6 @@ description: Executes a planned change as dependency stages — each stage runs 
 Record the session start stamp now per `wf-basics` §2. You run the whole sprint in one session. Run the CLI as
 `python3 <paths.tools>/cli/wf <noun> <verb>`. Resolve these from `.wf/config.yaml`:
 
-- `SPRINT`        = `paths.sprint`         — the task DAG (you never edit it)
-- `CURRENT_TASK`  = `paths.current_task`   — the per-worktree contract you extract for each build
 - `commands.stage_check` — the **heavy checks** run only at a stage boundary (empty → skip)
 - `review.passes`      — the ordered build→review chain (e.g. `[wf-review]`); `review.max_attempts`
 - `closeout`           — the ordered end-of-sprint steps (e.g. `[wf-retrospective, ship]`)
@@ -28,10 +26,10 @@ verdict the helper emits — never echo a diff or test output into your own cont
 - **The CLI decides; you route.** Never compute eligibility, order, or the concurrency
   cap yourself — dispatch exactly what `wf pipeline next` returns in `dispatch[]`, and
   re-ask `next` rather than tracking position yourself. Never read or edit
-  `paths.pipeline_state` directly, and never re-inspect a worktree or `$SPRINT` to
+  `paths.pipeline_state` directly, and never re-inspect a worktree or `paths.sprint` to
   second-guess a helper's verdict — read an artifact only where a protocol below
   names the field, and treat the verbs' output as authoritative.
-- **You never edit contracts.** Never edit `$SPRINT` or a task's contract on your own
+- **You never edit contracts.** Never edit `paths.sprint` or a task's contract on your own
   judgement — every scope or design problem routes through `dispatch-fix` (§2b). An
   inline edit bypasses review — it ships unaudited.
 - **Minimal context.** Each sub-agent gets only its envelope (DISPATCH.md).
@@ -56,15 +54,15 @@ Then read `wf pipeline current-phase` and resume from where it points:
 
 ### 1 — Preparing
 
-1. **Gate `$SPRINT`** before proceeding — presence is never the verdict. Route on the
+1. **Gate `paths.sprint`** before proceeding — presence is never the verdict. Route on the
    first case that matches:
    - `paths.design_issues` holds an `open` entry with `fix_kind: slice_defect` → §1a.
      Never dispatch `wf-swa` against a slice already rejected — it reproduces the same
      rejection and burns a re-design round.
-   - `$SPRINT` present and `python3 <paths.tools>/cli/wf sprint check` reports
+   - `paths.sprint` present and `python3 <paths.tools>/cli/wf sprint check` reports
      `verdict: pass` (exit 0) → step 2.
    - otherwise → dispatch the `wf-swa` agent with the **Preparing envelope** (DISPATCH.md)
-     to build the sprint from the design slice — it overwrites an unusable `$SPRINT` —
+     to build the sprint from the design slice — it overwrites an unusable `paths.sprint` —
      then re-run this step **once**, dispatching no second `wf-swa`: `verdict: pass` →
      step 2; anything else → §1a.
 2. **Ensure the sprint branch** — see [GIT_OPERATIONS.md](assets/GIT_OPERATIONS.md) § Sprint branch.
@@ -76,7 +74,7 @@ Then read `wf pipeline current-phase` and resume from where it points:
 Read `paths.design_issues`. No `open` entry with `fix_kind: slice_defect` → **HALT and
 report** that wf-swa produced no usable sprint and raised no slice defect; stop.
 
-Otherwise take the **highest-numbered** such entry. **Gate: delete `$SPRINT` before you
+Otherwise take the **highest-numbered** such entry. **Gate: delete `paths.sprint` before you
 route it** — wf-swa decomposed it from the rejected cut. Skip the delete and it survives
 the re-cut and still passes `wf sprint check`, which compares ids, not statements — the
 build then ships the old requirements. Then, for that entry's `id`:
@@ -112,7 +110,7 @@ For each entry in `dispatch[]`:
 
 1. Ensure the entry's `worktree` exists and is usable — see
    [GIT_OPERATIONS.md](assets/GIT_OPERATIONS.md) § Worktree.
-2. `wf sprint task <task_id> --write <worktree>/$CURRENT_TASK` — extract its contract.
+2. `wf sprint task <task_id> --write <worktree>/paths.current_task` — extract its contract.
 3. `wf pipeline dispatch --agent wf-build --task <task_id> --attempt <n>`.
 4. Spawn the `wf-build` agent with the **Build envelope** (DISPATCH.md).
 
@@ -155,33 +153,14 @@ python3 <paths.tools>/cli/wf orchestrate dispatch-fix <di-id>
 2. **Batch-merge** the `approved` set (from `next`): for each, merge its worktree to the
    sprint branch (see [GIT_OPERATIONS.md](assets/GIT_OPERATIONS.md) § Merge), then
    `wf pipeline complete-task <id> --commit <build_sha> --merge <merge_sha>`, then remove
-   the worktree. **A conflicted merge** → abort it (`git merge --abort`), then repair it
-   in a repair worktree — never resolve the conflicts yourself:
-   - **Set up the repair.** Synthetic task id `MERGE-FIX-<task-id>`; create its worktree
-     off the sprint branch (§ Worktree). Write two artifacts into it: `$CURRENT_TASK` —
-     a contract titled `Integrate task branch <task-branch> into the sprint branch`,
-     with empty `covers`/`files_to_touch`, `out_of_scope: [any change not needed to
-     integrate <task-branch>]`, `implementation_notes` naming the conflicting task
-     branch and instructing to merge it in the repair worktree and resolve every
-     conflict by reconciling both sides (e.g. re-run codegen after combining
-     migrations), and one acceptance criterion `verified_by` `commands.stage_check`
-     (`commands.preflight` when stage_check is empty; the merge command itself when
-     both are); and `paths.feedback` naming the conflicted merge (so build runs in fix
-     mode).
-   - **Run build → review** (the same dispatch pattern as the heavy-check repair in
-     step 3), bounded by `review.max_attempts`. On `approved` → merge the repair
-     worktree to the sprint branch and `wf pipeline complete-task <id>` with that merge
-     sha. On a `design_issue` → record it (§ Return protocols → Design issues), then
-     treat the repair as failed. A failed repair (a recorded design issue, attempts
-     exhausted, or any other verdict) → remove the repair worktree, `wf pipeline
-     block-task <id> --reason <…>`, report the escalation, and continue the boundary
-     with the remaining merges.
+   the worktree. **A conflicted merge** → abort it (`git merge --abort`), then send out a
+   subagent to merge the worktrees and solve all merge conflicts.
 3. **Heavy checks** — if `commands.stage_check` is empty, skip. Otherwise run it on the
    sprint branch (piped to `/tmp`); green → step 4. On failure, repair it in a worktree —
    never edit the sprint branch directly, and never judge the failure yourself:
    - **Set up the repair.** Use the synthetic task id `STAGE-FIX-<sprint-id>`; create its
      worktree off the sprint branch (see [GIT_OPERATIONS.md](assets/GIT_OPERATIONS.md) §
-     Worktree). Write two artifacts into it: `$CURRENT_TASK` — a contract whose sole
+     Worktree). Write two artifacts into it: `paths.current_task` — a contract whose sole
      acceptance criterion is that `commands.stage_check` exits 0 on the sprint branch, with
      empty `covers`/`files_to_touch` and `out_of_scope: [any change not needed to make the
      stage check pass]`; and `paths.feedback` naming the failing command and that it exited
@@ -283,6 +262,6 @@ Stop and surface to the user when:
 - A sub-agent HALTs, or `dispatch-fix` returns the human gate (exit 1).
 - A heavy-check fix cycle that exhausts `review.max_attempts` (a merge-fix cycle that
   exhausts them blocks its task and the boundary continues — not a halt).
-- No usable `$SPRINT` and §1a cannot get one: wf-swa raised no slice defect, `dispatch-fix`
+- No usable `paths.sprint` and §1a cannot get one: wf-swa raised no slice defect, `dispatch-fix`
   gated the re-design to a human, or wf-sa escalated the rejection.
 - The pipeline-state file is corrupt, or config cannot be resolved.

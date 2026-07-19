@@ -74,8 +74,6 @@ paths:
   tools: ".wf/tools"
   transient: ".wf/t2"
   telemetry: ".wf/tel2/log.jsonl"
-telemetry:
-  enabled: true
 YAML
 bash "$SCAFFOLD" --dir "$CUSTOM" --target claude > /dev/null 2>&1
 check "custom telemetry sink honored" "[ -f '$CUSTOM/.wf/tel2/log.jsonl' ]"

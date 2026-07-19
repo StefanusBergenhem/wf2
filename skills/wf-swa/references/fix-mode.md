@@ -1,6 +1,6 @@
 # wf-swa — fix mode
 
-The orchestrator dispatched you to resolve **one** design issue. Your envelope carries:
+You are dispatched to resolve **one** design issue. Your envelope carries:
 
 - `di_id`           — the design issue to resolve
 - `task_id`         — the task the issue parked

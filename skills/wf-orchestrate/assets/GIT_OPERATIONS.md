@@ -12,7 +12,7 @@ Gate first, then branch:
 
 1. Working tree clean (`git status --porcelain` empty). If not, HALT and ask the user.
 2. `git checkout -b <sprint-branch> <base>` — cut from the local `<base>`; name it
-   `sprint/<sprint_id>` (the `sprint_id` from `$SPRINT`); on resume, re-derive the same
+   `sprint/<sprint_id>` (the `sprint_id` from `paths.sprint`); on resume, re-derive the same
    name — never invent a variant.
 
 ## Worktree (per task)
@@ -82,4 +82,4 @@ The PR body lists completed tasks, any escalated/blocked tasks, and design issue
 push or PR then fails (auth, remote, conflict), the sprint is already closed locally —
 **HALT and report** that the sprint branch (archive commit included) needs a manual
 `git push` + PR. Do not retry `complete-sprint`, and do not re-run the sprint from scratch
-(its `$SPRINT` and design-slice have been drained).
+(its `paths.sprint` and design-slice have been drained).

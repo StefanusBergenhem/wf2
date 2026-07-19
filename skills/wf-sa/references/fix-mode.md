@@ -3,7 +3,7 @@
 Your envelope carries:
 
 - `di_id`           — the design issue to resolve
-- `di_artifact`     — the design-issues file holding the issue (the same file as `$DESIGN_ISSUES`)
+- `di_artifact`     — the design-issues file holding the issue (the same file as `paths.design_issues`)
 - `task_id`         — the task the issue parked, or `null` when the issue is slice-scoped
 - `sprint_artifact` — the sprint file holding the task contracts, when a sprint exists
 
@@ -22,8 +22,8 @@ them, per the slice-defect path below. The slice is transient either way: never 
 ## Step 1 — Understand the issue
 
 Read the `task_id` contract in `$sprint_artifact` (its `requirements[]` carries the statements
-at issue), the implicated requirement's entry in `$DESIGN_SLICE` and in its
-`$DESIGN_BACKLOG` design, and any ADR in `$ADRS` the contract or slice cites for it.
+at issue), the implicated requirement's entry in `paths.design_slice` and in its
+`paths.design_backlog` design, and any ADR in `paths.adrs` the contract or slice cites for it.
 
 ## Step 2 — Verify it IS a spec defect
 
@@ -55,9 +55,9 @@ Walk these checks in order and take the first that holds:
 `references/adr-rules.md` before touching an ADR. Make the **smallest** change that
 resolves the issue, in every artifact that carries the defective statement:
 
-- the requirement's entry in `$DESIGN_SLICE` **and** the same requirement in its
-  `$DESIGN_BACKLOG` design — amend both; the two must not diverge;
-- the ADR in `$ADRS`, when the defect is a recorded decision;
+- the requirement's entry in `paths.design_slice` **and** the same requirement in its
+  `paths.design_backlog` design — amend both; the two must not diverge;
+- the ADR in `paths.adrs`, when the defect is a recorded decision;
 - where the amended statement appears verbatim in the `task_id` contract's
   `requirements[]`, update that copy to match — a stale copy reproduces the defect.
   Change nothing else in the contract: its acceptance criteria and task shape are
@@ -80,8 +80,8 @@ Run default mode (SKILL.md **Process**) with Phase 1 replaced by the grounding b
 **Phase 4 skipped entirely**:
 
 1. **Ground in the blockers.** Read each blocker's `requirement`, `summary`, `evidence`,
-   and `needs`; the `$DESIGN_BACKLOG` design the slice was cut from; `$DESIGN_SLICE`; and
-   each ADR in `$ADRS` whose `governs_components` names a component a blocker implicates.
+   and `needs`; the `paths.design_backlog` design the slice was cut from; `paths.design_slice`; and
+   each ADR in `paths.adrs` whose `governs_components` names a component a blocker implicates.
    Reuse what the entry's `working_notes[]` already settle rather than re-deriving them.
    Drill what the blockers implicate (SKILL.md **Scouting & the drill-cache**). **Derive the
    requirement register and read its in-scope entries**, as Phase 1's grounding does — Phase 3
@@ -91,19 +91,19 @@ Run default mode (SKILL.md **Process**) with Phase 1 replaced by the grounding b
    blockers demand — Step 3's limits govern the `spec_amendment` path, not this one. Take
    each non-obvious decision that stays **below** `references/adr-rules.md`'s ADR threshold
    yourself and record it in your report — there is no Phase 4 to present it at.
-3. **Phase 6 steps 1–3** — finalize the ADRs, amend the design in `$DESIGN_BACKLOG`
-   in place, and re-cut `$DESIGN_SLICE`, including its `wf slice check` gate and, once that
+3. **Phase 6 steps 1–3** — finalize the ADRs, amend the design in `paths.design_backlog`
+   in place, and re-cut `paths.design_slice`, including its `wf slice check` gate and, once that
    gate passes, step 3's closing of the `di_id` entry. A gate **failure** means your re-cut
-   rests on an assumption nobody ratified — that is the assumption halt below: write `$DECISION_PREP`
+   rests on an assumption nobody ratified — that is the assumption halt below: write `paths.decision_prep`
    and halt. SKILL.md's "return to Phase 4" does not apply here; Phase 4 does not run in
    this mode.
 4. **Phase 6 steps 5–6, skipping step 4's human confirm** — no human ran, so there is no
    go-ahead to ask for and step 5's "On approval" does not gate you. Commit unasked: stage
-   and commit exactly `$ADRS` + `$DESIGN_BACKLOG`. Leave them
+   and commit exactly `paths.adrs` + `paths.design_backlog`. Leave them
    uncommitted and `wf-orchestrate` cannot cut the sprint branch: it gates on a clean working
    tree, and these are committed paths. Step 4's forbidden-environment carve-out still
    applies — report what is left uncommitted and stop, a clean outcome.
-5. Report every file you amended. **Delete `$DECISION_PREP` if an earlier escalation of this
+5. Report every file you amended. **Delete `paths.decision_prep` if an earlier escalation of this
    `di_id` left one on disk** — the issue is resolved, so its prepared decisions are dead,
    and a leftover file hijacks the next default `wf-sa` run.
 
@@ -142,7 +142,7 @@ absence. Beyond the driving-capability halt above, also halt if:
   only, so a supersession you write here reaches the build unratified and silent.
 
 **Halting a `slice_defect` on any of those four — the driving capability, an ADR-threshold
-decision, an assumption, or a supersession — write `$DECISION_PREP` first.** Halt without it
+decision, an assumption, or a supersession — write `paths.decision_prep` first.** Halt without it
 and the run's reasoning is lost and the human restarts it cold. Head it with the `di_id`, then, for
 **each** decision you prepared but could not take, write both:
 
