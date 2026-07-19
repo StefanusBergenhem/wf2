@@ -5,7 +5,7 @@ You supply **only** the envelope below — the minimum context for that one task
 pass another agent's definition, pipeline internals, or out-of-scope files.
 
 Build and review run **in a worktree** (paths resolve from the worktree's `.wf/config.yaml`);
-preparing, fix, and closeout run **host-side** (paths resolve from the host config).
+preparing, fix, closeout, and stage repair run **host-side** (paths resolve from the host config).
 
 ## Build — `wf-build`
 
@@ -48,6 +48,15 @@ sprint_artifact: <paths.sprint>  # named only when a sprint exists on disk; §1a
 When it returns, re-read its entry in the DI artifact and route on that entry per
 SKILL.md §2b — or §1a for a slice rejection, where the fixer also commits the design it
 re-cut, so §1 step 2 finds the clean tree it needs to branch from.
+
+## Stage repair — `wf-stage-repair` (host-side, on the sprint branch)
+
+```
+mode:          repair | merge
+sprint_branch: <name>
+task_id:       <id>       # merge mode only — the task whose merge conflicted
+task_branch:   <name>     # merge mode only
+```
 
 ## Closeout — `wf-retrospective` (and any future `wf-*` closeout agent)
 

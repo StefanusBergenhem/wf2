@@ -3,7 +3,7 @@
 You are dispatched to resolve **one** design issue. Your envelope carries:
 
 - `di_id`           — the design issue to resolve
-- `task_id`         — the task the issue parked
+- `task_id`         — the task the issue parked, or `null` for a stage-boundary DI (which parks no task)
 - `di_artifact`     — the design-issues file holding the issue
 - `sprint_artifact` — the sprint file holding the task contracts
 
@@ -14,8 +14,10 @@ Resolve only this issue.
 Read the `di_id` entry in `$di_artifact` — its `summary` says what surfaced. Read the
 `task_id` contract in `$sprint_artifact` (including the `requirements[]` statements it
 embeds), the source of the component that task owns, and — when the summary implicates
-behaviour built by an earlier task — the already-merged code it names. Do not change any
-other task except as Step 4 directs.
+behaviour built by an earlier task — the already-merged code it names. When `task_id` is
+`null` (a stage-boundary DI parks no task), skip the task contract and ground in the
+`summary` plus the already-merged code it names. Do not change any other task except as
+Step 4 directs.
 
 ## Step 2 — Classify
 
@@ -64,7 +66,8 @@ The defective code is already merged, so no existing contract can honestly absor
    defect-owner across two merged tasks — `covers` names the violated requirement,
    `files_to_touch` names the defective files, regardless of which task built which.
 2. Add the new task's id to the **`task_id` task's `depends_on`** — the parked task may
-   only re-run after the fix has merged.
+   only re-run after the fix has merged. Skip this when `task_id` is `null` (a stage-boundary
+   DI parks no task): the follow-up merges and the heavy check re-runs at the next boundary.
 3. Do not commit: `$sprint_artifact` is transient.
 
 Then Step 5.
@@ -80,7 +83,8 @@ is closed.
 
 Halt and report with outcome `escalated` if:
 
-- `di_id` is not in `$di_artifact`, or `task_id` is not in `$sprint_artifact`.
+- `di_id` is not in `$di_artifact`, or a non-null `task_id` is not in `$sprint_artifact`
+  (a `null` `task_id` is a stage-boundary DI, not a halt).
 - The defect is a spec defect (Step 2) — reclassify it there; do not resolve it.
 - Resolving it would require changing more than the one `task_id` contract plus, for a
   component defect, the one follow-up task.

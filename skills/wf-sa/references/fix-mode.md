@@ -4,7 +4,7 @@ Your envelope carries:
 
 - `di_id`           — the design issue to resolve
 - `di_artifact`     — the design-issues file holding the issue (the same file as `paths.design_issues`)
-- `task_id`         — the task the issue parked, or `null` when the issue is slice-scoped
+- `task_id`         — the task the issue parked, or `null` when the issue is slice-scoped or a stage-boundary DI
 - `sprint_artifact` — the sprint file holding the task contracts, when a sprint exists
 
 Read the `di_id` entry in `$di_artifact` — its `summary` says what is unbuildable. Resolve
@@ -24,6 +24,8 @@ them, per the slice-defect path below. The slice is transient either way: never 
 Read the `task_id` contract in `$sprint_artifact` (its `requirements[]` carries the statements
 at issue), the implicated requirement's entry in `paths.design_slice` and in its
 `paths.design_backlog` design, and any ADR in `paths.adrs` the contract or slice cites for it.
+When `task_id` is `null` (a stage-boundary DI), there is no task contract — ground in the
+implicated requirement's `paths.design_slice`/`paths.design_backlog` entries and the ADRs they cite.
 
 ## Step 2 — Verify it IS a spec defect
 
@@ -59,7 +61,8 @@ resolves the issue, in every artifact that carries the defective statement:
   `paths.design_backlog` design — amend both; the two must not diverge;
 - the ADR in `paths.adrs`, when the defect is a recorded decision;
 - where the amended statement appears verbatim in the `task_id` contract's
-  `requirements[]`, update that copy to match — a stale copy reproduces the defect.
+  `requirements[]` (skip when `task_id` is `null` — a stage-boundary DI has no such
+  contract), update that copy to match — a stale copy reproduces the defect.
   Change nothing else in the contract: its acceptance criteria and task shape are
   `wf-swa`'s.
 
@@ -122,7 +125,8 @@ On a **`spec_amendment`**, also halt if:
   the kind you reclassify it to has no task to park and no route — it becomes an open entry
   nothing can dispatch and no sweep can clear. A slice blocker that is really wf-swa's is
   still yours to re-cut around.
-- `task_id` is not in `$sprint_artifact`.
+- a non-null `task_id` is not in `$sprint_artifact` (a `null` `task_id` is a slice-scoped or
+  stage-boundary DI, not a halt here).
 - The minimum fix would reshape a component boundary or ripple beyond the implicated
   requirement(s) and ADR — that is a re-design, not a surgical amendment.
 

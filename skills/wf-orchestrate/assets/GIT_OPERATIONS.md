@@ -50,9 +50,9 @@ git checkout <sprint-branch>
 git merge --no-ff <task-branch> -m "<task-id>: merge"
 ```
 
-`--no-ff` keeps each task a reviewable unit on the branch. On a conflict: `git merge
---abort`, then route into the merge-conflict repair cycle (SKILL.md §2c step 2) — never
-auto-resolve the conflict yourself. After a clean merge, `wf pipeline
+`--no-ff` keeps each task a reviewable unit on the branch. On a conflict: leave the merge in
+progress (do NOT `git merge --abort`) and route it to `wf-stage-repair` per SKILL.md §2c
+step 2 — never auto-resolve the conflict yourself. After a clean merge, `wf pipeline
 complete-task <id> --commit <build-sha> --merge <merge-sha>`, then remove the worktree:
 
 ```

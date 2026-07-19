@@ -569,7 +569,10 @@ def _reclaim_stale(rest):
 def _record_design_issue(rest):
     p = common.base_parser("pipeline record-design-issue")
     p.add_argument("di_id")
-    p.add_argument("--task", required=True)
+    # A stage-boundary DI is task-less — it names no sprint task, so --task is optional.
+    # Omit it and NO task is parked: there is nothing to park, and a phantom task_states
+    # entry is exactly the synthetic-task trap a task-less DI exists to avoid.
+    p.add_argument("--task", default=None)
     p.add_argument("--severity", required=True)
     p.add_argument("--fix_kind", required=True)
     args = p.parse_args(rest)
@@ -584,7 +587,8 @@ def _record_design_issue(rest):
         issues.append(entry)
     else:
         issues[args.di_id] = entry
-    doc.setdefault("task_states", {}).setdefault(args.task, {})["status"] = "design_issue"
+    if args.task:
+        doc.setdefault("task_states", {}).setdefault(args.task, {})["status"] = "design_issue"
     doc.setdefault("history", []).append({
         "ts": _now(), "event": "design_issue_recorded", "di_id": args.di_id,
         "task_id": args.task, "fix_kind": args.fix_kind, "severity": args.severity,

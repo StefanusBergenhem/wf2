@@ -271,6 +271,20 @@ wf "$PROJ_M" pipeline resolve-design-issue DI-2 >/dev/null
     && ok "resolve-design-issue leaves a non-parked task status alone" || bad "DI resolve non-parked" \
     "$(wf "$PROJ_M" pipeline task-state T5 --format json)"
 
+# A stage-boundary DI is task-less: record-design-issue with no --task records the DI and
+# parks NO phantom task, so a later fix-mode read never mistakes it for a real sprint task.
+wf "$PROJ_M" pipeline record-design-issue DI-STAGE --severity medium --fix_kind spec_amendment >/dev/null
+UDS="$(wf "$PROJ_M" pipeline unresolved-design-issues --format json)"
+[ "$(jget "$UDS" "any(i['di_id']=='DI-STAGE' for i in d['issues'])")" = "True" ] \
+    && ok "record-design-issue records a task-less (stage-boundary) DI" || bad "task-less DI record" "$UDS"
+[ "$(jget "$(wf "$PROJ_M" pipeline task-state DI-STAGE --format json)" "d['state']")" = "pending" ] \
+    && ok "task-less DI parks no phantom task" || bad "task-less DI phantom park" \
+    "$(wf "$PROJ_M" pipeline task-state DI-STAGE --format json)"
+wf "$PROJ_M" pipeline resolve-design-issue DI-STAGE >/dev/null
+UDS2="$(wf "$PROJ_M" pipeline unresolved-design-issues --format json)"
+[ "$(jget "$UDS2" "any(i['di_id']=='DI-STAGE' for i in d['issues'])")" = "False" ] \
+    && ok "task-less DI resolves cleanly" || bad "task-less DI resolve" "$UDS2"
+
 # reclaim-stale flips an orphan slot back to pending
 PROJ_R="$(echo "$DIAMOND" | new_proj)"
 seed_state "$PROJ_R" <<'YAML'
