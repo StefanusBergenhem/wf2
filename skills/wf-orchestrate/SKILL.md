@@ -110,7 +110,7 @@ For each entry in `dispatch[]`:
 
 1. Ensure the entry's `worktree` exists and is usable — see
    [GIT_OPERATIONS.md](assets/GIT_OPERATIONS.md) § Worktree.
-2. `wf sprint task <task_id> --write <worktree>/paths.current_task` — extract its contract.
+2. `wf sprint task <task_id> --write <worktree>/<paths.current_task>` — extract its contract.
 3. `wf pipeline dispatch --agent wf-build --task <task_id> --attempt <n>`.
 4. Spawn the `wf-build` agent with the **Build envelope** (DISPATCH.md).
 

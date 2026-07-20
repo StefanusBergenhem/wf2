@@ -211,6 +211,8 @@ open(p,'w').write(yaml.safe_dump(d, sort_keys=False))
 PY
 OUT="$(wf sprint materialize --format json)"; RC=$?
 [ "$RC" -eq 1 ] && ok "materialize: unknown interface_contract_ref → exit 1" || bad "mat icunk" "rc=$RC $OUT"
+[ "$(jget "$OUT" "any('Widget port (core)' in e for e in d['errors'])")" = "True" ] \
+  && ok "materialize: unknown ref error lists the valid contract names" || bad "mat icunk names" "$OUT"
 
 # a list-valued ref inlines every named contract
 write_thin_sprint
@@ -663,6 +665,39 @@ open(p,'w').write(yaml.safe_dump(d, sort_keys=False))
 PY
 OUT="$(wf sprint check --format json)"
 [ "$(has "$OUT" C9 warnings)" = "False" ] && ok "check: C9 matches a noted basename against full files_to_touch paths" || bad "C9-base" "$OUT"
+
+# C9 — qualified-symbol references (upper-case-led final segment) are not misread as paths
+write_clean_sprint
+"$PYTHON" - "$SPRINT" <<'PY'
+import sys, yaml
+p=sys.argv[1]; d=yaml.safe_load(open(p))
+d['tasks'][0]['implementation_notes']=[
+  'the key is a uuid.UUID; dbpool.Tx wraps it, d.ID is the id, ElementRepository.List returns them']
+open(p,'w').write(yaml.safe_dump(d, sort_keys=False))
+PY
+OUT="$(wf sprint check --format json)"
+[ "$(has "$OUT" C9 warnings)" = "False" ] && ok "check: C9 ignores qualified-symbol refs (uuid.UUID, d.ID, .List)" || bad "C9-symbol" "$OUT"
+
+# C9 — a read-only: marked reference pointer is not a write target and does not warn
+write_clean_sprint
+"$PYTHON" - "$SPRINT" <<'PY'
+import sys, yaml
+p=sys.argv[1]; d=yaml.safe_load(open(p))
+d['tasks'][0]['implementation_notes']=['mirror the shape at read-only:core/requirement.go:227']
+open(p,'w').write(yaml.safe_dump(d, sort_keys=False))
+PY
+OUT="$(wf sprint check --format json)"
+[ "$(has "$OUT" C9 warnings)" = "False" ] && ok "check: C9 skips a read-only: marked pointer" || bad "C9-ro" "$OUT"
+# control — the same pointer WITHOUT the marker still warns (out of files_to_touch)
+write_clean_sprint
+"$PYTHON" - "$SPRINT" <<'PY'
+import sys, yaml
+p=sys.argv[1]; d=yaml.safe_load(open(p))
+d['tasks'][0]['implementation_notes']=['mirror the shape at core/requirement.go:227']
+open(p,'w').write(yaml.safe_dump(d, sort_keys=False))
+PY
+OUT="$(wf sprint check --format json)"
+[ "$(has "$OUT" C9 warnings)" = "True" ] && ok "check: C9 still warns on an unmarked out-of-scope pointer" || bad "C9-ro-control" "$OUT"
 
 # B3 — an AC with verified_by (gate-verified, not test-provable) is not a silent hole
 write_clean_sprint

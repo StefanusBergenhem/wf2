@@ -31,9 +31,10 @@ _SLICE_REQ_RE = re.compile(r"\*\*(REQ-\d+)\*\*")     # slice "Component requirem
 _SLICE_TC_RE = re.compile(r"\b(SYS-TC-\d+)\b")
 
 # C9 path-like note tokens (deliberately conservative): a whitespace-delimited token
-# with an optional path prefix and a letter-led extension. Prose abbreviations that
-# match the shape are skipped.
-_NOTE_PATH_RE = re.compile(r"^[\w./-]*[\w-]\.[A-Za-z][A-Za-z0-9]{0,4}$")
+# with an optional path prefix and a lower-case, letter-led extension. An upper-case-led
+# final segment (uuid.UUID, d.ID, ElementRepository.List) is a qualified symbol, not a
+# file path, and does not match. Prose abbreviations that match the shape are skipped.
+_NOTE_PATH_RE = re.compile(r"^[\w./-]*[\w-]\.[a-z][a-z0-9]{0,4}$")
 _NOTE_SKIP = {"e.g", "i.e"}
 
 
@@ -41,10 +42,15 @@ _is_test_path = common.is_test_path  # C3's test-home heuristic, shared with `wf
 
 
 def _note_paths(note):
-    """File paths a prose note names, per the conservative C9 token shape."""
+    """File paths a prose note names, per the conservative C9 token shape. A token
+    prefixed ``read-only:`` is a declared read-only reference pointer (task-contract.md),
+    not a write target, so it is skipped rather than checked against files_to_touch."""
     out = []
     for raw in re.split(r"[\s,;()\[\]{}<>]+", str(note)):
-        tok = raw.strip("`'\"*").split(":", 1)[0].rstrip(".,!?").strip("`'\"*")
+        stripped = raw.strip("`'\"*")
+        if stripped.lower().startswith("read-only:"):
+            continue
+        tok = stripped.split(":", 1)[0].rstrip(".,!?").strip("`'\"*")
         if tok.lower() in _NOTE_SKIP:
             continue
         if _NOTE_PATH_RE.match(tok):
@@ -289,8 +295,9 @@ def _materialize(rest):
             blocks = []
             for name in names:
                 if name not in contracts:
+                    valid = ", ".join(f"'{c}'" for c in contracts) or "none"
                     errors.append(f"{tid}: interface_contract_ref '{name}' is not a "
-                                  f"contract in the slice")
+                                  f"contract in the slice (valid: {valid})")
                 else:
                     blocks.append(contracts[name])
             if len(blocks) == len(names):

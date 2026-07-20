@@ -112,9 +112,10 @@ emptied design) from the committed design backlog once reconcile shows its `[REQ
 present. When the backlog empties, every designed thing has shipped — its structure is now
 the codebase's, re-derived by `discover`.
 
-It does **not** drive capability removal. A capability leaves `CAPABILITIES.yaml` when the
-SA *designs* it (drains it into the backlog) — upstream of any test, so that transition is
-the SA's, not reconcile's.
+It also drives **capability removal**, the same way: a capability leaves `CAPABILITIES.yaml`
+when the backlog design serving it drains — i.e. when reconcile shows that design's
+`[REQ:<id>]` tags shipped and its essence now lives in the code (the tags, plus any ADR). The
+SA performs the drain, keyed on that shipped evidence, not on having designed it.
 
 ## register.py — the derived requirement register
 

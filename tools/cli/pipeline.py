@@ -316,7 +316,8 @@ def _current_phase(rest):
     common.emit(
         {
             "phase": doc.get("current_phase", "idle"),
-            "sprint_branch": doc.get("sprint_branch") or None,
+            "sprint_branch": doc.get("sprint_branch")
+            or common.current_branch(common.project_root(args.config)),
             "stage": stages.get("current") if stages.get("definitions") else None,
             "total_stages": stages.get("total") if stages.get("definitions") else None,
         },

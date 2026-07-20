@@ -45,11 +45,13 @@ DEST2="$(jget "$OUT2" "d['archived']")"
 [ "$DEST" != "$DEST2" ] && ok "a second snapshot gets a distinct path" || bad "no clobber" "$DEST == $DEST2"
 [ "$(ls "$PROJ/.wf/archive/sprint-1/" | wc -l)" -eq 2 ] && ok "both snapshots are retained" || bad "retain both" "$(ls "$PROJ/.wf/archive/sprint-1/")"
 
-# --move drains the source
+# --move drains the source into the archive but leaves an empty sink behind, so the
+# next cycle (e.g. an append-only telemetry log) has a file to append to
 MSRC="$PROJ/.wf/transient/sprint.yaml"; printf 'sprint: x\n' > "$MSRC"
 MOUT="$(wf archive add "$MSRC" --label sprint-1 --move --format json)"
 MDEST="$(jget "$MOUT" "d['archived']")"
-[ -f "$MDEST" ] && [ ! -f "$MSRC" ] && ok "archive add --move drains the source" || bad "move" "$MOUT (src exists: $([ -f "$MSRC" ] && echo yes || echo no))"
+grep -q "sprint: x" "$MDEST" && ok "archive add --move copies content into the archive" || bad "move dest" "$MOUT"
+[ -f "$MSRC" ] && [ ! -s "$MSRC" ] && ok "archive add --move leaves an empty sink at the source" || bad "move sink" "$MOUT (src exists: $([ -f "$MSRC" ] && echo yes || echo no))"
 
 # a missing source is a hard error
 if wf archive add "$PROJ/.wf/transient/nope.md" --label x >/dev/null 2>&1; then bad "missing source should fail" "exited 0"; else ok "archive add: missing source → non-zero exit"; fi

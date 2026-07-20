@@ -204,6 +204,18 @@ wf "$PROJ_M" pipeline transition --to preparing --reason kickoff >/dev/null
 CP="$(wf "$PROJ_M" pipeline current-phase --format json)"
 [ "$(jget "$CP" "d['phase']")" = "preparing" ] && ok "transition sets current_phase" || bad "transition" "$CP"
 
+# current-phase resolves sprint_branch from git when the stored value is null (L-020)
+PROJ_GB="$(echo "$DIAMOND" | new_proj)"
+seed_state "$PROJ_GB" <<'YAML'
+current_phase: running_stage
+sprint_branch: null
+YAML
+( cd "$PROJ_GB" && git init -q && git config user.email t@t.t && git config user.name t \
+  && git commit -q --allow-empty -m init && git checkout -q -b sprint/demo ) 2>/dev/null
+CPGB="$(wf "$PROJ_GB" pipeline current-phase --format json)"
+[ "$(jget "$CPGB" "d['sprint_branch']")" = "sprint/demo" ] \
+  && ok "current-phase: sprint_branch falls back to the git branch when stored null" || bad "L-020 git fallback" "$CPGB"
+
 # dispatch maps agent → task state, records pass_index
 wf "$PROJ_M" pipeline dispatch --agent wf-build --task T1 --attempt 1 >/dev/null
 [ "$(jget "$(wf "$PROJ_M" pipeline task-state T1 --format json)" "d['state']")" = "building" ] \

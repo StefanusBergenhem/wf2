@@ -44,7 +44,9 @@ def _add(rest):
     p.add_argument("--label", required=True,
                    help="archive subdir grouping (e.g. a sprint_id, or 'capabilities')")
     p.add_argument("--move", action="store_true",
-                   help="move instead of copy — drain the source from the working set")
+                   help="move instead of copy — drain the source into the archive, leaving "
+                        "an empty file at the source so the next cycle can append (e.g. the "
+                        "telemetry log)")
     args = p.parse_args(rest)
 
     src = Path(args.file)
@@ -53,6 +55,8 @@ def _add(rest):
 
     root = common.resolve_path(args.config, "archive", None)  # dies if paths.archive unset
     dest = snapshot(root, args.label, src, move=args.move)
+    if args.move:
+        src.touch()  # leave an empty sink so the next cycle has a file to append to
     common.emit({"archived": str(dest), "label": args.label, "moved": bool(args.move)}, args.format)
     return 0
 

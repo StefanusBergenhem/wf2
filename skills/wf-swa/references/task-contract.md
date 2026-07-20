@@ -188,7 +188,9 @@ A note is a pointer, never prose that re-explains the source:
 Never describe how existing code works or what it will do — the build agent reads
 the source itself, and a paraphrase that drifts from the source ships a defect
 straight into the contract. Name in a note only files that are in `files_to_touch`
-or explicitly read-only reference material. If a note needs more than one sentence,
+or explicitly read-only reference material — mark a read-only pointer with an attached
+`read-only:` prefix (`read-only:core/requirement.go:227`) so `sprint check`'s C9 does not
+flag it as a missing write target. If a note needs more than one sentence,
 what it holds is either behaviour (an acceptance criterion), a shape (an
 `interface_contract_ref`), or not the contract's to say.
 

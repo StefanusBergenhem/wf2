@@ -75,7 +75,11 @@ Announce each phase.
    it before continuing.
 4. Run the project's test command for what you changed and **confirm the tests FAIL** for
    the right reason — an assertion or missing-symbol failure, not a compile error
-   elsewhere.
+   elsewhere. When an AC is a pure type/compile-time guarantee the test runner does not
+   enforce (a transpile-only runner strips types without checking them, so the test passes
+   both before and after the change), the Red oracle is the project's **type-checker/compiler**
+   failing — run it and confirm it reports the gap. Runtime assertions on such an AC still
+   need a vacuity check: temporarily break the assertion, confirm it fails, then restore it.
 
 A test that passes before any implementation exists is testing the wrong thing —
 investigate, do not proceed. **Exception — e2e task over merged dependencies:** when the

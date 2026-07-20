@@ -108,8 +108,8 @@ the input it needs.
    unrecoverable:
 
    ```sh
-   python3 <paths.tools>/cli/wf archive add paths.capabilities --label capabilities
-   python3 <paths.tools>/cli/wf archive add paths.learnings --label learnings
+   python3 <paths.tools>/cli/wf archive add <paths.capabilities> --label capabilities
+   python3 <paths.tools>/cli/wf archive add <paths.learnings> --label learnings
    ```
 
    Then remove the draining ids from `paths.capabilities` and `paths.learnings`.
@@ -229,7 +229,7 @@ number them by hand — run the allocator for the whole set you derived:
 
 ```sh
 python3 <paths.tools>/reconcile/next_id.py --count <how many you are minting> \
-  --scan <each root in paths.tests> --scan paths.design_backlog --scan paths.adrs
+  --scan <each root in paths.tests> --scan <paths.design_backlog> --scan <paths.adrs>
 ```
 
 Assign the printed ids in order. If alignment (Phase 4) adds a requirement, continue numbering
@@ -265,7 +265,7 @@ there is no requirement above it. Give each a repo-unique `SYS-TC-<n>` id from i
 
 ```sh
 python3 <paths.tools>/reconcile/next_id.py --prefix SYS-TC --count <how many> \
-  --scan <each root in paths.tests> --scan paths.design_backlog --scan paths.adrs
+  --scan <each root in paths.tests> --scan <paths.design_backlog> --scan <paths.adrs>
 ```
 
 A single-component change with no observable end-to-end behaviour needs none. wf-swa plans
@@ -283,7 +283,7 @@ Author the design graph as JSON and pipe it to the renderer. It is a transient
 conversation aid — never commit it.
 
 ```sh
-cat <<'JSON' | python3 <paths.tools>/design_view/render_design.py --out paths.design_view
+cat <<'JSON' | python3 <paths.tools>/design_view/render_design.py --out <paths.design_view>
 { "title": "<change summary>",
   "components":   [{"id": "auth", "label": "auth", "state": "existing",
                     "note": "<what THIS CHANGE does to it — omit when it is untouched>"}],
@@ -414,7 +414,7 @@ The judgement already happened; this is capture.
    `paths.design_backlog`. The design-slice is gitignored (transient) — nothing to commit for it.
    Stage explicit paths — never `git add .`:
    ```sh
-   git add paths.adrs/<new-or-changed ADRs> paths.design_backlog
+   git add <paths.adrs>/<new-or-changed ADRs> <paths.design_backlog>
    git diff --cached --stat   # verify nothing unexpected is staged
    ```
 6. Glance at recent commit style (`git log --oneline -5`) and commit with a subject like

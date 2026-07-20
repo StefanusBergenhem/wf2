@@ -49,9 +49,9 @@ Walk these in order; take the first that holds. The classification is also the f
 - **Already-merged component code is wrong** — the contract and its requirement are both right;
   code an earlier task merged violates them, and the defect is not in the current task's diff.
   → **component_defect**: follow `references/contract-fix.md`.
-- **A requirement or ADR is wrong** — the contract faithfully reflects a spec that is itself
-  unbuildable or contradictory, while the driving capability is sound. → **spec_amendment**:
-  follow `references/spec-amendment.md`.
+- **A requirement, interface contract, or ADR is wrong** — the contract faithfully reflects a
+  spec that is itself unbuildable or contradictory, while the driving capability is sound.
+  → **spec_amendment**: follow `references/spec-amendment.md`.
 
 **The capability ceiling — the one halt.** If resolving the issue would change *what the user
 needs* rather than how the system meets it — the driving capability itself is wrong — stop. Do

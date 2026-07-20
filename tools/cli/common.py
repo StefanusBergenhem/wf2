@@ -106,6 +106,21 @@ def host_root() -> Path:
     return common_dir.parent
 
 
+def current_branch(root: Path) -> "str | None":
+    """The branch checked out at ``root``, or None (detached HEAD, or not a git repo).
+    Lets a resumed run recover a run-state field that was stored null."""
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(root), "branch", "--show-current"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+        return None
+    return out or None
+
+
 def default_config() -> str:
     """Host-anchored default location of ``.wf/config.yaml`` (see ``host_root``).
     An explicit ``--config`` always overrides it — both the test harness and any
