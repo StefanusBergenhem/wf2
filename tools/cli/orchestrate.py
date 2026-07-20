@@ -9,7 +9,7 @@ sub-agent's prose — compliance by mechanism.
   inspect-review-return  Review Return Protocol detector
   preserve-uncommitted   commit uncommitted work before re-dispatch
   sweep-transients       session-start broom (resume safety)
-  dispatch-fix           design-issue routing by fix_kind
+  dispatch-fix           route a design issue to wf-spec-fix (slice cap → human)
 
 Unlike the query verbs (which route through common.emit), every verb here prints
 the raw shape its contract names — a compact JSON line, an indent=2 blob, or a bare
@@ -474,10 +474,10 @@ def _sweep_transients(rest):
         states are gone, and a task_states-keyed rule would keep the file forever.
         An open entry prunes only when its task is provably terminal.
 
-        A task-less (slice-scoped) entry is the `preparing` re-design loop's own history:
-        dispatch-fix counts those entries to bound the rounds, so while preparing runs they
-        survive whatever their status — pruning one under-counts the round on a resume and
-        hands wf-sa a lap it should not get. Once preparing is over they are residue.
+        A task-less entry during `preparing` is a slice re-cut round (`scope: slice`):
+        dispatch-fix counts those to bound the rounds, so while preparing runs they survive
+        whatever their status — pruning one under-counts the round on a resume and hands the
+        fixer a lap it should not get. Once preparing is over they are residue.
 
         Without a pipeline-state file the phase is UNKNOWN, not "not preparing" — keep
         everything, as `sweep` above does. Guessing here prunes the round count and
@@ -563,30 +563,18 @@ def _sweep_transients(rest):
 # 5. dispatch-fix
 # ===========================================================================
 
-# fix_kind → (subagent, human_gate). Build/review classify a design issue from their
-# task-scoped context; the orchestrator routes it at the stage boundary. Three autonomous
-# kinds — the task contract is wrong (wf-swa amends it), a requirement/ADR is wrong
-# (wf-sa, who also owns the slice cut, so re-cutting the slice folds into the spec fix),
-# or ALREADY-MERGED component code violates a correct contract+spec (wf-swa authors a
-# follow-up task) — plus unknown → human for anything bigger than one task. wf1's
-# `recut → wf-po` is dropped: wf2's PO owns capabilities, not sprint cutting. (The prose
-# taxonomy lands in wf-skill-spec-references with the build/review DI-writers; this table
-# is its executable form — add a new fix_kind here.)
-#
-# slice_defect is the one kind raised in `preparing`, by wf-swa, against the design-slice
-# itself — before any task or sprint exists. It routes to wf-sa like spec_amendment, but
-# its envelope carries no task and no sprint, and it is bounded (below).
-_ROUTING = {
-    "contract_amendment": {"subagent_type": "wf-swa", "human_gate": False},
-    "spec_amendment": {"subagent_type": "wf-sa", "human_gate": False},
-    "component_defect": {"subagent_type": "wf-swa", "human_gate": False},
-    "slice_defect": {"subagent_type": "wf-sa", "human_gate": False},
-    "unknown": {"subagent_type": None, "human_gate": True},
-}
+# Every design issue raised during a run routes to the single spec fixer, wf-spec-fix:
+# a bare issue from build/review/stage-repair, or a slice-scoped one wf-swa raises in
+# `preparing` when it cannot decompose the slice. wf-spec-fix classifies it and resolves it
+# across the design layer — amend the contract, author a follow-up task, amend a
+# requirement/ADR, or re-cut the slice — and halts to a human only when the driving
+# capability itself is wrong. The one gate the router still owns is non-convergence.
+_SPEC_FIXER = "wf-spec-fix"
 
-# How many times wf-sa may re-design a rejected slice before a human rules on it. Each
-# lap is autonomous and cheap, but the SA's re-cut is only tested by the NEXT decomposition
-# — so a slice still failing after this many laps is one the SA is not converging on.
+# How many times a rejected slice may be re-cut before a human rules on it. Each lap is
+# autonomous and cheap, but a re-cut is only tested by the NEXT decomposition — so a slice
+# still failing after this many laps is one the fixer is not converging on. A slice issue
+# carries `scope: slice`; running-stage issues do not, so they never count against it.
 _MAX_REDESIGN_ROUNDS = 2
 
 
@@ -646,31 +634,22 @@ def _dispatch_fix(rest):
     if status in ("resolved", "overridden"):
         return _err(f"error: DI {di_id} status is '{status}'; no routing decision needed")
 
-    fix_kind = entry.get("fix_kind", "")
+    scope = entry.get("scope", "")
     task_id = entry.get("task_id", "")
 
-    route = _ROUTING.get(fix_kind)
-    if route is None:
-        recognised = sorted(k for k in _ROUTING if k)
-        sys.stderr.write(
-            f"warning: DI {di_id} has unrecognised fix_kind '{fix_kind}'. "
-            f"Treating as 'unknown' (human gate). Recognised values: {recognised}.\n"
-        )
-        route = _ROUTING["unknown"]
-        fix_kind = fix_kind or "unknown"
-
-    # A rejected slice re-designed past the round limit stops being an autonomous repair:
-    # every lap so far is on disk, so count them rather than tracking the loop's position.
+    subagent_type = _SPEC_FIXER
+    human_gate = False
     reason = ""
-    if fix_kind == "slice_defect":
+    # A slice the fixer cannot make decomposable would re-cut forever — each lap is tested
+    # only by the next decomposition, which rejects it again. Every lap so far is on disk,
+    # so count them (resolved or open) rather than tracking the loop's position, and hand a
+    # non-converging slice to a human.
+    if scope == "slice":
         rounds = sum(1 for it in issues
-                     if isinstance(it, dict) and it.get("fix_kind") == "slice_defect")
+                     if isinstance(it, dict) and it.get("scope") == "slice")
         if rounds > _MAX_REDESIGN_ROUNDS:
-            route = _ROUTING["unknown"]
-            # Every re-design past the limit is a human's, so do not name wf-sa as the one
-            # failing to converge — the count cannot tell whose cut was rejected, and a
-            # human gate whose reason misattributes the cause is the misdescription this
-            # route exists to end.
+            subagent_type = None
+            human_gate = True
             reason = (
                 f"{rounds} slice rejections on this sprint (limit {_MAX_REDESIGN_ROUNDS}) — "
                 "the slice is not converging on a decomposable cut. Run /wf-sa interactively."
@@ -688,7 +667,7 @@ def _dispatch_fix(rest):
         "task_id": task_id,
         "di_artifact": relpath(di_path),
     }
-    # Name the sprint only when there is one to read: a slice_defect is raised in
+    # Name the sprint only when there is one to read: a slice issue is raised in
     # `preparing`, where wf-swa may have halted before ever writing it.
     if sprint_path.exists():
         envelope["sprint_artifact"] = relpath(sprint_path)
@@ -696,16 +675,15 @@ def _dispatch_fix(rest):
     result = {
         "di_id": di_id,
         "task_id": task_id,
-        "fix_kind": fix_kind,
-        "subagent_type": route["subagent_type"],
-        "human_gate": route["human_gate"],
+        "subagent_type": subagent_type,
+        "human_gate": human_gate,
         "envelope": envelope,
     }
     if reason:
         result["reason"] = reason
 
     print(json.dumps(result, indent=2, sort_keys=False))
-    return 1 if route["human_gate"] else 0
+    return 1 if human_gate else 0
 
 
 COMMANDS = {

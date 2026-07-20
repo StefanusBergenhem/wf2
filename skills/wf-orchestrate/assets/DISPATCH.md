@@ -28,11 +28,9 @@ pass:          <agent-name>   # which pass this is
 
 ## Preparing — `wf-swa` (build the sprint)
 
-```
-mode: default
-```
+No envelope fields — wf-swa reads the design-slice from `.wf/config.yaml`.
 
-## Fix — `wf-swa` / `wf-sa` (from `dispatch-fix`)
+## Fix — `wf-spec-fix` (from `dispatch-fix`)
 
 Pass the envelope `dispatch-fix` emits verbatim:
 

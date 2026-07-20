@@ -1,12 +1,10 @@
 # A design issue: the defect is not this task's own code. Transient, worktree-local. An
-# OPEN entry whose task_id matches is the design_issue verdict; dispatch-fix routes it by
-# fix_kind. Build raises contract_amendment (the contract is wrong) or component_defect
-# (already-merged code violates a correct contract) — it never judges the spec layer.
+# OPEN entry whose task_id matches is the design_issue verdict; wf-spec-fix classifies and
+# resolves it. Give a summary precise enough to classify from; do not set a fix_kind.
 issues:
   - id: "DI-<task-id>"
     task_id: "<id>"
     detected_by: build
-    fix_kind: "<contract_amendment | component_defect>"
     severity: "<low | medium | high>"
     status: open
-    summary: "<what about the contract is unbuildable — one or two lines>"
+    summary: "<what is unbuildable, and why — one or two lines; for a merged-code defect, which behaviour violates which requirement>"

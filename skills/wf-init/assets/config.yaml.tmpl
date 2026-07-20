@@ -60,7 +60,7 @@ paths:
   design_slice: ".wf/transient/design-slice.md"   # wf-sa cuts this from the backlog for wf-swa; retained through build, drained at complete-sprint. Transient.
   design_view: ".wf/transient/design-view.html"   # wf-sa interactive design diagram (render_design.py). Transient.
   domain_view: ".wf/transient/domain-view.html"   # wf-sa entity/domain-model diagram (render_design.py entity mode). Transient.
-  decision_prep: ".wf/transient/decision-prep.md" # wf-sa fix-mode escalation: decisions it prepared but could not take (briefs + render_design decisions fields); the human's next wf-sa run presents them, then deletes it. Transient.
+  decision_prep: ".wf/transient/decision-prep.md" # A capability decision the fixer could not take autonomously (wf-spec-fix on a capability halt): the brief + render_design decisions fields; the human's next wf-sa run presents it, then deletes it. Transient.
   drill_cache: ".wf/transient/drill-cache"        # Shared scout digests (wf-po/wf-sa dispatch wf-drill, which appends; both read). Transient dir.
   sprint: ".wf/transient/sprint.yaml"             # wf-swa task DAG the orchestrator executes. Transient.
 
@@ -87,11 +87,15 @@ paths:
   review_ready: ".wf/transient/review-ready.yaml"      # build → review handoff (build done, gates green).
   feedback: ".wf/transient/feedback.yaml"              # review → build rejection feedback.
 
-  # Design issues — the one artifact above with a host-side life too: build/review raise one
-  # in their worktree and the orchestrator copies it here; wf-swa raises a slice_defect
-  # straight here in preparing, when no worktree exists yet. dispatch-fix routes each entry
-  # by fix_kind; sweep-transients prunes the closed ones. Transient.
+  # Design issues — the one artifact above with a host-side life too: build/review raise a
+  # bare one in their worktree and the orchestrator copies it here; wf-swa raises a
+  # slice-scoped one (`scope: slice`) straight here in preparing, when no worktree exists yet.
+  # dispatch-fix routes every entry to wf-spec-fix; sweep-transients prunes the closed ones. Transient.
   design_issues: ".wf/transient/design-issues.yaml"
+  # Spec-fix decision report — wf-spec-fix appends one short block per design issue it resolves
+  # autonomously (what changed, and any shipped requirement it superseded). `ship` folds it into
+  # the PR body so the human reviews the run's spec decisions; archived + drained at sprint close. Transient.
+  spec_decisions: ".wf/transient/spec-decisions.md"
 
 parallel:
   max_concurrent_tasks: 4                     # within-stage concurrency cap — independent tasks run in parallel worktrees.

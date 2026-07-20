@@ -406,7 +406,7 @@ enough.
 
 **Date:** 2026-07-13
 **Context:** the wf-orchestrate SKILL now resolves a heavy-check (`stage_check`) design issue
-in-line via §2b (dispatch-fix → wf-sa/wf-swa → re-cut the stage-repair). The live driver
+in-line via §2b (dispatch-fix → wf-spec-fix → re-cut the stage-repair). The live driver
 (`_stage_fix_cycle`) only records the DI canonically (host file + state) and then escalates
 the boundary — it does not run dispatch-fix + re-loop. The manual (skill) path is what
 dogfood runs exercise, so the driver's escalate-after-record is currently sufficient.
@@ -441,8 +441,8 @@ ratifies buildability they cannot assess, and the SA's only real feedback arrive
 human ratifies — "can every requirement be owned by one component, and is each atomic edit set
 inside it?" A ~6–17 minute autonomous check gating a 92-minute interactive session.
 
-**Why it is deferred rather than done:** the slice-rejection route (`slice_defect` → wf-sa fix
-mode → re-dispatch wf-swa, bounded at `_MAX_REDESIGN_ROUNDS`) now makes each lap autonomous and
+**Why it is deferred rather than done:** the slice-rejection route (`scope: slice` → wf-spec-fix
+re-cut → re-dispatch wf-swa, bounded at `_MAX_REDESIGN_ROUNDS`) now makes each lap autonomous and
 cheap, which was the same note's cheaper mitigation. The human-session cost the dry-run exists to
 protect only materializes on an ADR / unratified-assumption / capability escalation. Part of the
 observed pain also came from the boundaries-are-law vs. atomic-edit-set collision, which is now
@@ -459,13 +459,13 @@ and the feedback belongs before the ratification gate, not after.
 
 **Date:** 2026-07-14
 **Context:** `wf-orchestrate` §1a now resolves a rejected design slice autonomously —
-`dispatch-fix` routes the `slice_defect` DI to wf-sa fix mode, which re-cuts the slice, and
+`dispatch-fix` routes the `scope: slice` DI to wf-spec-fix, which re-cuts the slice, and
 the orchestrator re-dispatches wf-swa against it, bounded by `_MAX_REDESIGN_ROUNDS`. The live
 driver (`_run`, preparing) only *reports* the rejection: `_no_sprint_reason` reads the open
-`slice_defect` and escalates naming the DI, the blocker count, and `/wf-sa`. It does not run
-dispatch-fix, does not dispatch wf-sa, and does not re-loop.
+slice issue and escalates naming the DI, the blocker count, and `/wf-sa`. It does not run
+dispatch-fix, does not dispatch the fixer, and does not re-loop.
 
-**Observation:** bring the driver to parity — the same dispatch-fix → wf-sa → re-dispatch
+**Observation:** bring the driver to parity — the same dispatch-fix → wf-spec-fix → re-dispatch
 wf-swa loop, reusing the existing `_resolve_design_issues` machinery for the route and
 `dispatch-fix`'s exit 1 for the round bound. Unlike C31's stage-fix case there is no
 awkward re-entry: preparing is a straight loop back to the wf-swa dispatch, with no DAG node
@@ -480,7 +480,7 @@ path did before §1a existed. Cf. **C31** (same driver/skill parity class, one p
 
 ## C34 — `wf slice check`: gate unratified supersessions, not just assumptions
 
-**Date:** 2026-07-14
+**Date:** 2026-07-14 (updated 2026-07-20)
 **Context:** wf-sa Phase 3 requires every **supersession** (a shipped `REQ-<n>` / `SYS-TC-<n>`
 this design invalidates or retires) to be ratified by the human at Phase 4, and
 `assets/design-slice.md.tmpl`'s Supersedes section says as much — "alignment before it may
@@ -489,15 +489,15 @@ appear here". Nothing enforces it. `wf slice check` (`tools/cli/slice.py`) greps
 silently. Assumptions have a marker and a gate; supersessions have neither.
 
 **Observation:** give the Supersedes section a ratification marker of its own and fail
-`slice check` on an unratified entry, exactly as it fails an `UNCONFIRMED` assumption. That
-makes the Phase 4 supersession rule mechanical instead of a prose promise, in both modes.
+`slice check` on an unratified entry, exactly as it fails an `UNCONFIRMED` assumption — a
+mechanical check instead of a prose promise.
 
-**Why now-ish:** wf-sa fix mode (`slice_defect` path) runs autonomously with no Phase 4, so it
-carries a fourth escalation trigger — "resolving a blocker would supersede a shipped
-requirement → halt" — written *only because* this gate does not exist. **Delete that trigger
-when this candidate ships**; it is a hand-held substitute for a mechanical check. In default
-mode the hole is older and softer: a human is present at Phase 4 and sees the supersession
-presented, so it takes an SA omission to slip through.
+**Why only default mode is at stake now:** the autonomous fixer (wf-spec-fix) supersedes shipped
+behaviour by design — it records each supersession on `paths.spec_decisions`, which `ship` folds
+into the PR body for end-of-run review; the old `slice_defect` supersession *halt* was removed with
+the wf-spec-fix merge (2026-07-20). So the autonomous hole is covered by report-and-review, not a
+gate. The residual is **default mode**: a human is present at Phase 4 and sees supersessions
+presented, so it takes an SA omission to slip through — softer, and the reason this stays deferred.
 
 **Trigger to act:** a supersession reaching a sprint unratified (from either mode), or the
 next time `slice.py` is opened for other work — the marker + check is small, and it retires

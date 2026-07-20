@@ -56,7 +56,7 @@ Then read `wf pipeline current-phase` and resume from where it points:
 
 1. **Gate `paths.sprint`** before proceeding — presence is never the verdict. Route on the
    first case that matches:
-   - `paths.design_issues` holds an `open` entry with `fix_kind: slice_defect` → §1a.
+   - `paths.design_issues` holds an `open` entry with `scope: slice` → §1a.
      Never dispatch `wf-swa` against a slice already rejected — it reproduces the same
      rejection and burns a re-design round.
    - `paths.sprint` present and `python3 <paths.tools>/cli/wf sprint check` reports
@@ -71,7 +71,7 @@ Then read `wf pipeline current-phase` and resume from where it points:
 
 #### 1a — A rejected slice
 
-Read `paths.design_issues`. No `open` entry with `fix_kind: slice_defect` → **HALT and
+Read `paths.design_issues`. No `open` entry with `scope: slice` → **HALT and
 report** that wf-swa produced no usable sprint and raised no slice defect; stop.
 
 Otherwise take the **highest-numbered** such entry. **Gate: delete `paths.sprint` before you
@@ -83,11 +83,11 @@ build then ships the old requirements. Then, for that entry's `id`:
 python3 <paths.tools>/cli/wf orchestrate dispatch-fix <di-id>
 ```
 
-- **exit 1** → human gate: **HALT**, report the emitted `reason`, stop.
-- **exit 0** → dispatch `wf-sa` with the **Fix envelope** (DISPATCH.md). When it returns,
+- **exit 1** → the slice non-convergence gate tripped: **HALT**, report the emitted `reason`, stop.
+- **exit 0** → dispatch `wf-spec-fix` with the **Fix envelope** (DISPATCH.md). When it returns,
   re-read that entry in `paths.design_issues`:
-  - `status: resolved` → wf-sa re-cut the slice: return to §1 step 1.
-  - still `open` → wf-sa escalated: **HALT and report** that the slice needs a human
+  - `status: resolved` → wf-spec-fix re-cut the slice: return to §1 step 1.
+  - still `open` → wf-spec-fix escalated: **HALT and report** that the slice needs a human
     ruling — run `/wf-sa`. Stop.
 
 ### 2 — The stage loop
@@ -126,26 +126,21 @@ List the open issues: `wf pipeline unresolved-design-issues --format json`. For 
 python3 <paths.tools>/cli/wf orchestrate dispatch-fix <di-id>
 ```
 
-- **exit 1** → human gate: HALT, report the issue, stop.
-- **exit 0** → dispatch the emitted `subagent_type` (`wf-swa`/`wf-sa`) with the **Fix
-  envelope** (DISPATCH.md). When the fix agent returns, re-read the issue's entry in
-  `paths.design_issues`:
+- **exit 1** → the slice non-convergence gate tripped: HALT, report the emitted `reason`, stop.
+- **exit 0** → dispatch `wf-spec-fix` with the **Fix envelope** (DISPATCH.md). When it returns,
+  re-read the issue's entry in `paths.design_issues`:
   - `status: resolved` → `wf pipeline resolve-design-issue <di-id>` (it also resets the
     parked task to `pending`), then delete any stale `paths.feedback`,
-    `paths.review_ready`, or `paths.design_issues` in the task's
-    worktree. Then route on the entry's final `fix_kind`:
+    `paths.review_ready`, or `paths.design_issues` in the task's worktree. Then route on the
+    `fix_kind` wf-spec-fix wrote back:
     - `component_defect` → the fixer appended a follow-up task the parked task now
       depends on: `wf pipeline compute-stages --force`, then return to the stage loop —
       the follow-up dispatches first; the repaired task re-enters in a later stage,
       after the follow-up merges.
     - anything else → re-dispatch the task at its current attempt (it re-reads its
       possibly-amended contract). The task re-enters running_stage on the next `next`.
-  - still `open` with a **changed** `fix_kind` (the fixer reclassified the issue) →
-    re-run `dispatch-fix <di-id>` and dispatch the route it emits — **at most one such
-    re-route per issue**; if the issue is still open after it, treat that as escalated
-    (below).
-  - still `open`, `fix_kind` unchanged (the fixer escalated) → `wf pipeline block-task
-    <task-id> --reason <…>` and report the escalation. Never re-run the task.
+  - still `open` (wf-spec-fix hit the capability ceiling or the over-scope halt) → `wf
+    pipeline block-task <task-id> --reason <…>` and report the escalation. Never re-run the task.
 
 #### 2c — Finalize the stage (end_of_stage)
 
@@ -167,13 +162,12 @@ python3 <paths.tools>/cli/wf orchestrate dispatch-fix <di-id>
      DISPATCH.md). Take the verdict from disk, in this order:
      - **An `open` entry in `paths.design_issues`** (wf-stage-repair judged a design defect,
        not a code slip) → it is task-less. Record it — `wf pipeline record-design-issue
-       <di-id> --severity <s> --fix_kind <k>` (no `--task`) — then `wf orchestrate
-       dispatch-fix <di-id>`: **exit 1** → HALT and report; **exit 0** → dispatch the emitted
-       `wf-swa`/`wf-sa` (**Fix envelope**). When the fixer returns, re-read the entry: `status:
-       resolved` → `wf pipeline resolve-design-issue <di-id>`, `wf pipeline compute-stages
-       --force`, then **return to the stage loop** (§2) — the follow-up or amended task runs
-       and the heavy check re-runs at its boundary; still `open` → HALT and report the
-       escalation.
+       <di-id> --severity <s>` (no `--task`, no `--fix_kind`) — then `wf orchestrate
+       dispatch-fix <di-id>`: **exit 1** → HALT and report; **exit 0** → dispatch `wf-spec-fix`
+       (**Fix envelope**). When it returns, re-read the entry: `status: resolved` → `wf pipeline
+       resolve-design-issue <di-id>`, `wf pipeline compute-stages --force`, then **return to the
+       stage loop** (§2) — the follow-up or amended task runs and the heavy check re-runs at its
+       boundary; still `open` → HALT and report the escalation.
      - **No design issue** → re-run `commands.stage_check`. Green → step 4. Red → next round.
    At `review.max_attempts` still red with no resolving design issue → escalate the boundary
    (HALT and report).
@@ -188,10 +182,12 @@ python3 <paths.tools>/cli/wf orchestrate dispatch-fix <di-id>
 `closeout` steps in order. For each entry:
 
 - a `wf-*` agent name → dispatch that agent (e.g. `wf-retrospective`).
-- `ship` → the terminal publish: `wf pipeline complete-sprint` (archives the plan + final
-  state, drains the working set, resets to `idle`), commit its archive snapshots, then push
-  the sprint branch and open a PR against the base branch — one push, everything in the PR.
-  See [GIT_OPERATIONS.md](assets/GIT_OPERATIONS.md) § Ship.
+- `ship` → the terminal publish: read `paths.spec_decisions` for the PR body (the run's
+  autonomous spec-fix decisions) **before** `wf pipeline complete-sprint` drains it;
+  complete-sprint archives the plan + final state, drains the working set, and resets to
+  `idle`; then commit its archive snapshots and push the sprint branch + open a PR against the
+  base branch — one push, everything in the PR. See
+  [GIT_OPERATIONS.md](assets/GIT_OPERATIONS.md) § Ship.
 
 Report the sprint summary and the PR URL.
 
@@ -244,7 +240,7 @@ On a `design_issue` verdict (build or review), do **not** retry the task:
 1. Copy the open entry the verdict's `di_id` names from the **worktree**
    `paths.design_issues` into the **host** `paths.design_issues` (append to its
    `issues:` list; create the file if absent) — `dispatch-fix` reads only the host file.
-2. `wf pipeline record-design-issue <di_id> --task <id> --severity <s> --fix_kind <k>`
+2. `wf pipeline record-design-issue <di_id> --task <id> --severity <s>`
    using that entry's values (parks the task).
 
 Continue the other tasks; the issue is resolved at the stage boundary (§2b).
@@ -259,9 +255,9 @@ envelope each agent gets, and the envelope is all it gets.
 Stop and surface to the user when:
 
 - `wf pipeline next` reports `terminal.halt` (dependency cycle, or all remaining work blocked).
-- A sub-agent HALTs, or `dispatch-fix` returns the human gate (exit 1).
+- A sub-agent HALTs, or `dispatch-fix` returns the slice non-convergence gate (exit 1).
 - A heavy-check repair exhausts `review.max_attempts` wf-stage-repair rounds without a green
   check or a resolving design issue.
 - No usable `paths.sprint` and §1a cannot get one: wf-swa raised no slice defect, `dispatch-fix`
-  gated the re-design to a human, or wf-sa escalated the rejection.
+  gated the re-design to a human, or wf-spec-fix escalated the rejection.
 - The pipeline-state file is corrupt, or config cannot be resolved.

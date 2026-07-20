@@ -1,6 +1,6 @@
 ---
 name: wf-sa
-description: Solution Architect — turns capabilities and learnings into a shaped change (component-level architecture decisions, component requirements, ADRs) handed to the Software Architect as a design-slice; in fix mode resolves one design issue — spec amendment or slice re-design.
+description: Solution Architect — turns capabilities and learnings into a shaped change (component-level architecture decisions, component requirements, ADRs) handed to the Software Architect as a design-slice.
 ---
 
 # wf-sa
@@ -21,12 +21,7 @@ that altitude is the capability, and a system requirement only restates it.
 
 ## Mode
 
-When your dispatch envelope names `mode: fix` (it carries a `di_id`), you resolve that
-**one** design issue: read `references/fix-mode.md` and follow it — it names which phases
-below apply to the issue's `fix_kind` — then record telemetry per Phase 7. You work
-autonomously: no human alignment, and Phase 4 never runs.
-
-Otherwise, when `paths.decision_prep` exists, read the `di_id` it is headed with and look that id
+When `paths.decision_prep` exists, read the `di_id` it is headed with and look that id
 up in `paths.design_issues`. **If it is absent there, or its `status` is not `open`, delete
 `paths.decision_prep` and run default mode** — the escalation it prepared is already settled, and
 resuming it puts a dead run's decisions to the human.
@@ -151,8 +146,8 @@ Then ground the new change:
    Skipping this means designing from the brief's one-liners alone. The only exemption
    is scope that is genuinely greenfield — it introduces only new components, with
    nothing existing to drill; state which items you exempted and why.
-5. **Read `paths.design_issues` before Phase 2.** If it holds an entry with `fix_kind:
-   slice_defect` and `status: open`, `paths.design_slice` was rejected as undecomposable and you
+5. **Read `paths.design_issues` before Phase 2.** If it holds an entry with `scope: slice`
+   and `status: open`, `paths.design_slice` was rejected as undecomposable and you
    are re-cutting it: read that entry's `blockers[]` — each names what must be decided or
    minted — and its `working_notes[]`, and design so every blocker is answered. Re-deriving
    the slice from scratch reproduces the rejection it already found. Phase 6 step 3 closes
@@ -407,9 +402,9 @@ The judgement already happened; this is capture.
    ratified; return to Phase 4 and close it, never edit the marker to silence the gate.
    Point at the backlog/brief/drill-cache by path; restate no structure.
    Once the gate passes, if you designed against a design issue — one Phase 1's
-   `paths.design_issues` gate found, one `paths.decision_prep` named, or the `di_id` a fix envelope
-   carried — **set that entry's `status: resolved` in `paths.design_issues`**: this re-cut slice
-   is its resolution, and left open it re-routes a defect you have already fixed.
+   `paths.design_issues` gate found or one `paths.decision_prep` named — **set that entry's
+   `status: resolved` in `paths.design_issues`**: this re-cut slice is its resolution, and
+   left open it re-routes a defect you have already fixed.
 4. **Confirm before commit.** Present a brief summary of the decisions and ADRs the alignment
    settled, reopen `paths.design_view`, and ask for the go-ahead to commit. If the human declines,
    or the environment forbids committing (sandbox, CI, detached-HEAD or read-only worktree),

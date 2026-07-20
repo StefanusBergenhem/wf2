@@ -62,7 +62,7 @@ entry (statement + its driver as `serves`), the task-level `serves` union, the
 hand and never paraphrase a statement — hand-written copies drift, and
 `wf sprint check` fails a sprint the materializer has not filled.
 
-One exception: a fix-mode follow-up whose `covers` names a requirement **outside
+One exception: a follow-up task whose `covers` names a requirement **outside
 the slice** (a defect in code shipped by an earlier sprint) carries its
 `{id, statement, serves}` entry verbatim from the task that built it; the
 materializer keeps a carried entry the slice cannot supply.

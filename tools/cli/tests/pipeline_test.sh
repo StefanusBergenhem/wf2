@@ -285,6 +285,14 @@ UDS2="$(wf "$PROJ_M" pipeline unresolved-design-issues --format json)"
 [ "$(jget "$UDS2" "any(i['di_id']=='DI-STAGE' for i in d['issues'])")" = "False" ] \
     && ok "task-less DI resolves cleanly" || bad "task-less DI resolve" "$UDS2"
 
+# Build/review/stage-repair raise a BARE issue — no --fix_kind. wf-spec-fix classifies it
+# and writes the kind back to the host artifact; record-design-issue must not require it.
+wf "$PROJ_M" pipeline record-design-issue DI-BARE --task T4 --severity high >/dev/null 2>&1 \
+    && ok "record-design-issue accepts a bare issue (no --fix_kind)" || bad "bare DI record" "requires --fix_kind"
+UDB="$(wf "$PROJ_M" pipeline unresolved-design-issues --format json)"
+[ "$(jget "$UDB" "any(i['di_id']=='DI-BARE' for i in d['issues'])")" = "True" ] \
+    && ok "a bare issue surfaces as unresolved" || bad "bare DI unresolved" "$UDB"
+
 # reclaim-stale flips an orphan slot back to pending
 PROJ_R="$(echo "$DIAMOND" | new_proj)"
 seed_state "$PROJ_R" <<'YAML'

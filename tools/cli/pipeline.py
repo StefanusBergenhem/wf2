@@ -574,7 +574,9 @@ def _record_design_issue(rest):
     # entry is exactly the synthetic-task trap a task-less DI exists to avoid.
     p.add_argument("--task", default=None)
     p.add_argument("--severity", required=True)
-    p.add_argument("--fix_kind", required=True)
+    # Build/review/stage-repair raise a BARE issue — no fix_kind. wf-spec-fix classifies it
+    # and writes the kind back to the host artifact; this run-state twin only tracks status.
+    p.add_argument("--fix_kind", default=None)
     args = p.parse_args(rest)
 
     doc = _load_state(args)
@@ -853,6 +855,12 @@ def _complete_sprint(rest):
             dip = common.resolve_path(args.config, "design_issues", None)
             if dip.exists():
                 archived["design_issues"] = str(archive.snapshot(root, sprint_id, dip, move=True))
+        # The spec-fix decision report is per-sprint working state — folded into the PR body
+        # at ship, then drained here so it does not carry into the next sprint's report.
+        if paths.get("spec_decisions"):
+            sdp = common.resolve_path(args.config, "spec_decisions", None)
+            if sdp.exists():
+                archived["spec_decisions"] = str(archive.snapshot(root, sprint_id, sdp, move=True))
         if paths.get("design_backlog"):
             bp = common.resolve_path(args.config, "design_backlog", None)
             if bp.exists():
@@ -863,10 +871,11 @@ def _complete_sprint(rest):
         # no archive configured — clear the active working-set slots
         if sprint_path.exists():
             sprint_path.unlink()
-        if paths.get("design_issues"):
-            dip = common.resolve_path(args.config, "design_issues", None)
-            if dip.exists():
-                dip.unlink()
+        for key in ("design_issues", "spec_decisions"):
+            if paths.get(key):
+                p = common.resolve_path(args.config, key, None)
+                if p.exists():
+                    p.unlink()
 
     _save_state(args, {"current_phase": "idle"})
     common.emit({

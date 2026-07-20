@@ -68,6 +68,9 @@ archives and drains the sprint's working set into `<paths.archive>/<sprint_id>/`
 resets the run state; committing those snapshots before the push carries them into the PR
 instead of stranding them as an uncommitted, un-pushed dirty tree:
 
+Capture the spec-fix decision report **before** `complete-sprint` drains it: read
+`paths.spec_decisions` if present — its blocks go in the PR body under **Spec decisions**.
+
 ```
 wf pipeline complete-sprint
 git add -A -- <paths.archive>
@@ -76,7 +79,9 @@ git push -u origin <sprint-branch>
 gh pr create --base <base> --head <sprint-branch> --title "<sprint summary>" --body "<body>"
 ```
 
-The PR body lists completed tasks, any escalated/blocked tasks, and design issues.
+The PR body lists completed tasks, any escalated/blocked tasks, design issues, and — under
+**Spec decisions** — the `paths.spec_decisions` blocks captured above, so the human reviews
+every autonomous spec fix (and any shipped requirement it superseded) alongside the diff.
 
 `complete-sprint` resets the run state to `idle`, so it is the point of no return: if the
 push or PR then fails (auth, remote, conflict), the sprint is already closed locally —

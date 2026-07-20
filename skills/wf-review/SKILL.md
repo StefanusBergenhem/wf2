@@ -108,12 +108,11 @@ orchestrator owns the attempt cap — you do not count attempts.
 
 ### Design issue (the defect is not this build's to fix)
 When the build faithfully implements a contract that is itself wrong — an AC contradicts
-another or is unbuildable as written — write `paths.design_issues` from
-`assets/design_issues.yaml.tmpl` with `fix_kind: contract_amendment`; when the failure
-traces to a defect in **already-merged code** (a dependency task's work — not this diff,
-not the contract), use `fix_kind: component_defect`. Never any other kind — you are a
-code-layer agent; you never judge the spec layer. Do not approve. The return inspector
-reads the open entry and routes it to the fixer.
+another or is unbuildable as written — or the failure traces to a defect in **already-merged
+code** (a dependency task's work, not this diff, not the contract), write `paths.design_issues`
+from `assets/design_issues.yaml.tmpl`: one open entry with a `summary` precise enough to
+classify from. Do not classify the fix and do not approve — wf-spec-fix classifies and resolves
+it. The return inspector reads the open entry and routes it.
 
 ## Halt conditions
 

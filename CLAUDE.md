@@ -162,6 +162,11 @@ real run proves its absence hurt).
   leaving it as a resolved tombstone. The rationale survives in the commit and the code; a
   lingering "done" candidate is exactly the kind of stored-what-code-reports the governor
   forbids.
+- **The agent keeps `doc/CANDIDATES.md` current.** When a change lands that makes an entry
+  stale, update it in the same pass; when it resolves one, delete it. **Track recurrence:**
+  when something you already parked surfaces again, note the repeat on its entry, and once it
+  has recurred enough to be worth acting on, say so and recommend promoting it. You surface and
+  recommend; the user prioritizes and decides when to act.
 
 ## Pilot Project - DEMS
 

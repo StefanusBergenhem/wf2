@@ -102,15 +102,10 @@ commented-out code, no suppression directive.
 If the blocker is **not your own code** — an AC contradicts the source, a requirement is
 self-inconsistent, the contract asks for something the source makes impossible, or an AC
 fails because **already-merged code** (a dependency task's work, not this task's diff) is
-defective — do not retry or work around it. Write
-`paths.design_issues` from `assets/design_issues.yaml.tmpl`:
-
-- `fix_kind: component_defect` when the defect lives in already-merged code;
-  `contract_amendment` otherwise — never anything else. You are a code-layer agent; you
-  never judge the spec layer. A wrong requirement upstream surfaces when the fixer it
-  routes to escalates.
-- one open entry, `task_id` your task, a `summary` of what is unbuildable (for a
-  component defect: which merged behaviour violates which requirement).
+defective — do not retry or work around it. Write `paths.design_issues` from
+`assets/design_issues.yaml.tmpl`: one open entry, `task_id` your task, and a `summary` of what
+is unbuildable and why — when the defect is in already-merged code, name which merged behaviour
+violates which requirement.
 
 Remove any stale `paths.review_ready`, then HALT and report. The return inspector reads
 the open entry and parks the task — you never go on to review.
