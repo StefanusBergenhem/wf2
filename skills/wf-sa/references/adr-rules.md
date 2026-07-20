@@ -87,7 +87,7 @@ ADRs are **immutable once accepted** — supersede, don't edit.
 ## governs_components
 
 Each ADR lists the brief-named components it shapes. This is a one-way pointer: it
-lets the Software Architect find the ADRs governing a component it is about to touch
+lets any role about to touch a component find the ADRs governing it
 (grep the ADR set by component name). There is no durable reverse index — the
 structure record is discover's, and ADRs point *into* it, never the other way.
 When a component is renamed or removed, supersede or update the ADRs that named it.

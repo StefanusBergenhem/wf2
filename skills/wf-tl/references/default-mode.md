@@ -1,4 +1,4 @@
-# wf-swa — default mode
+# wf-tl — default mode
 
 Build the sprint from the design slice: author the acceptance criteria that make each slice
 requirement testable, then decompose them into a per-task dependency graph in `paths.sprint`. The

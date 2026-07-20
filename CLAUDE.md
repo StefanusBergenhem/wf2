@@ -94,7 +94,7 @@ real run proves its absence hurt).
   skill or agent must change what the executing agent *does*. The agent reads only
   that file — so a line it cannot act on is pure context cost. Cut: architecture
   facts ("component X depends on Y"), rationale ("this keeps context lean"), and
-  caller/consumer framing ("a planning role dispatched you", "the SwA consumes
+  caller/consumer framing ("a planning role dispatched you", "the TL consumes
   this"). The test: *would the agent behave differently if this line were absent?*
   No → it is authoring-context that belongs here or in the design docs, not in the
   file. The recurring leak is writing with the whole system in mind and letting that
@@ -102,7 +102,7 @@ real run proves its absence hurt).
 - **Direct address.** Skill bodies and references are read *by* the executing agent
   — write them in the imperative / second person ("Load X", "you decide"). Refer to
   a role in the third person only when it is a genuinely *different* agent (the
-  downstream build phase, the Software Architect). `/skill-builder`'s "third person"
+  downstream build phase, the Tech Lead). `/skill-builder`'s "third person"
   rule governs the **description only** — do not apply it to the body.
 - **Loading a shared skill.** A wf skill or agent that needs another skill's content
   (e.g. `wf-basics`) instructs a direct file-`Read` of its `SKILL.md` — *not* the

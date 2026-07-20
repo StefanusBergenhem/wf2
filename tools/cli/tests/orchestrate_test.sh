@@ -119,7 +119,7 @@ git -C "$R" -c core.hooksPath=/dev/null log --name-only -1 --pretty=format: | gr
 
 # ── dispatch-fix ─────────────────────────────────────────────────────────────
 # Every design issue routes to the single spec fixer, wf-spec-fix. Build/review/stage-repair
-# raise a BARE issue (no fix_kind); wf-swa tags a preparing-phase slice issue `scope: slice`.
+# raise a BARE issue (no fix_kind); wf-tl tags a preparing-phase slice issue `scope: slice`.
 
 mk_di() {  # mk_di [extra-flow-fields] → project dir; DI-1 is a bare running-stage issue
     local p; p="$(mktemp -d)"; mkdir -p "$p/.wf/transient"
@@ -147,7 +147,7 @@ P="$(mk_di "fix_kind: spec_amendment")"
 [ "$(jget "$(wf orchestrate dispatch-fix DI-1 --config "$P/.wf/config.yaml")" "d['subagent_type']")" = "wf-spec-fix" ] \
     && ok "dispatch-fix: a leftover fix_kind does not change the route" || bad "df fixkind-ignored" ""
 
-# A slice issue wf-swa raises in `preparing` carries scope: slice — no task, no sprint.
+# A slice issue wf-tl raises in `preparing` carries scope: slice — no task, no sprint.
 # Routes to wf-spec-fix autonomously, but only for a bounded number of re-cut rounds.
 
 mk_slice_di() {  # mk_slice_di <how-many-rounds> → prints project dir; the LAST is open

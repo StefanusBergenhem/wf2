@@ -83,8 +83,8 @@ When a HALT fires, the report MUST contain:
    or the contract field that contradicts reality. Citations, not narrative.
 3. **The artifact you wrote** — most halts produce one (`design_issues`, `feedback`).
    Name the file and summarize its contents.
-4. **What's safe to do next** — re-dispatch with an amended contract / route to `wf-swa`
-   fix-mode / escalate to human. Match your role skill's halt protocol; do not invent states.
+4. **What's safe to do next** — re-dispatch with an amended contract / route the design
+   issue to `wf-spec-fix` / escalate to human. Match your role skill's halt protocol; do not invent states.
 
 A halt report missing any field is incomplete — the orchestrator may re-dispatch you to
 expand it before routing.

@@ -57,13 +57,13 @@ Then read `wf pipeline current-phase` and resume from where it points:
 1. **Gate `paths.sprint`** before proceeding — presence is never the verdict. Route on the
    first case that matches:
    - `paths.design_issues` holds an `open` entry with `scope: slice` → §1a.
-     Never dispatch `wf-swa` against a slice already rejected — it reproduces the same
+     Never dispatch `wf-tl` against a slice already rejected — it reproduces the same
      rejection and burns a re-design round.
    - `paths.sprint` present and `python3 <paths.tools>/cli/wf sprint check` reports
      `verdict: pass` (exit 0) → step 2.
-   - otherwise → dispatch the `wf-swa` agent with the **Preparing envelope** (DISPATCH.md)
+   - otherwise → dispatch the `wf-tl` agent with the **Preparing envelope** (DISPATCH.md)
      to build the sprint from the design slice — it overwrites an unusable `paths.sprint` —
-     then re-run this step **once**, dispatching no second `wf-swa`: `verdict: pass` →
+     then re-run this step **once**, dispatching no second `wf-tl`: `verdict: pass` →
      step 2; anything else → §1a.
 2. **Ensure the sprint branch** — see [GIT_OPERATIONS.md](assets/GIT_OPERATIONS.md) § Sprint branch.
 3. `wf pipeline compute-stages` (idempotent; HALTs on a dependency cycle).
@@ -72,10 +72,10 @@ Then read `wf pipeline current-phase` and resume from where it points:
 #### 1a — A rejected slice
 
 Read `paths.design_issues`. No `open` entry with `scope: slice` → **HALT and
-report** that wf-swa produced no usable sprint and raised no slice defect; stop.
+report** that wf-tl produced no usable sprint and raised no slice defect; stop.
 
 Otherwise take the **highest-numbered** such entry. **Gate: delete `paths.sprint` before you
-route it** — wf-swa decomposed it from the rejected cut. Skip the delete and it survives
+route it** — wf-tl decomposed it from the rejected cut. Skip the delete and it survives
 the re-cut and still passes `wf sprint check`, which compares ids, not statements — the
 build then ships the old requirements. Then, for that entry's `id`:
 
@@ -258,6 +258,6 @@ Stop and surface to the user when:
 - A sub-agent HALTs, or `dispatch-fix` returns the slice non-convergence gate (exit 1).
 - A heavy-check repair exhausts `review.max_attempts` wf-stage-repair rounds without a green
   check or a resolving design issue.
-- No usable `paths.sprint` and §1a cannot get one: wf-swa raised no slice defect, `dispatch-fix`
+- No usable `paths.sprint` and §1a cannot get one: wf-tl raised no slice defect, `dispatch-fix`
   gated the re-design to a human, or wf-spec-fix escalated the rejection.
 - The pipeline-state file is corrupt, or config cannot be resolved.

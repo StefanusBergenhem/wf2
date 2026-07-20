@@ -564,7 +564,7 @@ def _sweep_transients(rest):
 # ===========================================================================
 
 # Every design issue raised during a run routes to the single spec fixer, wf-spec-fix:
-# a bare issue from build/review/stage-repair, or a slice-scoped one wf-swa raises in
+# a bare issue from build/review/stage-repair, or a slice-scoped one wf-tl raises in
 # `preparing` when it cannot decompose the slice. wf-spec-fix classifies it and resolves it
 # across the design layer — amend the contract, author a follow-up task, amend a
 # requirement/ADR, or re-cut the slice — and halts to a human only when the driving
@@ -668,7 +668,7 @@ def _dispatch_fix(rest):
         "di_artifact": relpath(di_path),
     }
     # Name the sprint only when there is one to read: a slice issue is raised in
-    # `preparing`, where wf-swa may have halted before ever writing it.
+    # `preparing`, where wf-tl may have halted before ever writing it.
     if sprint_path.exists():
         envelope["sprint_artifact"] = relpath(sprint_path)
 

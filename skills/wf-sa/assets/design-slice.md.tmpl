@@ -1,5 +1,5 @@
 <!--
-  DESIGN-SLICE — wf-sa → wf-swa handover for ONE buildable increment. TRANSIENT.
+  DESIGN-SLICE — wf-sa → wf-tl handover for ONE buildable increment. TRANSIENT.
   wf-sa cuts it from the committed design backlog; retained through the build and drained
   at sprint close. Gitignored, never durable, never read across cuts — the backlog
   (committed) is what persists. Reference the brief and drill-cache by path — do NOT
@@ -17,7 +17,7 @@
 
 <!-- The increment's requirements, copied from the backlog: EARS-light, each owned by ONE
      component, tracing to a capability or learning. Ids are the backlog's REPO-UNIQUE ids
-     (REQ-<n>). No acceptance criteria here — the Software Architect writes those. -->
+     (REQ-<n>). No acceptance criteria here — the Tech Lead writes those. -->
 
 - **REQ-12** — <EARS statement>  *(owner: <component> · CAP-NNN)*
 - **REQ-13** — <EARS statement>  *(owner: <component> · L-NNN)*
@@ -25,7 +25,7 @@
 
 ## System test cases
 
-<!-- The end-to-end behaviour(s) this slice delivers — YOU write these; wf-swa plans each
+<!-- The end-to-end behaviour(s) this slice delivers — YOU write these; wf-tl plans each
      into the sprint as its own e2e task. Each is a Gherkin-light, black-box scenario that
      proves the assembled path (no component-seam mocks) and COVERS A CAPABILITY (never a
      component requirement). Ids are repo-unique SYS-TC-<n> from their own lane. Omit the
@@ -40,7 +40,7 @@
 ## Supersedes
 
 <!-- Shipped requirements this slice invalidates — each ratified by the human at
-     alignment before it may appear here. wf-swa folds each superseded id's proving
+     alignment before it may appear here. wf-tl folds each superseded id's proving
      test(s) into the successor's task (or a dedicated removal task when there is no
      successor): a superseded tag must not survive the sprint. Omit the section when
      nothing shipped is invalidated. -->
@@ -60,7 +60,7 @@
 
 <!-- For each NEW component and each widened shared seam this slice introduces: the
      concrete shape — signature / struct / endpoint request+response — agreed here,
-     because no source exists yet for wf-swa or the build to read it from. Behaviour
+     because no source exists yet for wf-tl or the build to read it from. Behaviour
      lives in the requirements; only the shape lives here. Omit the section when the
      slice touches existing interfaces only. -->
 
@@ -99,7 +99,7 @@
 
 <!-- From the Phase 5 soundness walk: one line per design heuristic
      (references/design-heuristics.md) — pass with its justification, or the conflict found
-     and how it was resolved. Lets wf-swa and a later reviewer audit the gate. -->
+     and how it was resolved. -->
 
 - **Boundary & responsibility (SRP):** <pass + why, or conflict + resolution>
 - **Ownership:** <…>
@@ -109,7 +109,7 @@
 - **Allocation completeness:** <…>
 - **Move discipline:** <…>
 
-## Risks for the Software Architect
+## Risks for the Tech Lead
 
 - <anything to watch when decomposing — a fragile seam, an ordering constraint,
   an external dependency. Omit if none.>

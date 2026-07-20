@@ -36,7 +36,7 @@ harness's agent-definition schema and, where it differs, guard the frontmatter w
 session log, distil `repo_observation` → `paths.learnings` (project learnings wf-sa
 reads as drivers) and `wf_friction` → `paths.wf_learnings` (toolkit friction), dedup by
 the `sources` provenance set, create-only `open` entries. It runs against the telemetry
-PO/SA/SWA/drill already write — no orchestration needed.
+PO/SA/TL/drill already write — no orchestration needed.
 
 **Built since (2026-06-22):** the sprint-execution analysis now lands as **cross-task pattern
 detection** — `wf-retrospective` reads `pipeline_state` (recurring rejections, design-issue
@@ -146,7 +146,7 @@ integration shape — the contract pinned it.
 interface-with-DbC declaration per component (wf1 carried this in the durable DESIGN —
 which wf2 killed). In wf2 the interface is re-derived (discover) or scouted (wf-drill), so
 the verbatim-quote would be sourced differently. Premature until the task-contract authoring
-(wf-swa → build) is the actual bottleneck and the interface source is settled.
+(wf-tl → build) is the actual bottleneck and the interface source is settled.
 
 **Update 2026-07-09:** the **new/widened-seam half shipped** — the design-slice carries
 an `## Interface contracts` section (SA-authored, for components/seams with no source to
@@ -169,7 +169,7 @@ sourced from discover/drill rather than a durable DESIGN.
 **Context:** the drain-pipeline model has wf-sa cut a design-slice from the committed design
 backlog, and remove built requirements from the backlog when reconcile confirms them. The
 current model assumes the flow is **human-controlled and strictly sequential across roles**
-(SA → SWA → build, one increment at a time), so nothing marks which backlog entries are
+(SA → TL → build, one increment at a time), so nothing marks which backlog entries are
 already cut into a live slice/sprint and *building*. wf-sa's "don't re-cut an in-flight
 entry" is enforced only by the operator running one increment at a time.
 
@@ -218,12 +218,12 @@ instead of the host capability.
 **Date:** 2026-07-09
 **Context:** dogfood run 1 (dems): the SA folded `cmd/server` route+adapter wiring into
 **each** endpoint task's acceptance criteria. Every handler task edited the same ~600-line
-composition root, so the SWA serialized four otherwise-parallel tasks (T13→T14→T15→T16) to
+composition root, so the TL serialized four otherwise-parallel tasks (T13→T14→T15→T16) to
 avoid worktree-merge conflicts — defeating the worktree parallelism the build stage exists
 for. Derived, not directly reported: the surface observation was a `repo_observation`, the
 lever is the SA's decomposition pattern.
 
-**Likely shape when built:** an SA design-heuristic (and/or a wf-swa decomposition note):
+**Likely shape when built:** an SA design-heuristic (and/or a wf-tl decomposition note):
 when many parallel tasks route through one shared file, factor the shared composition root
 into its own task (or stub the registration seam) so leaf tasks stay independent — the
 `files_to_touch` sets partition.
@@ -338,7 +338,7 @@ wf-init from repo evidence like the other commands — not a dir-copy heuristic.
 
 ---
 
-## C26 — wf-swa: SYS-TC `depends_on` resolution for a learnings-driven slice
+## C26 — wf-tl: SYS-TC `depends_on` resolution for a learnings-driven slice
 
 **Date:** 2026-07-12
 **Context:** dems `sprint-20260711-typed-edge-hardening` (wf-learning L-013). `default-mode.md`
@@ -346,7 +346,7 @@ Phase 3 / `task-contract.md` resolve a SYS-TC's `depends_on` as "the tasks build
 requirements **driven by that capability**" — a CAP → REQ link read off the slice. A slice
 with **no new capabilities** (its requirements serve `L-NNN`, not `CAP-NNN`) has no such link,
 so a SYS-TC that `Covers CAP-NNN` cannot be mechanically resolved to its building tasks. The
-SwA fell back to mapping by "the tasks that assemble the path the case exercises."
+TL fell back to mapping by "the tasks that assemble the path the case exercises."
 
 **Observation:** the CAP-driver resolution rule assumes every slice introduces capabilities.
 A learnings-driven slice (bug-hardening, refactors) breaks that assumption. Either the SA must
@@ -354,7 +354,7 @@ attach a driver the SYS-TC can resolve against, or `default-mode.md` needs an ex
 "no-capability-driver" resolution rule (map the case to the tasks that build the path it
 exercises).
 
-**Trigger to act:** a second learnings-driven slice reaches the SwA and the SYS-TC
+**Trigger to act:** a second learnings-driven slice reaches the TL and the SYS-TC
 `depends_on` is again resolved by hand. Then add the fallback rule to `default-mode.md`
 (and/or have wf-sa carry a resolvable driver on a learnings-only SYS-TC).
 
@@ -427,22 +427,22 @@ heavy check after it merges.
 
 **Date:** 2026-07-14
 **Context:** two dems `/wf-orchestrate` runs on 2026-07-14 (111 minutes apart) both halted in
-`preparing` with wf-swa rejecting the slice. The second rejection was on `REQ-141` — a
+`preparing` with wf-tl rejecting the slice. The second rejection was on `REQ-141` — a
 requirement wf-sa *minted* during the 92-minute interactive re-design that round 1 triggered.
 Both rounds failed on the same class of defect: requirement ownership vs. the real atomic edit
-set. wf-swa flagged the repeat itself ("same class as the previous cut's B3/B4").
+set. wf-tl flagged the repeat itself ("same class as the previous cut's B3/B4").
 
 The order of operations is the cause: wf-sa Phase 4 is the interactive core where the human
 ratifies, but decomposition — the only step that empirically tests whether the design is
-buildable — runs in wf-swa on the *next* orchestrate run, after ratification. So the human
+buildable — runs in wf-tl on the *next* orchestrate run, after ratification. So the human
 ratifies buildability they cannot assess, and the SA's only real feedback arrives one lap later.
 
-**Observation:** dispatch wf-swa read-only against the draft slice inside Phase 4, before the
+**Observation:** dispatch wf-tl read-only against the draft slice inside Phase 4, before the
 human ratifies — "can every requirement be owned by one component, and is each atomic edit set
 inside it?" A ~6–17 minute autonomous check gating a 92-minute interactive session.
 
 **Why it is deferred rather than done:** the slice-rejection route (`scope: slice` → wf-spec-fix
-re-cut → re-dispatch wf-swa, bounded at `_MAX_REDESIGN_ROUNDS`) now makes each lap autonomous and
+re-cut → re-dispatch wf-tl, bounded at `_MAX_REDESIGN_ROUNDS`) now makes each lap autonomous and
 cheap, which was the same note's cheaper mitigation. The human-session cost the dry-run exists to
 protect only materializes on an ADR / unratified-assumption / capability escalation. Part of the
 observed pain also came from the boundaries-are-law vs. atomic-edit-set collision, which is now
@@ -460,15 +460,15 @@ and the feedback belongs before the ratification gate, not after.
 **Date:** 2026-07-14
 **Context:** `wf-orchestrate` §1a now resolves a rejected design slice autonomously —
 `dispatch-fix` routes the `scope: slice` DI to wf-spec-fix, which re-cuts the slice, and
-the orchestrator re-dispatches wf-swa against it, bounded by `_MAX_REDESIGN_ROUNDS`. The live
+the orchestrator re-dispatches wf-tl against it, bounded by `_MAX_REDESIGN_ROUNDS`. The live
 driver (`_run`, preparing) only *reports* the rejection: `_no_sprint_reason` reads the open
 slice issue and escalates naming the DI, the blocker count, and `/wf-sa`. It does not run
 dispatch-fix, does not dispatch the fixer, and does not re-loop.
 
 **Observation:** bring the driver to parity — the same dispatch-fix → wf-spec-fix → re-dispatch
-wf-swa loop, reusing the existing `_resolve_design_issues` machinery for the route and
+wf-tl loop, reusing the existing `_resolve_design_issues` machinery for the route and
 `dispatch-fix`'s exit 1 for the round bound. Unlike C31's stage-fix case there is no
-awkward re-entry: preparing is a straight loop back to the wf-swa dispatch, with no DAG node
+awkward re-entry: preparing is a straight loop back to the wf-tl dispatch, with no DAG node
 to place.
 
 **Trigger to act:** the first autonomous (SDK-driver) run that hits a slice rejection. Both
@@ -485,7 +485,7 @@ path did before §1a existed. Cf. **C31** (same driver/skill parity class, one p
 this design invalidates or retires) to be ratified by the human at Phase 4, and
 `assets/design-slice.md.tmpl`'s Supersedes section says as much — "alignment before it may
 appear here". Nothing enforces it. `wf slice check` (`tools/cli/slice.py`) greps for
-`UNCONFIRMED` assumption lines and nothing else, so an unratified supersession reaches wf-swa
+`UNCONFIRMED` assumption lines and nothing else, so an unratified supersession reaches wf-tl
 silently. Assumptions have a marker and a gate; supersessions have neither.
 
 **Observation:** give the Supersedes section a ratification marker of its own and fail
@@ -568,7 +568,7 @@ every pass found a critical defect**. All of them lived in **skill prose**, none
 test, and 284 tests were green throughout — including while the feature was dead code on its main
 path. The Python was clean from pass 3 onward; its tests have teeth (mutation-verified). The prose
 had eleven files of load-bearing instructions verified only by careful reading, and the defect rate
-never dropped. Representative kills: §1a unreachable because wf-swa leaves a failed `$SPRINT` on
+never dropped. Representative kills: §1a unreachable because wf-tl leaves a failed `$SPRINT` on
 disk; the drain ordered so it never drains; fix mode's "commit nothing" colliding with the sprint
 branch's clean-tree gate (the loop's *success* path); a skill claiming `wf slice check` closes a
 design issue, which it has never done.
@@ -605,7 +605,7 @@ skills themselves.
 ## C38 — The contract-cut layer has no cut-time completeness check, so its defects recur
 
 **Date:** 2026-07-20
-**Context:** the SA/SwA authoring layer that cuts task contracts and the slice's interface
+**Context:** the SA/TL authoring layer that cuts task contracts and the slice's interface
 contracts is the most recurrent wf-toolkit friction family: a contract is cut that is incomplete,
 internally contradictory, or unfaithful to the source, and the build agent recovers it a
 review-reject or build-halt cycle late. The *structural* members of the family have been
@@ -626,7 +626,7 @@ to confirm a contract's claims about existing code are true:
 **Analysis:** `wf sprint check` is structural only — id resolution, `depends_on` edges,
 `files_to_touch` overlap — and cannot decide any of the above. The type-reconciliation and
 per-branch-test members are mechanically decidable against artifacts on disk and belong in
-`sprint check` / a wf-swa cut step. The source-claim members (L-036, L-044) need a drill-style
+`sprint check` / a wf-tl cut step. The source-claim members (L-036, L-044) need a drill-style
 source read — a judgement-assisted cut-time *reviewer* pass, not a linter, and that is the same
 unbuilt spec-layer reviewer C37's expensive half needs. The tell it is a real gap: the structural
 members were whack-a-moled one at a time (four shipped since this was first observed) while the

@@ -14,7 +14,7 @@ requirement, an acceptance criterion's traced requirement, or a component bounda
 
 The defective code is already merged, so no existing contract can honestly absorb the fix —
 author a **new task** that repairs the component, and gate the parked task behind it.
-**Load `{{WF_SKILLS_DIR}}/wf-swa/references/task-contract.md`** for the contract shape, then:
+**Load `{{WF_SKILLS_DIR}}/wf-tl/references/task-contract.md`** for the contract shape, then:
 
 1. Append one task to `$sprint_artifact` with a complete contract: the next unused id in the
    sprint's id scheme; `covers` naming the requirement id(s) the merged code violates — when a

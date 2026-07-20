@@ -1,4 +1,4 @@
-"""wf slice — mechanical checks over the design-slice (the SA→SWA handover).
+"""wf slice — mechanical checks over the design-slice (the SA→TL handover).
 
 ``slice check`` verifies the slice carries no assumption still marked UNCONFIRMED.
 It is the same finding the sprint gate reports as A3, surfaced earlier: the SA runs

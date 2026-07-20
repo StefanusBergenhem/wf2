@@ -432,12 +432,11 @@ def _transition(rest):
     return 0
 
 
-# Agent role → task state. Build is `building`; the design-issue fixers get their
-# own states; every other dispatch is a review pass (build → review → security-review
-# → …), all of which occupy a slot as `reviewing`.
+# Agent role → task state. Build is `building`; every other dispatch is a review
+# pass (build → review → security-review → …), all of which occupy a slot as
+# `reviewing`.
 _DISPATCH_STATE = {
     "wf-build": "building", "build": "building",
-    "wf-swa": "fix_swa", "wf-sa": "fix_sa",
     "wf-retrospective": "retrospective",
 }
 

@@ -26,9 +26,9 @@ sprint_branch: <name>         # review's diff base; the worktree cannot read hos
 pass:          <agent-name>   # which pass this is
 ```
 
-## Preparing — `wf-swa` (build the sprint)
+## Preparing — `wf-tl` (build the sprint)
 
-No envelope fields — wf-swa reads the design-slice from `.wf/config.yaml`.
+No envelope fields — wf-tl reads the design-slice from `.wf/config.yaml`.
 
 ## Fix — `wf-spec-fix` (from `dispatch-fix`)
 

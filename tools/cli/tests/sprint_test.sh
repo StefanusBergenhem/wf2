@@ -60,7 +60,7 @@ if wf sprint task NOPE >/dev/null 2>&1; then bad "unknown task should fail" "exi
 # ---------------------------------------------------------------------------
 # wf sprint materialize — inline the slice's verbatim fields into the sprint
 # ---------------------------------------------------------------------------
-# The SwA authors THIN fields (covers ids, interface_contract_ref, system_tests
+# The TL authors THIN fields (covers ids, interface_contract_ref, system_tests
 # ids); materialize inlines the statements, per-requirement drivers, the serves
 # union, the interface-contract shapes, and the SYS-TC scenario — verbatim from
 # the slice, mechanically.

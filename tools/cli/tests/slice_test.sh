@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Tests for `wf slice check` — the mechanical gate over the design-slice itself:
-# no UNCONFIRMED assumption may leave the SA or enter the SWA.
+# no UNCONFIRMED assumption may leave the SA or enter the TL.
 # Run: bash tools/cli/tests/slice_test.sh   (exit 0 = all pass)
 # wf2-source-only — never rendered into an install target.
 set -uo pipefail

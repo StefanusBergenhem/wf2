@@ -11,7 +11,7 @@ Contents:
 A **system test case** is a capability-level, black-box scenario that proves a capability
 end-to-end by exercising the assembled path across components. There is no requirement
 above it — it answers directly to the capability. You write the human-readable scenario
-and give it a repo-unique `SYS-TC-<n>` id; wf-swa plans it as its own e2e task and the
+and give it a repo-unique `SYS-TC-<n>` id; wf-tl plans it as its own e2e task and the
 build writes the executable test tagged `[SYS-TC:SYS-TC-<n>]`, which `reconcile` harvests
 to confirm the capability is proven. It **covers capabilities**, never component
 requirements.

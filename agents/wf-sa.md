@@ -1,6 +1,6 @@
 ---
 name: wf-sa
-description: Solution Architect — shapes capabilities and learnings into component-level architecture, requirements, and ADRs, handed to the Software Architect as a design-slice.
+description: Solution Architect — shapes capabilities and learnings into component-level architecture, requirements, and ADRs, handed to the Tech Lead as a design-slice.
 tools: Read, Edit, Write, Bash, Grep, Glob
 model: opus
 ---

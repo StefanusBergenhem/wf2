@@ -14,7 +14,7 @@ component owns, tracing to the capability or learning that drove it. Give each a
 **repo-unique id** (`REQ-<n>`, monotonic over the whole repo, never reused) — a proving
 test tags it `[REQ:REQ-<n>]` and reconcile matches the tag to confirm it is built, so a
 design-local id would collide with a retired design's lingering tag. You write the
-requirement; the acceptance criteria that operationalize it are the Software Architect's.
+requirement; the acceptance criteria that operationalize it are the Tech Lead's.
 
 ## The five EARS forms
 
@@ -109,7 +109,7 @@ smell that fails it:
 - **C6 Feasible** — the owning component can do it within known constraints?
 - **C7 Verifiable** — worded so a test could demonstrate it? Smell: no observable
   outcome. A well-formed, observable statement is verifiable; you do not need the
-  acceptance criteria written to satisfy this — those are the Software Architect's.
+  acceptance criteria written to satisfy this — those are the Tech Lead's.
 - **C8 Correct** — states what the driver actually needs, not an adjacent guess?
 - **C9 Conforming** — uses one of the five EARS forms?
 

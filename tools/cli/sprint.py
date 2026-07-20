@@ -4,7 +4,7 @@
 build agent reads a focused contract rather than the whole sprint.
 
 ``sprint materialize`` inlines the slice's verbatim fields into the sprint: the
-SwA authors thin references (covers ids, interface_contract_ref, system_tests
+TL authors thin references (covers ids, interface_contract_ref, system_tests
 ids) and this fills in requirement statements, per-requirement drivers, the
 serves union, interface-contract shapes, and SYS-TC scenarios — mechanical
 copying stays out of the LLM's output budget. Idempotent; re-run after any
