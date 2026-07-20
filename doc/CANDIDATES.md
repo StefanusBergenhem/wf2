@@ -599,3 +599,41 @@ built any time `tools/cli/` is open. The role half needs a decision about whethe
 reviewer — cf. the standing rule that if SA output needs review, you introduce a reviewer role rather
 than bolting checks onto the next consumer. That rule was written about the slice; it applies to the
 skills themselves.
+
+---
+
+## C38 — The contract-cut layer has no cut-time completeness check, so its defects recur
+
+**Date:** 2026-07-20
+**Context:** the SA/SwA authoring layer that cuts task contracts and the slice's interface
+contracts is the most recurrent wf-toolkit friction family: a contract is cut that is incomplete,
+internally contradictory, or unfaithful to the source, and the build agent recovers it a
+review-reject or build-halt cycle late. The *structural* members of the family have been
+point-fixed one at a time as they recurred — the slice-interface-contradicts-source halt (L-025),
+the boundaries-vs-atomic-edit-set precedence and additive-method escape hatch (L-028), the
+split-owner wiring-defect guidance (L-034), and mechanical migration/codegen fan-out computed at
+cut by `wf impact` (L-035) have all shipped. What has **no** home is the residual class below.
+
+**The residual — cut-time faithfulness against source.** Nothing at cut reads the actual source
+to confirm a contract's claims about existing code are true:
+- a note asserting a wrong or unverified mechanism about existing runtime behaviour (L-036);
+- a seeding/fixture note that doesn't actually reach the mechanism its AC exercises (L-044);
+- `implementation_notes` *type* claims not reconciled against the landed types (the T19 half of
+  L-008 — the file-path half is the noisy `sprint check` C9 warn, cf. L-037/L-043);
+- (cheap outlier) a compound AC whose mandated tests prove only one branch of its own `check`
+  (L-050) — a pure linter, really the existing "one testable condition per AC" rule given teeth.
+
+**Analysis:** `wf sprint check` is structural only — id resolution, `depends_on` edges,
+`files_to_touch` overlap — and cannot decide any of the above. The type-reconciliation and
+per-branch-test members are mechanically decidable against artifacts on disk and belong in
+`sprint check` / a wf-swa cut step. The source-claim members (L-036, L-044) need a drill-style
+source read — a judgement-assisted cut-time *reviewer* pass, not a linter, and that is the same
+unbuilt spec-layer reviewer C37's expensive half needs. The tell it is a real gap: the structural
+members were whack-a-moled one at a time (four shipped since this was first observed) while the
+source-verifying members recur with nothing catching the class.
+
+**Trigger to act:** act when `tools/cli/sprint.py` is next open, for the two mechanical members
+(L-050 per-branch test; L-008 type-vs-landed reconciliation). The source-verifying members (L-036,
+L-044) fold into the spec-layer reviewer decision shared with **C37**. Cf. **C37** (skill prose —
+same shape, shares the reviewer half), **C32** (dry-run the decomposition before the human
+ratifies), **C13** (verbatim interface contract in the task contract).

@@ -167,6 +167,13 @@ real run proves its absence hurt).
   when something you already parked surfaces again, note the repeat on its entry, and once it
   has recurred enough to be worth acting on, say so and recommend promoting it. You surface and
   recommend; the user prioritizes and decides when to act.
+- **Fix it, drain it — same pass.** The delete-when-resolved rule above is not `CANDIDATES.md`-only;
+  it equally governs the pilot's wf-toolkit learnings (dems `.wf/wf-learnings.yaml`,
+  `paths.wf_learnings`). When a fix for an entry ships, remove that entry in the **same change** —
+  never leave it for a later sweep. A fixed-but-undrained learning is a false signal: it reads as
+  open friction and re-litigates settled work, and the accumulating file is itself the
+  stored-what-code-reports the governor forbids. The wf2 maintainer owns this drain (no wf role
+  reads `wf-learnings.yaml`); git history and `paths.archive` preserve the record.
 
 ## Pilot Project - DEMS
 
