@@ -61,6 +61,8 @@ def _git(root, *args, check=True):
 
 
 def _candidate(relpath):
+    if relpath.startswith(".wf/"):  # wf machinery is not project code (mirrors `wf impact`)
+        return False
     p = Path(relpath)
     return p.name in _AGENT_DOCS or p.suffix in _SOURCE_EXT
 

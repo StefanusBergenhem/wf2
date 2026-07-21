@@ -99,6 +99,10 @@ has() { jget "$1" "any(f['rule']=='$2' and f['file']=='$3' for f in d['findings'
 [ "$(jget "$OUT" "sum(1 for f in d['findings'] if f['rule']=='spec-narrative')")" = "1" ] \
   && ok "H3b: the [REQ:] tag line alone is not narrative" || bad "H3b tag exempt" "$OUT"
 [ "$(jget "$OUT" "any(f['file']=='gen.go' for f in d['findings'])")" = "False" ] && ok "generated file skipped" || bad "generated" "$OUT"
+mkdir -p "$PROJ/.wf/tools"; { echo "package p"; golines 45; } > "$PROJ/.wf/tools/machinery.go"
+OUT="$(wf hygiene check --format json)"
+[ "$(jget "$OUT" "any(f['file'].startswith('.wf/') for f in d['findings'])")" = "False" ] && ok ".wf/ machinery excluded from sweep" || bad ".wf excluded" "$OUT"
+rm -rf "$PROJ/.wf/tools"
 [ "$(has "$OUT" agents-md-length AGENTS.md)" = "True" ] && ok "AGENTS.md over cap flagged" || bad "agents cap" "$OUT"
 [ "$(has "$OUT" comment-ratio chatty.go)" = "True" ] && ok "H3c: comment-heavy file flagged" || bad "H3c" "$OUT"
 
