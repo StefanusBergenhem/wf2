@@ -159,10 +159,12 @@ Summarize what you found before shaping anything.
 
 **Load
 `references/design-heuristics.md`** and apply it as a self-check on every boundary,
-ownership, and dependency call. **Read the ADRs in `paths.adrs` whose `governs_components`
-names a component in scope** (grep the set by component name): a standing decision
-either binds your move or this change supersedes it — there is no third option where
-you quietly ignore it.
+ownership, and dependency call. **Read the `constraint:` line of every ADR in `paths.adrs` whose `governs_components`
+names a component in scope** (grep the set by component name; on an older ADR without
+the field, its `## Decision` sentence stands in): a standing constraint either binds
+your move or this change supersedes it — there is no third option where you quietly
+ignore it. Open an ADR's body only when your move might conflict with or supersede
+it — the constraint line is the operational content; the body is reasoning history.
 
 Shape the component architecture, deciding each call yourself:
 
@@ -375,6 +377,9 @@ The judgement already happened; this is capture.
 
 1. **Finalize the ADRs** drafted in Phase 2 — apply `references/adr-rules.md`'s
    threshold once more, write each survivor from `assets/adr.md.tmpl`, drop the rest.
+   For each survivor whose `constraint:` a script can check, add the lint/gate rule
+   and set `enforced_by:` per adr-rules' *Mechanize at acceptance* — in this same
+   change, never as follow-up work.
 2. **Record the design in the backlog.** Add a block to `paths.design_backlog` — but when this run
    re-cut against a design issue, **amend that design's existing block in place**: append a
    second block for the same drivers and the defective one's never-to-be-built ids linger
@@ -407,11 +412,12 @@ The judgement already happened; this is capture.
    or the environment forbids committing (sandbox, CI, detached-HEAD or read-only worktree),
    the durable files are already written (steps 1–2) — **report exactly what is left
    uncommitted and stop. A clean outcome, not a failure.**
-5. On approval, commit the **durable** files — the new/changed ADRs and the
-   `paths.design_backlog`. The design-slice is gitignored (transient) — nothing to commit for it.
+5. On approval, commit the **durable** files — the new/changed ADRs, the
+   `paths.design_backlog`, and any lint/gate rule step 1 added. The design-slice is
+   gitignored (transient) — nothing to commit for it.
    Stage explicit paths — never `git add .`:
    ```sh
-   git add <paths.adrs>/<new-or-changed ADRs> <paths.design_backlog>
+   git add <paths.adrs>/<new-or-changed ADRs> <paths.design_backlog> <lint/gate rules from step 1>
    git diff --cached --stat   # verify nothing unexpected is staged
    ```
 6. Glance at recent commit style (`git log --oneline -5`) and commit with a subject like

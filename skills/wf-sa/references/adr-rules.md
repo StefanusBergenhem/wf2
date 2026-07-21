@@ -8,6 +8,8 @@ for.
 Contents:
 - The three-condition threshold
 - ADR shape
+- The constraint line
+- Mechanize at acceptance
 - Status
 - governs_components
 - Anti-patterns
@@ -44,6 +46,8 @@ date: 2026-06-14
 title: <short noun-phrase>
 governs_components: [auth, gateway]   # brief-named components this ADR shapes
 traces_to: [CAP-003]                  # the capability, learning, or constraint that drove it
+constraint: "the repository layer must not import internal/compliance"
+enforced_by: "golangci-lint depguard: internal/repository deny internal/compliance"
 supersedes: null
 superseded_by: null
 ---
@@ -72,6 +76,32 @@ Body (all sections required):
 ## Reversibility
 <Rollback path with its cost, or the named sign-off authority.>
 ```
+
+## The constraint line
+
+`constraint:` is the ADR's binding residue: **one imperative clause stating the rule
+the decision imposes on the code** — what a change must or must not do. Downstream
+roles read *only this line* (the Tech Lead lifts it verbatim into a contract's
+`implementation_notes`; the next design round greps it for conflicts); the body is
+the reasoning record behind it. Write it so it works alone:
+
+- Imperative and testable-in-principle: *"the repository layer must not import
+  internal/compliance"*, not *"we chose clean layering"*.
+- One clause. A decision imposing two unrelated rules is usually two decisions.
+- Never a paraphrase of the title — the title names the choice, the constraint names
+  the obligation it creates.
+
+Keep the body under **~60 lines**; alternatives stay one paragraph each. Reasoning
+that outgrows that is a design document, not a decision record.
+
+## Mechanize at acceptance
+
+When the constraint is something a script can check — an import ban, a dependency
+direction, a naming or layout rule, a required file pairing — add the lint/gate rule
+to the project's tooling **in the same change that accepts the ADR**, and set
+`enforced_by:` to that rule's name. A mechanically enforceable constraint must never
+rely on future readers remembering it. `enforced_by: judgement` is only for
+constraints no script can decide (a semantic boundary, a modelling rule).
 
 ## Status
 

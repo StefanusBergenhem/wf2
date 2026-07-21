@@ -104,7 +104,9 @@ confirm it passes. A test you cannot make fail this way is vacuous — restructu
 ### Refactor
 
 With tests green: no dead code, no debug output, no `TODO`/`HACK`/`FIXME`, no
-commented-out code, no suppression directive.
+commented-out code, no suppression directive, no narrative comment blocks — a comment
+states a constraint the code cannot; spec context lives in the `[REQ:]`/`[SYS-TC:]`
+tag line, never in comment prose.
 
 ### Step 3b — Design issue (contract or merged code)
 

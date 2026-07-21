@@ -181,7 +181,8 @@ carrying the old method's consumers in that task's `files_to_touch`.
 A note is a pointer, never prose that re-explains the source:
 
 - a `file:line` reference (`the deletedEntitiesCTE exclusion, membership.go:41`),
-- an ADR id plus the one-clause constraint it imposes
+- an ADR id plus the one-clause constraint it imposes, lifted verbatim from the
+  ADR's `constraint:` frontmatter line — never opened and paraphrased from the body
   (`ADR-010: the repository must not import internal/compliance`),
 - the name of a pattern to follow and where it lives.
 
