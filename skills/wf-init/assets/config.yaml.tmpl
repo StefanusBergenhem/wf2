@@ -105,6 +105,18 @@ commands:
   preflight: ""        # per-task gate (lint + tests + build) — wf-init captures it from repo evidence at init; build runs it before every handoff.
   stage_check: ""      # heavier checks run only at a stage boundary (e2e / integration) — wf-init captures it at init; empty skips them.
 
+hygiene:
+  # `wf hygiene check` thresholds — the context-cost rules (file length bounds what a
+  # Read costs, function length what an edit window costs, comment discipline what every
+  # future reader pays). The build gate runs it in ratchet mode (--diff-base): only what
+  # a diff makes WORSE fails; pre-existing debt is reported for planning, never gated.
+  file_warn: 400          # source file lines: report above this
+  file_error: 800         # source file lines: a NEW file above this fails the build gate
+  func_error: 120         # Go function lines (TS/JS: delegate to eslint max-lines-per-function)
+  comment_block_max: 8    # contiguous full-line comment block cap
+  comment_ratio_warn: 0.25 # comment-lines / total-lines report threshold (files ≥ 50 lines)
+  agents_md_max: 200      # AGENTS.md / CLAUDE.md line cap — this file loads into every agent context
+
 impact:
   # Companion fan-out rules for `wf impact files` (the wf-tl files_to_touch
   # computation): when a changed or consumer file matches `when`, every file the

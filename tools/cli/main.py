@@ -9,6 +9,7 @@ from __future__ import annotations
 import sys
 
 import archive
+import hygiene
 import impact
 import orchestrate
 import pipeline
@@ -17,7 +18,7 @@ import sprint
 import telemetry
 
 REGISTRY: dict = {}
-for _mod in (pipeline, orchestrate, slice, sprint, telemetry, archive, impact):
+for _mod in (pipeline, orchestrate, slice, sprint, telemetry, archive, impact, hygiene):
     REGISTRY.update(getattr(_mod, "COMMANDS", {}))
 
 
