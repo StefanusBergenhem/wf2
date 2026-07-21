@@ -611,15 +611,20 @@ internally contradictory, or unfaithful to the source, and the build agent recov
 review-reject or build-halt cycle late. The *structural* members of the family have been
 point-fixed one at a time as they recurred — the slice-interface-contradicts-source halt (L-025),
 the boundaries-vs-atomic-edit-set precedence and additive-method escape hatch (L-028), the
-split-owner wiring-defect guidance (L-034), and mechanical migration/codegen fan-out computed at
-cut by `wf impact` (L-035) have all shipped. What has **no** home is the residual class below.
+split-owner wiring-defect guidance (L-034), mechanical migration/codegen fan-out computed at
+cut by `wf impact` (L-035), and the sibling-task pattern pointer (a bare "same pattern as T12"
+note banned; `dependency_commits` injected at extraction so the build reads the dep's merge diff
+— from the 2026-07-20 token-cost investigation, where that one note cost a build ~85KB of
+exploration) have all shipped. What has **no** home is the residual class below.
 
 **The residual — cut-time faithfulness against source.** Nothing at cut reads the actual source
 to confirm a contract's claims about existing code are true:
 - a note asserting a wrong or unverified mechanism about existing runtime behaviour (L-036);
 - a seeding/fixture note that doesn't actually reach the mechanism its AC exercises (L-044);
 - `implementation_notes` *type* claims not reconciled against the landed types (the T19 half of
-  L-008 — the file-path half is the noisy `sprint check` C9 warn, cf. L-037/L-043);
+  L-008 — the file-path half is the noisy `sprint check` C9 warn, cf. L-037/L-043; **recurred
+  2026-07-20**: T13's `interface_contract` names `domain.RuleConflict`, which does not exist —
+  the landed type is `domain.ConflictItem`);
 - (cheap outlier) a compound AC whose mandated tests prove only one branch of its own `check`
   (L-050) — a pure linter, really the existing "one testable condition per AC" rule given teeth.
 

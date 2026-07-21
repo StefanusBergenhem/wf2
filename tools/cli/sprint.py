@@ -65,6 +65,29 @@ def _serves_of(value):
     return value if isinstance(value, list) else [value]
 
 
+def _dependency_commits(config, entry):
+    """{dep task id: merge_commit} for the entry's already-merged depends_on tasks,
+    read from paths.pipeline_state — injected into the extracted contract so the build
+    agent recovers a dependency's pattern from its merge diff (`git show <sha>`) instead
+    of exploring the tree. Best-effort: a missing config key, absent state file, or
+    unmerged dep simply contributes nothing."""
+    deps = entry.get("depends_on") or []
+    if not deps:
+        return {}
+    rel = (common.config_doc(config).get("paths") or {}).get("pipeline_state")
+    if not rel:
+        return {}
+    state_path = (common.project_root(config) / rel).resolve()
+    if not state_path.exists():
+        return {}
+    states = (common.load_yaml(state_path) or {}).get("task_states") or {}
+    return {
+        d: states[d]["merge_commit"]
+        for d in deps
+        if isinstance(states.get(d), dict) and states[d].get("merge_commit")
+    }
+
+
 def _task(rest):
     """Emit (or --write) the contract for a single task from sprint.yaml. --write is an
     explicit path ARGUMENT used as-given (the orchestrator passes the worktree-resolved
@@ -81,6 +104,11 @@ def _task(rest):
     )
     if entry is None:
         common.die(f"task {args.task_id} not found in sprint")
+
+    dep_commits = _dependency_commits(args.config, entry)
+    if dep_commits:
+        entry = dict(entry)
+        entry["dependency_commits"] = dep_commits
 
     if args.write:
         import yaml as _yaml

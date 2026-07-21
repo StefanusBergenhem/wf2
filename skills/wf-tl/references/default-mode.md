@@ -68,8 +68,13 @@ owning them; the build stamps `[SYS-TC:SYS-TC-<n>]` in the e2e test.
 
 **Sizing.** Keep a task to roughly **≤ 5 files** and **≤ 250 lines** of change. A task
 larger than that hides gaps and costs the build/review cycle its leverage — split it.
-A task far smaller than that (a one-line change standing alone) usually belongs merged
-with an adjacent one; the per-task dispatch overhead is roughly fixed. Group work that
+The one exception is a **mechanical sweep** (a rename, a deletion, a signature change
+fanning out to its consumers) whose files must land in one atomic commit: keep it whole,
+and mark it in `implementation_notes` (`mechanical: <what makes it one commit>`) so
+`wf sprint check`'s C5 warning on it reads as an accepted risk, not an oversight. A task
+that needs judgement in more than 5 files is not that exception — split it. A task far
+smaller than that (a one-line change standing alone) usually belongs merged with an
+adjacent one; the per-task dispatch overhead is roughly fixed. Group work that
 cohesively belongs together.
 
 ## Phase 4 — Order into a dependency graph

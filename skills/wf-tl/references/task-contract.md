@@ -185,6 +185,14 @@ A note is a pointer, never prose that re-explains the source:
   (`ADR-010: the repository must not import internal/compliance`),
 - the name of a pattern to follow and where it lives.
 
+**A pattern in a sibling task's work needs the task id AND the file(s) that carry it.**
+When the pattern lives in a `depends_on` task's not-yet-built work, no `file:line` exists
+at cut time — so name the dependency task and the concrete file(s) it will create or edit
+(`follow T12's revalidator seam — doors.go SetRevalidator and its stub-revalidator tests`),
+never a bare "same pattern as T12". At extraction the contract gains `dependency_commits`
+(each merged dep's commit hash), so the build reads the pattern straight from that diff;
+your note tells it which files in the diff matter.
+
 Never describe how existing code works or what it will do — the build agent reads
 the source itself, and a paraphrase that drifts from the source ships a defect
 straight into the contract. Name in a note only files that are in `files_to_touch`

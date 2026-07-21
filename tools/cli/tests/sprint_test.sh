@@ -26,6 +26,7 @@ version: 1
 paths:
   sprint: ".wf/sprint.yaml"
   design_slice: ".wf/design-slice.md"
+  pipeline_state: ".wf/transient/pipeline-state.yaml"
 YAML
 cat > "$PROJ/.wf/sprint.yaml" <<'YAML'
 tasks:
@@ -35,6 +36,9 @@ tasks:
   - id: T2
     title: "Second task"
     depends_on: [T1]
+  - id: T3
+    title: "Third task"
+    depends_on: [T1, T2]
 YAML
 wf() { "$PYTHON" "$WF" "$@" --config "$PROJ/.wf/config.yaml"; }
 
@@ -56,6 +60,37 @@ grep -q "Second task" "$DEST" && ok "written contract holds the task body" || ba
 
 # unknown task → non-zero exit
 if wf sprint task NOPE >/dev/null 2>&1; then bad "unknown task should fail" "exited 0"; else ok "sprint task: unknown id → non-zero exit"; fi
+
+# ---------------------------------------------------------------------------
+# wf sprint task — dependency_commits injection from pipeline-state
+# ---------------------------------------------------------------------------
+
+# no pipeline-state on disk → contract carries no dependency_commits (the earlier
+# T2 --write above ran before any pipeline-state existed)
+if grep -q "dependency_commits" "$DEST"; then bad "no pipeline-state → no dependency_commits" "$(cat "$DEST")"; else ok "sprint task: no pipeline-state → no dependency_commits"; fi
+
+cat > "$PROJ/.wf/transient/pipeline-state.yaml" <<'YAML'
+task_states:
+  T1: {status: completed, build_commit: abc1234, merge_commit: def5678}
+  T2: {status: building}
+YAML
+
+# a merged dep's merge_commit is injected under dependency_commits
+OUT="$(wf sprint task T2 --format json)"
+[ "$(jget "$OUT" "d['dependency_commits']['T1']")" = "def5678" ] && ok "sprint task injects merged dep's merge_commit" || bad "dep commit injection" "$OUT"
+
+# an unmerged dep contributes nothing; merged siblings still do
+OUT="$(wf sprint task T3 --format json)"
+[ "$(jget "$OUT" "list(d['dependency_commits'])")" = "['T1']" ] && ok "sprint task omits unmerged deps from dependency_commits" || bad "unmerged dep omitted" "$OUT"
+
+# a task with no depends_on carries no dependency_commits field
+OUT="$(wf sprint task T1 --format json)"
+[ "$(jget "$OUT" "d.get('dependency_commits')")" = "None" ] && ok "sprint task: no deps → no dependency_commits" || bad "no-deps field absent" "$OUT"
+
+# --write carries the injected field into the contract file
+WR="$(wf sprint task T2 --write "$DEST" --format json)"
+grep -q "def5678" "$DEST" && ok "sprint task --write carries dependency_commits" || bad "write dep commits" "$(cat "$DEST")"
+rm -f "$PROJ/.wf/transient/pipeline-state.yaml"
 
 # ---------------------------------------------------------------------------
 # wf sprint materialize — inline the slice's verbatim fields into the sprint
