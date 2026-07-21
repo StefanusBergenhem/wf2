@@ -108,7 +108,11 @@ Walk **every** telemetry record with a non-empty `feedback.gotcha` (gotchas have
 2. **Dedup against the target.** Read the target `AGENTS.md`; if it already covers the same
    trap (any wording), drop the gotcha — propose nothing.
 3. **Draft the exact edit**: the target path, the section it goes under, and the verbatim
-   lines to add — ready to paste, not a paraphrase of the problem.
+   lines to add — ready to paste, not a paraphrase of the problem. Hold the AGENTS.md bar
+   on every draft: each proposed line must change what an agent does — a command, a trap,
+   a convention — never architecture narrative or requirement/ADR prose. When the addition
+   would push the target past ~200 lines (root) or ~40 lines (a directory file), the
+   proposal also names what to trim.
 
 Collect the drafts for the Phase 6 report. **Do not Edit or Write any AGENTS.md** — it is
 human-owned intent; an auto-applied edit ships unreviewed. The proposal in your report is
@@ -127,7 +131,10 @@ the whole deliverable, and the human applies or rejects it.
    verbatim lines, awaiting human approval); the **per-role context report** from
    `python3 <paths.tools>/cli/wf telemetry roles` (most-concerning role first — read
    `context_max` as what a role actually held at once; a `footprint` far above it is
-   cache churn from slow turns, not over-loading, so attribute cost accordingly); and,
+   cache churn from slow turns, not over-loading, so attribute cost accordingly); the
+   **repo-hygiene debt summary** from `python3 <paths.tools>/cli/wf hygiene check
+   --format json` — finding counts by rule plus the worst files, the planning input for
+   split/cleanup tasks; and,
    when `$PIPELINE_STATE` was
    present, a one-glance execution summary — tasks completed/escalated/blocked, design issues
    by `fix_kind`, stage durations. Do not commit `$RETRO_REPORT` — it is transient. In your

@@ -1,6 +1,6 @@
 ---
 name: wf-agent-preamble
-description: Cross-cutting rules every per-task subagent follows — worktree path discipline, test-output piping, the suppression ban, scope discipline, and the halt-report format. Loaded by build and review so the rules are stated once, not per role skill.
+description: Cross-cutting rules every per-task subagent follows — worktree path discipline, test-output piping, reading discipline, the suppression ban, scope discipline, and the halt-report format. Loaded by build and review so the rules are stated once, not per role skill.
 ---
 
 # Subagent Preamble — Universal Rules
@@ -52,6 +52,19 @@ the exit code is the whole result — do not read the log body; a green gate car
 information you must hold. On a failure, read only the failing portion — grep the failing
 cases or read the tail (`grep -nE 'FAIL|Error|panic|✗' <log>`, `tail -n 40 <log>`), never
 the entire file.
+
+## Reading discipline
+
+Every byte a tool returns stays in your context for the rest of the session; every
+re-read adds it again.
+
+- **Locate, then window.** Find a symbol with Grep (match lines only — no wide `-A`/`-B`
+  context dumps), then Read only the surrounding region with offset/limit. Read a file
+  whole only when it is a few hundred lines or less, or the task rewrites most of it.
+- **Do not page file content through bash.** `cat`, `sed -n`, and `grep -A/-B/-C`
+  pipelines dump file content as command output; use Grep to locate and Read to view.
+- **Re-read only what changed.** After an edit, re-read the edited region, not the whole
+  file. A region already in your context needs no re-read to "check" it.
 
 ## Suppression-directive ban
 

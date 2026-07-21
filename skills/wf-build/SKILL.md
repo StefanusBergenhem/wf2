@@ -35,6 +35,11 @@ Resolve every path and command from `.wf/config.yaml`:
    path named in `implementation_notes`. No wider exploration.
 3. A completed `depends_on` task is already merged into the branch your worktree was cut
    from, so its work is present — do not re-verify it.
+4. When an implementation note tells you to follow a dependency task's pattern, recover
+   it from that task's merge diff — the contract's `dependency_commits` maps each merged
+   `depends_on` task to its commit hash. `git show <sha> --stat` lists what it changed;
+   `git show <sha> -- <file>` shows the pattern itself. Read those diffs, never the whole
+   files they touch, and do not go hunting for the pattern elsewhere in the tree.
 
 ## Step 2 — Derive the test oracles
 
@@ -48,7 +53,7 @@ From the contract alone — never re-derive from prose elsewhere:
   `check`. An AC carrying `verified_by` instead of `tests` is proven by that gate running
   green in Step 4, not by a test you write.
 
-An AC you cannot turn into a test from the contract (it contradicts the source) is a
+An AC you cannot turn into a test from the contract (it contradicts the source code) is a
 contract problem → Step 3b.
 
 ## Step 3 — TDD
@@ -103,8 +108,8 @@ commented-out code, no suppression directive.
 
 ### Step 3b — Design issue (contract or merged code)
 
-If the blocker is **not your own code** — an AC contradicts the source, a requirement is
-self-inconsistent, the contract asks for something the source makes impossible, or an AC
+If the blocker is **not your own code** — an AC contradicts the source code, a requirement
+is self-inconsistent, the contract asks for something the source code makes impossible, or an AC
 fails because **already-merged code** (a dependency task's work, not this task's diff) is
 defective — do not retry or work around it. Write `paths.design_issues` from
 `assets/design_issues.yaml.tmpl`: one open entry, `task_id` your task, and a `summary` of what
@@ -119,6 +124,17 @@ the open entry and parks the task — you never go on to review.
 Run `commands.preflight` (pipe to `/tmp/wf-build-<task-id>-preflight.log`; read the outcome
 per `wf-agent-preamble`, not the whole log). It must exit clean. A gate that cannot run
 because its environment is unavailable is a HALT, not a pass — do not write `review_ready`.
+
+Then run the hygiene ratchet — before Step 5's commit, so `HEAD` is still the fork point:
+
+```
+python3 <paths.tools>/cli/wf hygiene check --diff-base HEAD --format json
+```
+
+A `fail` verdict lists `regressions` your own diff introduced — a too-long new function,
+comment block, or new file. Fix each (shorten, split, cut the narrative) and re-run until
+it passes. Findings outside `regressions` are pre-existing debt: leave them. A regression
+you cannot fix without restructuring beyond the contract is a design issue (Step 3b).
 
 ## Step 5 — Hand off
 

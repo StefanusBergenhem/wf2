@@ -26,6 +26,9 @@ produced. Work from the diff and the contract, never from the build's self-repor
 - **Never touch** the contract, pipeline state, or any spec-layer artifact. If landing a
   verdict would require editing anything outside your permitted writes, that **is** a
   design issue — raise it, don't edit.
+- **The contract is your only spec.** Never read ADRs, the design slice, the design
+  backlog, or capabilities — a doubt the contract cannot settle is a design issue
+  (Step 3), never a research trip into the design layer.
 - **The diff is ground truth.**
 
 ## Step 1 — Load
