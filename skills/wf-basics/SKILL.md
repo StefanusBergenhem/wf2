@@ -18,14 +18,19 @@ One telemetry line per session. Invoking it is **mandatory** — but if the
 recorder command itself errors, continue anyway (telemetry is observability, not
 correctness).
 
+Below, `<root>` is the `worktree` path from your dispatch envelope when you were
+dispatched into one, and the repo root otherwise. Root every path at it: concurrent
+sessions share the repo's ambient `.wf/transient`, so an unrooted stamp is clobbered
+by whichever session writes next.
+
 **START — run this NOW**, before any other work. Write the start stamp to a file
 — never to an environment variable. `<agent>` is the skill/agent name you will
 pass as `--agent` at END. Overwrite an existing file — a stale stamp from a
 crashed session must not survive:
 
 ```sh
-mkdir -p <paths.transient>
-date -u +%Y-%m-%dT%H:%M:%SZ > <paths.transient>/ts-start-<agent>
+mkdir -p <root>/<paths.transient>
+date -u +%Y-%m-%dT%H:%M:%SZ > <root>/<paths.transient>/ts-start-<agent>
 ```
 
 **END — every role skill runs this as its REQUIRED final action**, whether it
@@ -39,7 +44,7 @@ as start (degraded, never blocked) — then delete the file:
 TS_END="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 python3 <paths.tools>/telemetry/record_session.py \
   --agent            <agent> \
-  --started-at       "$(cat <paths.transient>/ts-start-<agent> 2>/dev/null || echo "$TS_END")" \
+  --started-at       "$(cat <root>/<paths.transient>/ts-start-<agent> 2>/dev/null || echo "$TS_END")" \
   --ended-at         "$TS_END" \
   --outcome          <completed|halted|escalated> \
   --wf-friction      "<see below, or omit>" \
@@ -47,7 +52,7 @@ python3 <paths.tools>/telemetry/record_session.py \
   --repo-observation "<see below, or omit>" \
   --gotcha           "<see below, or omit>" \
   --sink             <paths.telemetry>
-rm -f <paths.transient>/ts-start-<agent>
+rm -f <root>/<paths.transient>/ts-start-<agent>
 ```
 
 ### Session feedback — the questions

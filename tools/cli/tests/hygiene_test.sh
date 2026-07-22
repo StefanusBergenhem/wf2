@@ -32,7 +32,8 @@ hygiene:
 YAML
 git -C "$PROJ" init -q; git -C "$PROJ" config user.email t@t; git -C "$PROJ" config user.name t
 
-wf() { "$PYTHON" "$WF" "$@" --config "$PROJ/.wf/config.yaml"; }
+# Run from inside the project: hygiene lints the tree the caller stands in.
+wf() { (cd "$PROJ" && "$PYTHON" "$WF" "$@" --config "$PROJ/.wf/config.yaml"); }
 
 # helper: emit N lines of trivial go statements
 golines() { for i in $(seq 1 "$1"); do echo "var x$i = $i"; done; }
@@ -115,9 +116,11 @@ rm "$PROJ"/comments.go "$PROJ"/bigfunc.go "$PROJ"/chatty.go "$PROJ"/AGENTS.md "$
 echo "package p" > "$PROJ/clean.go"
 git -C "$PROJ" add -A; git -C "$PROJ" commit -qm base
 
-# untouched tree → no regressions
+# a diff that introduces nothing worse → no regressions
+echo "var ok1 = 1" >> "$PROJ/clean.go"
 OUT="$(wf hygiene check --diff-base HEAD --format json)"
-[ "$(jget "$OUT" "d['verdict']")" = "pass" ] && ok "ratchet: untouched tree passes" || bad "ratchet clean" "$OUT"
+[ "$(jget "$OUT" "d['verdict']")" = "pass" ] && ok "ratchet: a benign diff passes" || bad "ratchet clean" "$OUT"
+git -C "$PROJ" checkout -q clean.go
 
 # pre-existing debt (long.go) merely re-reported, not a regression
 [ "$(jget "$OUT" "len(d['regressions'])")" = "0" ] && ok "ratchet: pre-existing debt is not a regression" || bad "ratchet debt" "$OUT"
@@ -152,9 +155,33 @@ OUT="$(wf hygiene check --diff-base HEAD --format json)" && bad "ratchet: new fi
 rm "$PROJ/newborn.go"
 
 # an unchanged file with debt is not even re-checked in ratchet mode
+echo "var scope = 1" >> "$PROJ/clean.go"
 OUT="$(wf hygiene check --diff-base HEAD --format json)"
 [ "$(jget "$OUT" "any(f['file']=='long.go' for f in d.get('findings',[]))")" = "False" ] \
   && ok "ratchet: unchanged files are not swept" || bad "ratchet scope" "$OUT"
+git -C "$PROJ" checkout -q clean.go
+
+# ---------------------------------------------------------------------------
+# the tree linted is the caller's, not the config's; a no-change ratchet is not a pass
+# ---------------------------------------------------------------------------
+
+# a ratchet that finds nothing changed is `empty` + exit 1, never a silent pass
+OUT="$(wf hygiene check --diff-base HEAD --format json)" && bad "ratchet: no-change should exit 1" "$OUT" \
+  || ok "ratchet: a no-change tree exits 1"
+[ "$(jget "$OUT" "d['verdict']")" = "empty" ] && ok "ratchet: no-change verdict is 'empty'" || bad "ratchet empty verdict" "$OUT"
+
+# invoked from a DIFFERENT tree, the diff comes from that tree — not the config's root
+OTHER="$(mktemp -d)"
+git -C "$OTHER" init -q; git -C "$OTHER" config user.email t@t; git -C "$OTHER" config user.name t
+{ echo "package p"; golines 3; } > "$OTHER/seed.go"
+git -C "$OTHER" add -A; git -C "$OTHER" commit -qm base
+{ echo "package p"; golines 45; } > "$OTHER/elsewhere.go"            # over file_error → regression
+OUT="$( cd "$OTHER" && "$PYTHON" "$WF" hygiene check --diff-base HEAD --format json \
+        --config "$PROJ/.wf/config.yaml" )" \
+  && bad "cwd-rooted: other tree's new oversized file should exit 1" "$OUT" \
+  || ok "cwd-rooted: the caller's tree is the one linted"
+[ "$(jget "$OUT" "d['regressions'][0]['file']")" = "elsewhere.go" ] \
+  && ok "cwd-rooted: regression names the caller-tree file" || bad "cwd-rooted file" "$OUT"
 
 echo
 echo "  hygiene: $pass passed, $fail failed"

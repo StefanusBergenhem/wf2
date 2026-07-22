@@ -37,16 +37,20 @@ def arg_after(cmd, flag):
     return cmd[cmd.index(flag) + 1] if flag in cmd else None
 
 
-def run_main(argv, tmp):
+def run_main(argv, tmp, components=1):
     """Run discover.main() with the extractor + subprocess layer stubbed.
 
     Returns the recorded commands. The stub writes a minimal model.json wherever
-    the spine merge is told to (-o) so main()'s final summary read succeeds.
+    the spine merge is told to (-o) so main()'s final summary read succeeds, and an
+    IR carrying `components` entries wherever an extractor writes one.
     """
     calls = []
 
     def fake_run(cmd, out_path=None, **kw):
         calls.append(cmd)
+        if out_path and str(out_path).endswith(".ir.json"):
+            with open(out_path, "w") as f:
+                json.dump({"components": [{"id": f"c{i}"} for i in range(components)]}, f)
         if any(str(c).endswith("spine.py") for c in cmd):
             with open(arg_after(cmd, "-o"), "w") as f:
                 json.dump({"nodes": {}}, f)
@@ -109,6 +113,17 @@ with tempfile.TemporaryDirectory() as tmp:
         ok("parent dirs of routed outputs are created")
     else:
         bad("routed output parent dirs missing")
+
+    # --- an extractor that matched nothing is a hard exit, not a silent count -
+    try:
+        run_main(["--repo", ".", "--out", os.path.join(tmp, "empty"), "--name", "t",
+                  "--go-roots", "cmd,internal", "--go-mod", "go.mod"], tmp, components=0)
+        bad("an empty go IR should exit, not report a count")
+    except SystemExit as e:
+        if "--go-roots cmd,internal" in str(e) and "--go-mod go.mod" in str(e):
+            ok("an empty extractor IR exits, naming the flags that matched nothing")
+        else:
+            bad(f"empty-IR exit message lacks the flags: {e}")
 
     # --- ensure_built: build-on-first-use, no-op when already built ----------
     # already built → no build step runs (a failing step here would exit if it ran)

@@ -68,6 +68,49 @@ MD
 OUT="$(wf slice check --slice "$ALT" --format json)"; RC=$?
 [ "$RC" -eq 1 ] && ok "--slice override is checked" || bad "--slice override" "rc=$RC $OUT"
 
+# ---------------------------------------------------------------------------
+# ADR citations (A4/A5) — resolved against every ADR set in the tree
+# ---------------------------------------------------------------------------
+mkdir -p "$PROJ/.wf/adrs" "$PROJ/doc/design/adrs"
+printf '# ADR-011 — baseline edited in place\n' > "$PROJ/.wf/adrs/ADR-011.md"
+printf '# ADR-013 — widget port\n'              > "$PROJ/.wf/adrs/ADR-013.md"
+printf '# ADR-011 — in-process goroutine workers\n' > "$PROJ/doc/design/adrs/ADR-011.md"
+
+# a citation resolving to exactly one ADR passes, and echoes that ADR's own title
+printf '# slice\n\n- bound by ADR-013\n' > "$SLICE"
+OUT="$(wf slice check --format json)"; RC=$?
+[ "$RC" -eq 0 ] && ok "resolvable ADR citation exits 0" || bad "adr ok exit" "rc=$RC $OUT"
+[ "$(jget "$OUT" "d['adr_citations'][0]['title']")" = "ADR-013 — widget port" ] \
+  && ok "citation echoes the ADR's own title" || bad "adr title" "$OUT"
+
+# a citation to an id no ADR file defines → A4
+printf '# slice\n\n- bound by ADR-777\n' > "$SLICE"
+OUT="$(wf slice check --format json)"; RC=$?
+[ "$RC" -eq 1 ] && ok "undefined ADR citation exits 1" || bad "adr undef exit" "rc=$RC $OUT"
+[ "$(jget "$OUT" "any(f['code']=='A4' and 'ADR-777' in f['msg'] for f in d['errors'])")" = "True" ] \
+  && ok "A4 names the undefined ADR" || bad "A4 undef" "$OUT"
+
+# an id defined in TWO ADR sets, cited bare → A5, listing both paths
+printf '# slice\n\n- baseline edited in place (ADR-011)\n' > "$SLICE"
+OUT="$(wf slice check --format json)"; RC=$?
+[ "$RC" -eq 1 ] && ok "colliding ADR id cited bare exits 1" || bad "adr collide exit" "rc=$RC $OUT"
+[ "$(jget "$OUT" "any(f['code']=='A5' and '.wf/adrs/ADR-011.md' in f['msg'] and 'doc/design/adrs/ADR-011.md' in f['msg'] for f in d['errors'])")" = "True" ] \
+  && ok "A5 lists both defining paths" || bad "A5 collide" "$OUT"
+
+# path-qualified, it resolves — and the echoed title exposes a mis-pointed citation
+printf '# slice\n\n- baseline edited in place (doc/design/adrs/ADR-011)\n' > "$SLICE"
+OUT="$(wf slice check --format json)"; RC=$?
+[ "$RC" -eq 0 ] && ok "path-qualified colliding id resolves" || bad "adr path exit" "rc=$RC $OUT"
+[ "$(jget "$OUT" "d['adr_citations'][0]['title']")" = "ADR-011 — in-process goroutine workers" ] \
+  && ok "the qualified path's own title is echoed" || bad "adr path title" "$OUT"
+
+# a path-qualified citation whose file does not exist → A4, naming where it does live
+printf '# slice\n\n- see doc/adrs/ADR-013\n' > "$SLICE"
+OUT="$(wf slice check --format json)"; RC=$?
+[ "$RC" -eq 1 ] && ok "bad ADR path exits 1" || bad "adr badpath exit" "rc=$RC $OUT"
+[ "$(jget "$OUT" "any(f['code']=='A4' and '.wf/adrs/ADR-013.md' in f['msg'] for f in d['errors'])")" = "True" ] \
+  && ok "A4 names where the ADR actually lives" || bad "A4 badpath" "$OUT"
+
 # missing slice file -> mechanical failure (exit 2)
 rm -f "$SLICE"
 if wf slice check >/dev/null 2>&1; then

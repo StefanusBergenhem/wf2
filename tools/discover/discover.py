@@ -49,6 +49,23 @@ def stamp_model(model_path, repo):
         json.dump(m, f)
 
 
+def check_ir(ir_path, lang, flags):
+    """An extractor that produced no components did not match the repo — wrong roots,
+    or a module/tsconfig path resolved against the wrong directory. Downstream that is
+    silent: spine skips the empty IR and the run still reports a plausible component
+    count from whatever language DID extract. Fail here, naming the flags to fix."""
+    try:
+        with open(ir_path) as f:
+            n = len(json.load(f).get("components") or [])
+    except (OSError, ValueError) as e:
+        sys.exit(f"{lang} extractor wrote an unusable IR ({ir_path}): {e}")
+    if n == 0:
+        sys.exit(f"{lang} extractor found 0 components with `{flags}`.\n"
+                 f"  Roots and module/tsconfig paths are resolved relative to --repo — "
+                 f"check they match this repo's layout (e.g. backend/go.mod, not go.mod).")
+    return n
+
+
 def ensure_built(marker, build_steps, cwd, hint):
     """Build an extractor on first use. If `marker` (the built artifact) is absent, run
     each command in `build_steps` in `cwd`; a step that fails — or a build that leaves
@@ -102,6 +119,7 @@ def main():
                      f"cd {go_dir} && go build -o readview .")
         ir = os.path.join(a.out, f"{a.name}-go.ir.json")
         run([go_bin, "-repo", a.repo, "-roots", a.go_roots, "-gomod", a.go_mod, "-mode", "ir"], out_path=ir)
+        check_ir(ir, "go", f"--go-roots {a.go_roots} --go-mod {a.go_mod}")
         irs.append(ir)
 
     if a.ts_roots:
@@ -116,6 +134,8 @@ def main():
             cmd += ["-exclude", a.ts_exclude]
         ir = os.path.join(a.out, f"{a.name}-ts.ir.json")
         run(cmd, out_path=ir)
+        flags = f"--ts-roots {a.ts_roots}" + (f" --ts-tsconfig {a.ts_tsconfig}" if a.ts_tsconfig else "")
+        check_ir(ir, "ts", flags)
         irs.append(ir)
 
     if not irs:

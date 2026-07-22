@@ -106,6 +106,24 @@ def host_root() -> Path:
     return common_dir.parent
 
 
+def worktree_root() -> Path:
+    """The working-tree root of the cwd — ``git rev-parse --show-toplevel``, which
+    inside a per-task worktree is that worktree, not the main checkout. The mirror
+    image of ``host_root``: use this to act on the tree you are standing in (linting
+    files, reading a diff), and ``host_root`` to resolve shared run state. Falls back
+    to the current directory when not inside a git repo."""
+    try:
+        out = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+        return Path.cwd()
+    return Path(out) if out else Path.cwd()
+
+
 def current_branch(root: Path) -> "str | None":
     """The branch checked out at ``root``, or None (detached HEAD, or not a git repo).
     Lets a resumed run recover a run-state field that was stored null."""

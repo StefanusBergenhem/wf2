@@ -18,6 +18,9 @@ Two modes:
   build agent's call. Regression detection compares per-rule finding counts
   against the base revision's version of the file — coarse (an added violation
   masked by a removed one slips), but stateless and derived purely from git.
+
+A ratchet that finds no changes at all reports ``verdict: empty`` and exits 1: a
+gate that checked nothing is a no-op, not a pass.
 """
 from __future__ import annotations
 
@@ -170,12 +173,25 @@ def _check(rest):
                                        "files, fail only on regressions")
     args = p.parse_args(rest)
     cfg = _cfg(args.config)
-    root = common.project_root(args.config)
+    # The tree to lint is the one the caller stands in (a task worktree, typically);
+    # the config supplies thresholds only. Anchoring on the config's root instead
+    # would read an unchanged host checkout from a worktree and pass on an empty diff.
+    root = common.worktree_root()
 
+    touched = []
     if args.diff_base:
         changed = [l for l in _git(root, "diff", "--name-only", args.diff_base, "--")
                    .stdout.splitlines() if l]
-        files = [f for f in dict.fromkeys(changed + _untracked(root)) if _candidate(f)]
+        touched = list(dict.fromkeys(changed + _untracked(root)))
+        if not touched:
+            common.emit({
+                "mode": "ratchet", "files_checked": 0, "findings": [], "regressions": [],
+                "verdict": "empty",
+                "note": f"no changes against {args.diff_base} in {root} — the ratchet "
+                        f"checked nothing. Run it from the tree you changed.",
+            }, args.format)
+            return 1
+        files = [f for f in touched if _candidate(f)]
     else:
         tracked = [l for l in _git(root, "ls-files").stdout.splitlines() if l]
         files = [f for f in dict.fromkeys(tracked + _untracked(root)) if _candidate(f)]

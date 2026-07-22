@@ -35,6 +35,12 @@ except ImportError:  # pragma: no cover - environment guard (common.py already g
     sys.exit(2)
 
 
+# preserve-uncommitted writes this subject; inspect-review-return peels it off HEAD to
+# find the verdict-bearing commit underneath. One literal, so the two cannot drift.
+_PRESERVE_SUBJECT = "chore({task_id}): preserve uncommitted files from a prior halted dispatch"
+_PRESERVE_SUBJECT_RE = re.compile(r"^chore\([^)]*\):\s+preserve uncommitted files")
+
+
 def _err(msg: str, code: int = 2) -> int:
     sys.stderr.write(msg + "\n")
     return code
@@ -200,25 +206,32 @@ def _inspect_review_return(rest):
     if not ok_b:
         build_short = build_commit_sha
 
+    # The verdict-bearing tip: HEAD with any preserve-uncommitted commits peeled off.
+    # The protocol runs preserve FIRST, so a review agent that left one tracked file
+    # dirty (its own telemetry row) buries its verdict commit one or more down.
+    tip_sha, tip_subject = head_sha, ""
+    _, log_lines = _git_out(worktree_path, "log", "-20", "--format=%h%x09%s", "HEAD")
+    for line in log_lines.splitlines():
+        sha, _, subject = line.partition("\t")
+        if _PRESERVE_SUBJECT_RE.match(subject.strip()):
+            continue
+        tip_sha, tip_subject = sha, subject
+        break
+
     head_advanced = False
-    if head_sha != build_short:
+    if tip_sha != build_short:
         is_anc, _ = _git_out(
             worktree_path, "merge-base", "--is-ancestor", build_commit_sha, "HEAD"
         )
         if is_anc:
             head_advanced = True
 
-    _, head_subject = _git_out(worktree_path, "log", "-1", "--format=%s", "HEAD")
-
     # --- Approval-marker match: ^\s*<task-id>\s+review:?\s+approved (case-insensitive) ---
-    subject_is_approval = False
-    if head_subject:
-        approval_re = re.compile(
-            r"^\s*" + re.escape(task_id) + r"\s+review:?\s+approved",
-            re.IGNORECASE,
-        )
-        if approval_re.search(head_subject):
-            subject_is_approval = True
+    approval_re = re.compile(
+        r"^\s*" + re.escape(task_id) + r"\s+review:?\s+approved",
+        re.IGNORECASE,
+    )
+    subject_is_approval = bool(approval_re.search(tip_subject))
 
     verdict = ""
     artifact_rel = ""
@@ -235,7 +248,7 @@ def _inspect_review_return(rest):
     elif head_advanced and subject_is_approval:
         verdict = "approved"
         artifact_rel = ""
-    elif abs_review_ready.is_file() and not abs_feedback.is_file() and head_sha == build_short:
+    elif abs_review_ready.is_file() and not abs_feedback.is_file() and tip_sha == build_short:
         verdict = "redispatch_same_attempt"
         artifact_rel = p_review_ready
     elif not abs_review_ready.is_file():
@@ -249,6 +262,7 @@ def _inspect_review_return(rest):
         "task_id": task_id,
         "verdict": verdict,
         "head_sha": head_sha,
+        "tip_sha": tip_sha,
         "build_commit_sha": build_commit_sha,
         "artifact": artifact_rel if artifact_rel else None,
         "di_id": di_id if di_id else None,
@@ -329,7 +343,7 @@ def _preserve_uncommitted(rest):
             body_lines += f"  • {f}\n"
 
     commit_message = (
-        f"chore({task_id}): preserve uncommitted files from a prior halted dispatch\n"
+        _PRESERVE_SUBJECT.format(task_id=task_id) + "\n"
         "\n"
         "Auto-committed by `wf orchestrate preserve-uncommitted` before re-dispatch\n"
         "to prevent a silent merge drop.\n"

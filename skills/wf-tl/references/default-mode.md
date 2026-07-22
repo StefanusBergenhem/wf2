@@ -109,7 +109,9 @@ replays out of order against a persistent store.
    slice requirement covered, every criterion carried by exactly one task and carrying
    tests (or gate-verified via `verified_by`), every requirement's driver in the task's
    `serves`, every SYS-TC carried by an e2e task, no UNCONFIRMED assumption, an acyclic
-   DAG. On an error finding, fix the decomposition in `paths.sprint`, **re-run materialize**,
+   DAG, and every `<path>:<symbol>` pointer into an untouched file resolving to a real
+   symbol (C11 — a claim about existing code you did not check).
+   On an error finding, fix the decomposition in `paths.sprint`, **re-run materialize**,
    and re-run the check. Read its warnings too — an undeclared test home or an unordered
    `files_to_touch` overlap is a planning-quality hint worth fixing while you are here. A finding you cannot resolve without minting or changing a requirement is a
    slice defect — halt per **Halt conditions**, never invent a criterion to silence it.

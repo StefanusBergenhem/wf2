@@ -37,6 +37,10 @@ _SLICE_TC_RE = re.compile(r"\b(SYS-TC-\d+)\b")
 _NOTE_PATH_RE = re.compile(r"^[\w./-]*[\w-]\.[a-z][a-z0-9]{0,4}$")
 _NOTE_SKIP = {"e.g", "i.e"}
 
+# C11 source-claim pointers: `<path>:<symbol>`, the grounding a claim about existing
+# behaviour must carry. A digit-led suffix is a line number, not a symbol, and is skipped.
+_POINTER_RE = re.compile(r"([\w./-]*[\w-]\.[a-z][a-z0-9]{0,4}):([A-Za-z_]\w*)")
+
 
 _is_test_path = common.is_test_path  # C3's test-home heuristic, shared with `wf impact`
 
@@ -55,6 +59,25 @@ def _note_paths(note):
             continue
         if _NOTE_PATH_RE.match(tok):
             out.append(tok)
+    return out
+
+
+def _pointer_findings(root, tid, texts, files):
+    """C11: a `<path>:<symbol>` pointer into a file the task does NOT touch is a claim
+    about code that already exists — if the file carries no such symbol, the claim was
+    asserted rather than checked. A pointer into a file the task edits is skipped: that
+    symbol may be one the build is about to write."""
+    out = []
+    for text in texts:
+        for path_token, symbol in _POINTER_RE.findall(str(text)):
+            if path_token in files or any(f.endswith("/" + path_token) for f in files):
+                continue
+            target = root / path_token
+            if not target.is_file():
+                continue  # unresolvable path — C9's territory, not a symbol claim
+            if symbol not in target.read_text(errors="replace"):
+                out.append(f"{tid}: cites {path_token}:{symbol}, but {path_token} carries "
+                           f"no '{symbol}' — verify the claim against the source")
     return out
 
 
@@ -270,6 +293,12 @@ def _materialize(rest):
     contracts = _slice_interface_contracts(text)
 
     errors = []
+    # A bullet that carries its whole shape inline parses as an empty shape; inlining
+    # that would hand the task an empty interface_contract and trip B6 at check time.
+    for name, shape in contracts.items():
+        if not shape.strip():
+            errors.append(f"interface contract '{name}' has no shape: put it on indented "
+                          f"lines beneath the bullet, not inline on the bullet itself")
     n_reqs = n_ics = n_tcs = 0
     tasks = sprint.get("tasks") or []
     for i, t in enumerate(tasks):
@@ -497,6 +526,16 @@ def _check(rest):
         for fp in sorted(noted):
             if fp not in files and not any(f.endswith("/" + fp) for f in files):
                 warn("C9", f"{tid}: implementation_notes name '{fp}', which is not in files_to_touch")
+
+        # C11 — a source-claim pointer must resolve. The pointer is what makes a claim
+        # about existing behaviour checkable; one naming a symbol its file does not
+        # contain means the claim was asserted, not verified.
+        claim_texts = list(t.get("implementation_notes") or []) + \
+            list(t.get("out_of_scope") or []) + \
+            [ac.get("check", "") for ac in (t.get("acceptance_criteria") or [])
+             if isinstance(ac, dict)]
+        for msg in _pointer_findings(common.project_root(args.config), tid, claim_texts, files):
+            err("C11", msg)
 
     # C1 — depends_on integrity + acyclicity
     for t in tasks:

@@ -203,6 +203,37 @@ flag it as a missing write target. If a note needs more than one sentence,
 what it holds is either behaviour (an acceptance criterion), a shape (an
 `interface_contract_ref`), or not the contract's to say.
 
+## Ground every claim about existing code
+
+A contract that asserts how the current system behaves — and is wrong — ships a defect
+the build cannot fix in scope. Before a task leaves your hands, resolve every statement
+about existing code in its `acceptance_criteria` check text, `implementation_notes` and
+`out_of_scope` to source:
+
+- **a write or read surface** ("changed through the API", "the write path sets X") — open
+  the handler *and* the repository and confirm something writes that field. An AC that
+  requires a surface no code exposes cannot be satisfied; the task halts on it.
+- **a mechanism** ("X aggregates Y", "the evaluator resolves Z from W") — open the
+  function. A note the source contradicts costs the build an investigation before it
+  can write a line.
+- **a fixture reaching a mechanism** ("seed via <file>, following <spec>") — confirm the
+  seeded rows reach the path the AC exercises, not merely a similar one.
+- **a command's environment** — a `verified_by` command that reads a database, a generated
+  file or a config picks up whatever default it is pointed at. State the one the task's
+  worktree provides, or the check reports drift on a correct change.
+
+Cite what you verified with a `<path>:<symbol>` pointer on the claim. `sprint check`'s C11
+re-resolves every pointer into a file outside `files_to_touch` and errors when the symbol
+is not there. Dispatch `wf-drill` when confirming a claim needs more than opening the file.
+
+**Retiring or consolidating a helper: enumerate every variant.** Run
+`wf impact files --symbol <name>` for the helper *and* for each of its twins before
+setting `files_to_touch`, and take the union of the hits as the floor. A build-tag split
+puts two same-purpose helpers under different names (an `//go:build integration` variant
+and an untagged one), a separately-compiled `_test` package can hold a third ad hoc copy,
+and each has its own callers. Retiring one name while the others' callers go undeclared
+breaks the build mid-task and forces a scope-widening detour.
+
 ## Out of scope
 
 An entry earns its place when it forbids something a diligent developer might otherwise

@@ -159,12 +159,15 @@ Summarize what you found before shaping anything.
 
 **Load
 `references/design-heuristics.md`** and apply it as a self-check on every boundary,
-ownership, and dependency call. **Read the `constraint:` line of every ADR in `paths.adrs` whose `governs_components`
-names a component in scope** (grep the set by component name; on an older ADR without
-the field, its `## Decision` sentence stands in): a standing constraint either binds
-your move or this change supersedes it — there is no third option where you quietly
-ignore it. Open an ADR's body only when your move might conflict with or supersede
-it — the constraint line is the operational content; the body is reasoning history.
+ownership, and dependency call. **Read the `constraint:` line of every ADR whose
+`governs_components` names a component in scope** (grep the set by component name; on an
+older ADR without the field, its `## Decision` sentence stands in): a standing constraint
+either binds your move or this change supersedes it — there is no third option where you
+quietly ignore it. **Sweep every ADR set in the repo, not just `paths.adrs`** — find them
+with `find . -name 'ADR-*.md'` before you grep; a legacy repo carries a second,
+id-colliding set whose decisions bind just as hard. Open an ADR's body only when your move
+might conflict with or supersede it — the constraint line is the operational content; the
+body is reasoning history.
 
 Shape the component architecture, deciding each call yourself:
 
@@ -271,6 +274,14 @@ python3 <paths.tools>/reconcile/next_id.py --prefix SYS-TC --count <how many> \
 ```
 
 A single-component change with no observable end-to-end behaviour needs none.
+
+**A scenario step that says the system already does something must be checked against the
+source.** A `When`/`Then` naming a surface — "changed through the API", "the write path
+updates X", "the importer reads Y" — commits every downstream task to a surface that may
+not exist: no handler or repository writes that column, and the case cannot be satisfied
+at any scope. Open the handler and the repository (or drill) before writing the step; when
+the surface is missing, either the change builds it as a requirement or the step exercises
+a lever that does exist.
 
 ### Phase 4 — Present & align (the interactive core)
 
@@ -401,7 +412,12 @@ The judgement already happened; this is capture.
    the Phase 5 soundness verdicts, and any risk for the Tech Lead.
    **Gate: run `python3 <paths.tools>/cli/wf slice check`. Do not proceed to step 4 until it
    reports `verdict: pass` (exit 0)** — a failure names an assumption the human never
-   ratified; return to Phase 4 and close it, never edit the marker to silence the gate.
+   ratified (return to Phase 4 and close it, never edit the marker to silence the gate),
+   or an ADR citation that resolves to nothing, to the wrong file, or ambiguously across
+   two ADR sets. Read the `adr_sets` it lists: any set you did not sweep in Phase 2 may
+   hold a standing constraint on this change — read it before handing over. Check each
+   `adr_citations` title against the decision you cited it for; a title that names a
+   different decision means the citation points at the wrong ADR.
    Point at the backlog/brief/drill-cache by path; restate no structure.
    Once the gate passes, if you designed against a design issue — one Phase 1's
    `paths.design_issues` gate found or one `paths.decision_prep` named — **set that entry's

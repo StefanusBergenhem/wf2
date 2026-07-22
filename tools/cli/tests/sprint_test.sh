@@ -249,6 +249,18 @@ OUT="$(wf sprint materialize --format json)"; RC=$?
 [ "$(jget "$OUT" "any('Widget port (core)' in e for e in d['errors'])")" = "True" ] \
   && ok "materialize: unknown ref error lists the valid contract names" || bad "mat icunk names" "$OUT"
 
+# an Interface-contracts bullet carrying its shape inline (no indented block) → exit 1
+write_thin_sprint
+cat >> "$SLICE" <<'MD'
+
+- **Inline widget port** — serves REQ-1; `type Inline interface { Do() error }`
+MD
+OUT="$(wf sprint materialize --format json)"; RC=$?
+[ "$RC" -eq 1 ] && ok "materialize: an inline interface-contract shape → exit 1" || bad "mat icinline" "rc=$RC $OUT"
+[ "$(jget "$OUT" "any('Inline widget port' in e for e in d['errors'])")" = "True" ] \
+  && ok "materialize: inline-shape error names the contract" || bad "mat icinline msg" "$OUT"
+write_mat_slice
+
 # a list-valued ref inlines every named contract
 write_thin_sprint
 "$PYTHON" - "$SPRINT" <<'PY'
@@ -700,6 +712,44 @@ open(p,'w').write(yaml.safe_dump(d, sort_keys=False))
 PY
 OUT="$(wf sprint check --format json)"
 [ "$(has "$OUT" C9 warnings)" = "False" ] && ok "check: C9 matches a noted basename against full files_to_touch paths" || bad "C9-base" "$OUT"
+
+# C11 — a source-claim pointer into an untouched file must resolve to a real symbol
+mkdir -p "$PROJ/handlers"
+printf 'package handlers\n\nfunc WriteOrdinal() {}\n' > "$PROJ/handlers/props.go"
+write_clean_sprint
+"$PYTHON" - "$SPRINT" <<'PY'
+import sys, yaml
+p=sys.argv[1]; d=yaml.safe_load(open(p))
+d['tasks'][0]['implementation_notes']=['ordinal_map is written by handlers/props.go:PatchOrdinalMap']
+open(p,'w').write(yaml.safe_dump(d, sort_keys=False))
+PY
+OUT="$(wf sprint check --format json)"; RC=$?
+[ "$RC" -eq 1 ] && ok "check: C11 exits 1" || bad "C11 exit" "rc=$RC $OUT"
+[ "$(has "$OUT" C11)" = "True" ] && ok "check: C11 errors on a symbol its cited file does not carry" || bad "C11" "$OUT"
+
+# C11 — a pointer whose symbol IS there passes
+write_clean_sprint
+"$PYTHON" - "$SPRINT" <<'PY'
+import sys, yaml
+p=sys.argv[1]; d=yaml.safe_load(open(p))
+d['tasks'][0]['implementation_notes']=['read-only: handlers/props.go:WriteOrdinal is the write path']
+open(p,'w').write(yaml.safe_dump(d, sort_keys=False))
+PY
+OUT="$(wf sprint check --format json)"
+[ "$(has "$OUT" C11)" = "False" ] && ok "check: C11 accepts a pointer that resolves" || bad "C11-ok" "$OUT"
+
+# C11 — a pointer into a file the task DOES touch is the build's to write, not a claim
+write_clean_sprint
+printf 'package core\n' > "$PROJ/core/widget.go" 2>/dev/null || { mkdir -p "$PROJ/core"; printf 'package core\n' > "$PROJ/core/widget.go"; }
+"$PYTHON" - "$SPRINT" <<'PY'
+import sys, yaml
+p=sys.argv[1]; d=yaml.safe_load(open(p))
+d['tasks'][0]['implementation_notes']=['add core/widget.go:NotYetWritten']
+open(p,'w').write(yaml.safe_dump(d, sort_keys=False))
+PY
+OUT="$(wf sprint check --format json)"
+[ "$(has "$OUT" C11)" = "False" ] && ok "check: C11 skips pointers into files_to_touch (TDD)" || bad "C11-own" "$OUT"
+rm -rf "$PROJ/handlers" "$PROJ/core"
 
 # C9 — qualified-symbol references (upper-case-led final segment) are not misread as paths
 write_clean_sprint

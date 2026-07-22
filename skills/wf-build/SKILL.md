@@ -127,11 +127,15 @@ Run `commands.preflight` (pipe to `/tmp/wf-build-<task-id>-preflight.log`; read 
 per `wf-agent-preamble`, not the whole log). It must exit clean. A gate that cannot run
 because its environment is unavailable is a HALT, not a pass — do not write `review_ready`.
 
-Then run the hygiene ratchet — before Step 5's commit, so `HEAD` is still the fork point:
+Then run the hygiene ratchet **from your worktree root** — before Step 5's commit, so
+`HEAD` is still the fork point. It lints the tree you are standing in:
 
 ```
 python3 <paths.tools>/cli/wf hygiene check --diff-base HEAD --format json
 ```
+
+An `empty` verdict means the ratchet saw no changes at all: you ran it from the wrong
+tree. Re-run it from the worktree — never treat `empty` as a pass.
 
 A `fail` verdict lists `regressions` your own diff introduced — a too-long new function,
 comment block, or new file. Fix each (shorten, split, cut the narrative) and re-run until

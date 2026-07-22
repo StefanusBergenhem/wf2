@@ -83,6 +83,18 @@ rm "$R/.wf/transient/design-issues.yaml"
 gitc "$R" "T1 review: approved" >/dev/null
 [ "$(jget "$(wf orchestrate inspect-review-return "$R" T1 "$BUILD")" "d['verdict']")" = "approved" ] \
     && ok "inspect-review: HEAD advanced + approval subject → approved" || bad "ir approved" ""
+# a preserve commit ON TOP of the approval marker → still approved (L-051)
+gitc "$R" "chore(T1): preserve uncommitted files from a prior halted dispatch" >/dev/null
+ROUT="$(wf orchestrate inspect-review-return "$R" T1 "$BUILD")"
+[ "$(jget "$ROUT" "d['verdict']")" = "approved" ] \
+    && ok "inspect-review: preserve commit above the approval marker → approved" || bad "ir preserve approved" "$ROUT"
+[ "$(jget "$ROUT" "d['tip_sha']")" != "$(jget "$ROUT" "d['head_sha']")" ] \
+    && ok "inspect-review: tip_sha reports the peeled verdict commit" || bad "ir tip_sha" "$ROUT"
+# a preserve commit on top of the BUILD commit is not an advance → redispatch_same_attempt
+R4="$(mkrepo)"; B4="$(gitc "$R4" "T4 build: done")"; : > "$R4/.wf/transient/review-ready.yaml"
+gitc "$R4" "chore(T4): preserve uncommitted files from a prior halted dispatch" >/dev/null
+[ "$(jget "$(wf orchestrate inspect-review-return "$R4" T4 "$B4")" "d['verdict']")" = "redispatch_same_attempt" ] \
+    && ok "inspect-review: preserve commit above the build commit → redispatch_same_attempt" || bad "ir preserve redispatch" ""
 # advanced but NOT an approval subject, review_ready present, no feedback → escalate_ambiguous
 R2="$(mkrepo)"; B2="$(gitc "$R2" "T2 build: done")"; : > "$R2/.wf/transient/review-ready.yaml"
 gitc "$R2" "T2 some other change" >/dev/null

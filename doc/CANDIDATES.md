@@ -602,9 +602,9 @@ skills themselves.
 
 ---
 
-## C38 — The contract-cut layer has no cut-time completeness check, so its defects recur
+## C38 — Cut-time completeness: the source-claim half shipped, two heuristic members remain
 
-**Date:** 2026-07-20
+**Date:** 2026-07-20 (narrowed 2026-07-22)
 **Context:** the SA/TL authoring layer that cuts task contracts and the slice's interface
 contracts is the most recurrent wf-toolkit friction family: a contract is cut that is incomplete,
 internally contradictory, or unfaithful to the source, and the build agent recovers it a
@@ -617,28 +617,31 @@ note banned; `dependency_commits` injected at extraction so the build reads the 
 — from the 2026-07-20 token-cost investigation, where that one note cost a build ~85KB of
 exploration) have all shipped. What has **no** home is the residual class below.
 
-**The residual — cut-time faithfulness against source.** Nothing at cut reads the actual source
-to confirm a contract's claims about existing code are true:
-- a note asserting a wrong or unverified mechanism about existing runtime behaviour (L-036);
-- a seeding/fixture note that doesn't actually reach the mechanism its AC exercises (L-044);
-- `implementation_notes` *type* claims not reconciled against the landed types (the T19 half of
-  L-008 — the file-path half is the noisy `sprint check` C9 warn, cf. L-037/L-043; **recurred
-  2026-07-20**: T13's `interface_contract` names `domain.RuleConflict`, which does not exist —
-  the landed type is `domain.ConflictItem`);
-- (cheap outlier) a compound AC whose mandated tests prove only one branch of its own `check`
-  (L-050) — a pure linter, really the existing "one testable condition per AC" rule given teeth.
+**The source-claim half shipped 2026-07-22** (a fourth recurrence, L-058: SYS-TC-35 and
+REQ-205.AC-1 both required a column to change "through the API" when no handler or repository
+writes it — one task worked around it with raw SQL, one halted and needed a `spec_amendment`).
+task-contract.md now carries a cut-time grounding step — a claim about a write/read surface, a
+mechanism, a fixture's reach, or a command's environment must be resolved to source before the
+contract ships, and cited as `<path>:<symbol>`; `sprint check` C11 re-resolves every such pointer
+into a file outside `files_to_touch` and errors when the symbol is not there. wf-sa carries the
+same rule for a SYS-TC scenario step. This covers L-036 and L-044's source-claim shapes.
 
-**Analysis:** `wf sprint check` is structural only — id resolution, `depends_on` edges,
-`files_to_touch` overlap — and cannot decide any of the above. The type-reconciliation and
-per-branch-test members are mechanically decidable against artifacts on disk and belong in
-`sprint check` / a wf-tl cut step. The source-claim members (L-036, L-044) need a drill-style
-source read — a judgement-assisted cut-time *reviewer* pass, not a linter, and that is the same
-unbuilt spec-layer reviewer C37's expensive half needs. The tell it is a real gap: the structural
-members were whack-a-moled one at a time (four shipped since this was first observed) while the
-source-verifying members recur with nothing catching the class.
+**The residual — two mechanically-decidable members, both fuzzier than they look:**
+- `implementation_notes` / `interface_contract` *type* claims not reconciled against the landed
+  types (the T19 half of L-008 — the file-path half is the noisy `sprint check` C9 warn, cf.
+  L-037/L-043; **recurred 2026-07-20**: T13's `interface_contract` names `domain.RuleConflict`,
+  which does not exist — the landed type is `domain.ConflictItem`). C11 does not reach it: a
+  bare qualified symbol carries no path to resolve against.
+- a compound AC whose mandated tests prove only one branch of its own `check` (L-050) — the
+  existing "one testable condition per AC" rule given teeth.
 
-**Trigger to act:** act when `tools/cli/sprint.py` is next open, for the two mechanical members
-(L-050 per-branch test; L-008 type-vs-landed reconciliation). The source-verifying members (L-036,
-L-044) fold into the spec-layer reviewer decision shared with **C37**. Cf. **C37** (skill prose —
-same shape, shares the reviewer half), **C32** (dry-run the decomposition before the human
-ratifies), **C13** (verbatim interface contract in the task contract).
+**Analysis:** both need a heuristic over prose (which qualified symbols are type claims; which
+`and` joins two branches rather than one condition), and a cut gate that cries wolf gets ignored —
+which is why neither shipped with the source-claim half. A task legitimately *creates* the type
+or branch it names, so neither check can fire on absence alone; each needs an "is this the task's
+own to write?" test the way C11 got one from `files_to_touch`.
+
+**Trigger to act:** either member recurs again, or the spec-layer reviewer of **C37** gets built
+(it subsumes both without a heuristic). Cf. **C37** (skill prose — same shape), **C32** (dry-run
+the decomposition before the human ratifies), **C13** (verbatim interface contract in the task
+contract).

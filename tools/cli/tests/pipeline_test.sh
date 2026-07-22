@@ -138,7 +138,17 @@ task_states:
   T1: {status: building}
 YAML
 NIF="$(wf "$PROJ_IF" pipeline next --format json)"
-[ "$(jget "$NIF" "d['in_flight']")" = "['T1']" ] && ok "next: T1 building is in_flight" || bad "in_flight" "$NIF"
+[ "$(jget "$NIF" "[e['task_id'] for e in d['in_flight']]")" = "['T1']" ] \
+  && ok "next: T1 building is in_flight" || bad "in_flight" "$NIF"
+[ "$(jget "$NIF" "d['in_flight'][0]['status']")" = "building" ] \
+  && ok "next: in_flight carries the task status" || bad "in_flight status" "$NIF"
+# the dispatch that started it, and how long ago — a never-spawned agent's tell (L-053)
+wf "$PROJ_IF" pipeline dispatch --agent wf-build --task T1 --attempt 1 >/dev/null
+NIF="$(wf "$PROJ_IF" pipeline next --format json)"
+[ "$(jget "$NIF" "d['in_flight'][0]['agent']")" = "wf-build" ] \
+  && ok "next: in_flight names the dispatched agent" || bad "in_flight agent" "$NIF"
+[ "$(jget "$NIF" "d['in_flight'][0]['dispatched_at'] is not None and d['in_flight'][0]['since_s'] >= 0")" = "True" ] \
+  && ok "next: in_flight carries the dispatch age" || bad "in_flight since_s" "$NIF"
 [ "$(jget "$NIF" "[e['task_id'] for e in d['dispatch']]")" = "['T2']" ] \
     && ok "next: only T2 dispatched while T1 in-flight" || bad "in_flight dispatch" "$NIF"
 

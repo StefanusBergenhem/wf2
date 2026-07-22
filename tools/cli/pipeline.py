@@ -187,6 +187,32 @@ def _dispatch_entry(task, worktree_base, sprint_id):
     }
 
 
+def _in_flight_entry(task_id, task_status, history):
+    """A running task with the age of the dispatch that started it. `dispatch` only
+    records the intent to start an agent — nothing proves the agent was ever spawned,
+    so an unspawned task holds its slot forever, indistinguishable from a slow one.
+    The elapsed clock is what makes that visible."""
+    entry = {"task_id": task_id, "status": task_status, "agent": None,
+             "dispatched_at": None, "since_s": None}
+    for h in reversed(history):
+        if h.get("event") == "dispatch" and h.get("task_id") == task_id:
+            entry["agent"] = h.get("agent")
+            entry["dispatched_at"] = h.get("ts")
+            entry["since_s"] = _elapsed_s(h.get("ts"))
+            break
+    return entry
+
+
+def _elapsed_s(ts):
+    """Whole seconds from an ISO-Z timestamp to now, or None if it will not parse."""
+    try:
+        then = datetime.datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ").replace(
+            tzinfo=datetime.timezone.utc)
+    except (TypeError, ValueError):
+        return None
+    return int((datetime.datetime.now(datetime.timezone.utc) - then).total_seconds())
+
+
 def _next(rest):
     """Return the current stage's dispatch frontier + settlement signals.
 
@@ -195,7 +221,9 @@ def _next(rest):
     ``terminal.stage_done`` is true when nothing in the stage is still pending or
     in-flight (the controller then runs end_of_stage); ``terminal.sprint_done`` adds
     "and this is the last stage". ``terminal.halt`` is set only when something is
-    structurally wrong (stages not computed, or an out-of-range current)."""
+    structurally wrong (stages not computed, or an out-of-range current).
+    ``in_flight`` entries carry the dispatch that started them and its age, so a task
+    whose agent was never actually spawned stops looking like a slow one."""
     args = common.base_parser("pipeline next").parse_args(rest)
 
     sprint = common.load_yaml(common.resolve_path(args.config, "sprint", None))
@@ -234,7 +262,9 @@ def _next(rest):
         sprint_status = (tasks_by_id.get(tid) or {}).get("status")
         return _effective_status(tid, sprint_status, task_states)
 
-    in_flight = [t for t in stage_ids if status(t) in _OCCUPIES_SLOT]
+    history = state.get("history") or []
+    in_flight = [_in_flight_entry(t, status(t), history)
+                 for t in stage_ids if status(t) in _OCCUPIES_SLOT]
     repairing = [t for t in stage_ids if status(t) in _PARKED]
     escalated = [t for t in stage_ids if status(t) in _ESCALATED]
     blocked = [t for t in stage_ids if status(t) in _BLOCKED]

@@ -114,6 +114,11 @@ For each entry in `dispatch[]`:
 3. `wf pipeline dispatch --agent wf-build --task <task_id> --attempt <n>`.
 4. Spawn the `wf-build` agent with the **Build envelope** (DISPATCH.md).
 
+Step 3 only records the dispatch; step 4 is what starts the agent. Before waiting on
+`in_flight`, check every entry against the agents you actually spawned — an entry with
+no live agent (or one whose `since_s` has run far past its siblings') was recorded and
+never started. Re-spawn it at its current attempt; the dispatch record already stands.
+
 Tasks run concurrently in their own worktrees. As each agent returns, apply the
 matching Return protocol, then ask `wf pipeline next` again.
 
