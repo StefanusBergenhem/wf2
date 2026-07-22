@@ -72,15 +72,18 @@ OUT="$(wf slice check --slice "$ALT" --format json)"; RC=$?
 # ADR citations (A4/A5) — resolved against every ADR set in the tree
 # ---------------------------------------------------------------------------
 mkdir -p "$PROJ/.wf/adrs" "$PROJ/doc/design/adrs"
-printf '# ADR-011 — baseline edited in place\n' > "$PROJ/.wf/adrs/ADR-011.md"
-printf '# ADR-013 — widget port\n'              > "$PROJ/.wf/adrs/ADR-013.md"
-printf '# ADR-011 — in-process goroutine workers\n' > "$PROJ/doc/design/adrs/ADR-011.md"
+# the canonical shape carries the title in frontmatter; a legacy set may lead with a heading
+printf -- '---\nid: ADR-011\ntitle: baseline edited in place\n---\n\n## Context\n' \
+  > "$PROJ/.wf/adrs/ADR-011.md"
+printf -- '---\nid: ADR-013\ntitle: widget port\n---\n\n## Context\n' \
+  > "$PROJ/.wf/adrs/ADR-013.md"
+printf '# in-process goroutine workers\n' > "$PROJ/doc/design/adrs/ADR-011.md"
 
 # a citation resolving to exactly one ADR passes, and echoes that ADR's own title
 printf '# slice\n\n- bound by ADR-013\n' > "$SLICE"
 OUT="$(wf slice check --format json)"; RC=$?
 [ "$RC" -eq 0 ] && ok "resolvable ADR citation exits 0" || bad "adr ok exit" "rc=$RC $OUT"
-[ "$(jget "$OUT" "d['adr_citations'][0]['title']")" = "ADR-013 — widget port" ] \
+[ "$(jget "$OUT" "d['adr_citations'][0]['title']")" = "widget port" ] \
   && ok "citation echoes the ADR's own title" || bad "adr title" "$OUT"
 
 # a citation to an id no ADR file defines → A4
@@ -101,7 +104,7 @@ OUT="$(wf slice check --format json)"; RC=$?
 printf '# slice\n\n- baseline edited in place (doc/design/adrs/ADR-011)\n' > "$SLICE"
 OUT="$(wf slice check --format json)"; RC=$?
 [ "$RC" -eq 0 ] && ok "path-qualified colliding id resolves" || bad "adr path exit" "rc=$RC $OUT"
-[ "$(jget "$OUT" "d['adr_citations'][0]['title']")" = "ADR-011 — in-process goroutine workers" ] \
+[ "$(jget "$OUT" "d['adr_citations'][0]['title']")" = "in-process goroutine workers" ] \
   && ok "the qualified path's own title is echoed" || bad "adr path title" "$OUT"
 
 # a path-qualified citation whose file does not exist → A4, naming where it does live

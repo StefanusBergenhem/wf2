@@ -48,11 +48,15 @@ def unconfirmed_assumptions(text):
 
 
 def _adr_title(path):
-    """The ADR's own first heading — what makes a mis-pointed citation visible."""
+    """The ADR's own title — what makes a mis-pointed citation visible. The canonical
+    shape carries it in the frontmatter; a legacy set may lead with a heading instead."""
+    heading = ""
     for line in path.read_text(errors="replace").splitlines():
-        if line.startswith("# "):
-            return line[2:].strip()
-    return ""
+        if line.startswith("title:"):
+            return line.split(":", 1)[1].strip().strip("\"'")
+        if not heading and line.startswith("# "):
+            heading = line[2:].strip()
+    return heading
 
 
 def adr_index(root):
