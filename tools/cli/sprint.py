@@ -286,7 +286,7 @@ def _slice_interface_contracts(text):
 
 
 _TASK_FIELD_ORDER = [
-    "id", "title", "depends_on", "covers", "requirements", "serves",
+    "id", "title", "depends_on", "fixes_origin", "covers", "requirements", "serves",
     "files_to_touch", "acceptance_criteria", "system_tests", "out_of_scope",
     "implementation_notes", "interface_contract_ref", "interface_contract",
 ]
@@ -583,15 +583,20 @@ def _check(rest):
     # can land in the same parallel stage and edit the same file in separate worktrees.
     # A planning-quality hint: the choice is to add an edge OR accept the merge-conflict
     # risk (the stage boundary repairs a conflicted merge on demand). A transitive edge
-    # either direction orders them and quiets the warning.
+    # either direction orders them and quiets the warning. A fix-mode follow-up naming a
+    # task in `fixes_origin` overlaps that origin by design — the origin is already merged
+    # and never re-runs, so the overlap carries no concurrent-edit risk and is exempt.
     reach = _reachable(tasks)
     files_by = {t.get("id"): set(t.get("files_to_touch") or []) for t in tasks}
+    origin_by = {t.get("id"): set(t.get("fixes_origin") or []) for t in tasks}
     ordered = [t.get("id") for t in tasks]
     for i in range(len(ordered)):
         for j in range(i + 1, len(ordered)):
             a, b = ordered[i], ordered[j]
             shared = files_by.get(a, set()) & files_by.get(b, set())
-            if shared and b not in reach.get(a, set()) and a not in reach.get(b, set()):
+            ordered_edge = b in reach.get(a, set()) or a in reach.get(b, set())
+            origin_edge = b in origin_by.get(a, set()) or a in origin_by.get(b, set())
+            if shared and not ordered_edge and not origin_edge:
                 warn("C10", f"{a} and {b} share files_to_touch {sorted(shared)} with no "
                             f"dependency edge — add a depends_on edge to order them, or "
                             f"accept the merge-conflict risk at the stage boundary")

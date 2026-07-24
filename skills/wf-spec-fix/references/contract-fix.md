@@ -25,7 +25,10 @@ author a **new task** that repairs the component, and gate the parked task behin
    the mandated tests' homes; `depends_on` only what the fix genuinely needs (usually nothing —
    the code it repairs is already merged). A wiring defect may split the requirement-owner and
    the defect-owner across two merged tasks — `covers` names the violated requirement,
-   `files_to_touch` names the defective files, regardless of which task built which.
+   `files_to_touch` names the defective files, regardless of which task built which. When a
+   task in **this** sprint built the files this fix overlaps, list its id in `fixes_origin`:
+   the origin is already merged and never re-runs, so `sprint check`'s C10 must not read the
+   intended overlap as a missing dependency edge.
 2. Add the new task's id to the **`task_id` task's `depends_on`** — the parked task may only
    re-run after the fix has merged. Skip this when `task_id` is `null` (a stage-boundary issue
    parks no task): the follow-up merges and the heavy check re-runs at the next boundary.

@@ -662,6 +662,19 @@ PY
 OUT="$(wf sprint check --format json)"
 [ "$(has "$OUT" C10 warnings)" = "False" ] && ok "check: C10 accepts overlap when an edge orders the tasks" || bad "C10-edge" "$OUT"
 
+# C10 — a fix-mode follow-up naming its already-merged origin in fixes_origin may overlap it (L-037)
+write_clean_sprint
+"$PYTHON" - "$SPRINT" <<'PY'
+import sys, yaml
+p=sys.argv[1]; d=yaml.safe_load(open(p))
+d['tasks'][1]['depends_on']=[]                                            # no edge — the origin is merged
+d['tasks'][1]['files_to_touch']=['e2e/widget_test.go','core/widget.go']  # overlaps T1, the origin it repairs
+d['tasks'][1]['fixes_origin']=['T1']                                     # a fix-mode follow-up of merged T1
+open(p,'w').write(yaml.safe_dump(d, sort_keys=False))
+PY
+OUT="$(wf sprint check --format json)"
+[ "$(has "$OUT" C10 warnings)" = "False" ] && ok "check: C10 exempts a follow-up overlapping its fixes_origin" || bad "C10-origin" "$OUT"
+
 # C3 — mandated unit tests with no plausible test file in files_to_touch
 write_clean_sprint
 "$PYTHON" - "$SPRINT" <<'PY'
