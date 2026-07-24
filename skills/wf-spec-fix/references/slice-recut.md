@@ -38,8 +38,9 @@ capability halt (SKILL.md Step 2).
 
 ## Record & commit — Phase 6, adapted
 
-Run Phase 6 steps 1–3: finalize the ADRs, amend the backlog design in `paths.design_backlog`
-**in place**, and re-cut `paths.design_slice`, including its `wf slice check` gate. Do **not**
+Run Phase 6 steps 1–3: finalize the ADRs (its step 1 applies `adr-rules.md`'s amend-vs-supersede
+rule to each), amend the backlog design in `paths.design_backlog` **in place**, and re-cut
+`paths.design_slice`, including its `wf slice check` gate. Do **not**
 close the `di_id` entry in step 3 — SKILL.md Step 4 does that. A gate **failure** means the
 re-cut still rests on something unresolved: treat it as the over-scope halt (SKILL.md Step 2) —
 write `paths.decision_prep` and halt.

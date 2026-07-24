@@ -112,7 +112,10 @@ constraints no script can decide (a semantic boundary, a modelling rule).
   names this one; this one's `superseded_by` is filled.
 - `accepted → deprecated` — no longer applicable, not replaced (feature removed).
 
-ADRs are **immutable once accepted** — supersede, don't edit.
+An accepted ADR is **immutable once its decision has shipped** — supersede it, never edit it.
+Its decision has shipped once the backlog design binding it has drained from
+`paths.design_backlog`. An ADR whose binding design is still an **unbuilt block** in
+`paths.design_backlog` is **amended in place**, as that block is.
 
 ## governs_components
 

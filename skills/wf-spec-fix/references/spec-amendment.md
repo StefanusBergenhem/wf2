@@ -14,7 +14,8 @@ defective statement — a stale copy reproduces the defect:
   `paths.design_backlog` design — amend both; the two must not diverge;
 - the interface contract's shape in `paths.design_slice`'s `## Interface contracts` section, when
   the defect is a contract shape — a wrong type, a colliding name — rather than a requirement;
-- the ADR in `paths.adrs`, when the defect is a recorded decision;
+- the ADR in `paths.adrs`, when the defect is a recorded decision — amended in place or
+  superseded per `adr-rules.md`'s amend-vs-supersede rule;
 - where the amended statement appears verbatim in the `task_id` contract in `$sprint_artifact`
   (skip when `task_id` is `null`): its `requirements[]` copy of an amended requirement, and its
   `interface_contract` copy of an amended interface contract — update every such copy to match.
