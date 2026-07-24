@@ -123,6 +123,11 @@ the open entry and parks the task — you never go on to review.
 
 ## Step 4 — Gate
 
+If a step in this task **regenerated tracked output** (codegen — generated types, schema
+bindings), stage it with `git add` before running the gate: a drift check that compares the
+working tree against the git **index** reads unstaged regeneration as drift and false-fails
+a correct change.
+
 Run `commands.preflight` (pipe to `/tmp/wf-build-<task-id>-preflight.log`; read the outcome
 per `wf-agent-preamble`, not the whole log). It must exit clean. A gate that cannot run
 because its environment is unavailable is a HALT, not a pass — do not write `review_ready`.
