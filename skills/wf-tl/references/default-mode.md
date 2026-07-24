@@ -68,8 +68,11 @@ tag must not survive the sprint.
 task whose `system_tests` names that case's id (the materializer fills its text). The case
 `Covers` a **capability**, so its `depends_on` names the tasks building the requirements
 **driven by that capability** (read the drivers off the slice's component requirements) —
-putting it downstream of the assembled path. It exercises (imports) the components without
-owning them; the build stamps `[SYS-TC:SYS-TC-<n>]` in the e2e test.
+putting it downstream of the assembled path. When the slice drives no requirement from
+that capability — a hardening slice whose requirements serve a learning — name instead the
+tasks building the requirements whose components assemble the path the case exercises. It
+exercises (imports) the components without owning them; the build stamps
+`[SYS-TC:SYS-TC-<n>]` in the e2e test.
 
 **Sizing.** Keep a task to roughly **≤ 5 files** and **≤ 250 lines** of change. A task
 larger than that hides gaps and costs the build/review cycle its leverage — split it.
