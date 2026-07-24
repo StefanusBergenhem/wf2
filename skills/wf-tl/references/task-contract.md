@@ -221,6 +221,10 @@ about existing code in its `acceptance_criteria` check text, `implementation_not
 - **a command's environment** — a `verified_by` command that reads a database, a generated
   file or a config picks up whatever default it is pointed at. State the one the task's
   worktree provides, or the check reports drift on a correct change.
+- **a command's invocation** — a `verified_by` or `tests` command running a committed script
+  invokes it through its interpreter (`bash <script>`, `python3 <script>`), never a bare or
+  `./` path: a script checked in mode 100644 is not executable, and the check dies "Permission
+  denied" before it runs.
 
 Cite what you verified with a `<path>:<symbol>` pointer on the claim. `sprint check`'s C11
 re-resolves every pointer into a file outside `files_to_touch` and errors when the symbol
