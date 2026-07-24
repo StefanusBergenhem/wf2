@@ -82,6 +82,20 @@ real run proves its absence hurt).
 - **Deterministic dispatch.** Every wf skill/agent runs inside a deterministic
   workflow, invoked by name — not chosen by an LLM reading its description. The
   LLM-facing `description:` is therefore *not* a routing input.
+- **Two execution contexts, both dispatched by name.** Deterministic dispatch
+  governs *how* a role is selected; it says nothing about *where* it runs. A wf
+  role runs in one of two contexts:
+  - **Main-context, human-driven** — the role loads into the primary session and
+    the human drives it interactively (wf-po, wf-sa; new interactive roles like
+    wf-infrastructure start here). It reads `wf-basics`, resolves repo-specifics
+    from `.wf/config.yaml`, does its job in the main window, and gates on human
+    approval before any durable write.
+  - **Dispatched subagent** — the orchestrator spawns it in a fresh scoped context
+    inside the build loop (wf-tl, wf-build, wf-review, wf-spec-fix).
+  This is a first-class, established pattern — the main-context mode is **not** a
+  lesser or "ad-hoc" category. Each role is single-context: when a concern needs
+  the other context, it becomes its own named skill — the fix concern split out of
+  wf-sa into the dispatched wf-spec-fix rather than living as a second mode.
 - **Description = passive knowledge injection, kept tiny.** We still write a
   description, because it is how wf knowledge leaks into any LLM working in a
   wf-equipped repo. Keep it to **1–2 sentences, max** — context is the budget.
