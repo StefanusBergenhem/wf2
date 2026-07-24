@@ -211,6 +211,30 @@ def _slice_requirements(text):
     return out
 
 
+# A description that ends on one of these function words — or a comma — was cut
+# mid-sentence: no complete clause ends here. Kept deliberately narrow (articles,
+# conjunctions, common prepositions/subordinators) so a real scenario ending in a
+# noun or verb is never flagged.
+_DANGLING_TAIL = {
+    "the", "a", "an", "and", "or", "but", "nor", "of", "to", "with", "for", "in",
+    "on", "at", "by", "from", "into", "onto", "upon", "over", "under", "per", "via",
+    "than", "as", "because", "that", "which", "while", "when", "where", "if", "so",
+}
+
+
+def _truncated(desc):
+    """True if a SYS-TC description was cut off mid-sentence — it ends on a comma
+    or a dangling function word. Build stamps the description verbatim onto the
+    [SYS-TC:] tag, so a truncated one must fail generation, not ship (L-065)."""
+    s = (desc or "").rstrip()
+    if not s:
+        return False  # emptiness is B6's check, not this one
+    if s[-1] == ",":
+        return True
+    words = re.findall(r"[A-Za-z']+", s)
+    return bool(words) and words[-1].lower() in _DANGLING_TAIL
+
+
 def _slice_system_testcases(text):
     """{SYS-TC-id: {description, covers}} from '## System test cases'. The
     description is the case title plus its Given/When/Then scenario, joined to
@@ -314,6 +338,10 @@ def _materialize(rest):
                                   f"which is not a case in the slice")
                     continue
                 st["description"] = info["description"]
+                if _truncated(st["description"]):
+                    errors.append(f"{tid}: system_tests {st.get('id')} description looks "
+                                  f"truncated (ends '…{st['description'][-40:].strip()}') — "
+                                  f"complete the case title/scenario in the slice")
                 st["covers"] = list(info["covers"])
                 serves += [c for c in info["covers"] if c not in serves]
                 n_tcs += 1

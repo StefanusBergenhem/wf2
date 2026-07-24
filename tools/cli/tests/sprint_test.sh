@@ -259,6 +259,47 @@ OUT="$(wf sprint materialize --format json)"; RC=$?
 [ "$RC" -eq 1 ] && ok "materialize: an inline interface-contract shape → exit 1" || bad "mat icinline" "rc=$RC $OUT"
 [ "$(jget "$OUT" "any('Inline widget port' in e for e in d['errors'])")" = "True" ] \
   && ok "materialize: inline-shape error names the contract" || bad "mat icinline msg" "$OUT"
+
+# a SYS-TC scenario cut off mid-sentence → exit 1, sprint untouched (L-065)
+write_thin_sprint
+cat > "$SLICE" <<'MD'
+# Design-slice — widget
+
+**Serves:** CAP-1
+
+## Component requirements
+
+- **REQ-1** — the widget does X  *(owner: core · CAP-1)*
+- **REQ-2** — the widget rejects Y  *(owner: core · CAP-2)*
+- **REQ-3** — the tooling gate holds  *(owner: tooling · L-2)*
+
+## System test cases
+
+- **SYS-TC-1:** end-to-end widget flow
+  **Covers:** CAP-1, CAP-2
+  - **Given** a widget
+  - **When** driven
+  - **Then** it reflects the same conflicts, the
+
+## Interface contracts
+
+- **Widget port (core)** — serves REQ-1; bound by ADR-13
+
+      type Widget interface {
+          Do(x string) error
+      }
+MD
+BEFORE="$(cat "$SPRINT")"
+OUT="$(wf sprint materialize --format json)"; RC=$?
+[ "$RC" -eq 1 ] && ok "materialize: a truncated SYS-TC description → exit 1 (L-065)" || bad "mat trunc exit" "rc=$RC $OUT"
+[ "$(jget "$OUT" "any('truncat' in e.lower() and 'SYS-TC-1' in e for e in d['errors'])")" = "True" ] \
+  && ok "materialize: error names the truncated SYS-TC" || bad "mat trunc msg" "$OUT"
+[ "$BEFORE" = "$(cat "$SPRINT")" ] && ok "materialize: a truncated description leaves the sprint untouched" || bad "mat trunc atomic" "file changed"
+# a complete scenario is accepted (guards against over-eager truncation flagging)
+write_thin_sprint; write_mat_slice
+OUT="$(wf sprint materialize --format json)"; RC=$?
+[ "$RC" -eq 0 ] && ok "materialize: a complete SYS-TC description is not flagged truncated" || bad "mat trunc fp" "rc=$RC $OUT"
+
 write_mat_slice
 
 # a list-valued ref inlines every named contract
