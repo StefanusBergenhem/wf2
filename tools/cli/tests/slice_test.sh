@@ -114,6 +114,13 @@ OUT="$(wf slice check --format json)"; RC=$?
 [ "$(jget "$OUT" "any(f['code']=='A4' and '.wf/adrs/ADR-013.md' in f['msg'] for f in d['errors'])")" = "True" ] \
   && ok "A4 names where the ADR actually lives" || bad "A4 badpath" "$OUT"
 
+# a two-id shorthand 'REQ-216/ADR-013' is not a path citation — ADR-013 still resolves (L-066)
+printf '# slice\n\n- REQ-216/ADR-013 governs this door\n' > "$SLICE"
+OUT="$(wf slice check --format json)"; RC=$?
+[ "$RC" -eq 0 ] && ok "spec-id shorthand before an ADR is not a path citation" || bad "shorthand exit" "rc=$RC $OUT"
+[ "$(jget "$OUT" "any(f['code']=='A4' for f in d['errors'])")" = "False" ] \
+  && ok "no A4 on a REQ-id/ADR two-id shorthand" || bad "shorthand A4" "$OUT"
+
 # missing slice file -> mechanical failure (exit 2)
 rm -f "$SLICE"
 if wf slice check >/dev/null 2>&1; then

@@ -24,6 +24,9 @@ _ASSUMPTIONS_HEADER = "Assumptions requiring confirmation"
 _SKIP_DIRS = {".git", ".venv", "node_modules", "__pycache__", "dist", "build"}
 _ADR_FILE_RE = re.compile(r"^ADR-(\d+)")
 _ADR_CITE_RE = re.compile(r"(?:(?P<dir>[\w./-]+)/)?ADR-(?P<num>\d+)")
+# A dir capture that is itself a bare spec id (the `REQ-216/ADR-009` two-id shorthand) is
+# not a filesystem path — strip it so the citation resolves as a bare ADR-NNN.
+_SPEC_ID_RE = re.compile(r"(?:REQ|ADR|CAP|SYS-TC|L)-\d+")
 
 
 def section(text, header):
@@ -79,6 +82,8 @@ def adr_citations(text, index):
     for m in _ADR_CITE_RE.finditer(text):
         adr_id = f"ADR-{m.group('num')}"
         cited_dir = m.group("dir")
+        if cited_dir and _SPEC_ID_RE.fullmatch(cited_dir):
+            cited_dir = None
         key = (cited_dir, adr_id)
         if key in seen:
             continue
