@@ -36,6 +36,12 @@ _AGENT_DOCS = {"AGENTS.md", "CLAUDE.md"}
 _GENERATED_RE = re.compile(r"@generated|code generated|do not edit", re.I)
 _SPEC_ID_RE = re.compile(r"\b(?:REQ-\d+|ADR-\d+|CAP-\d+|SYS-TC-\d+|L-\d{2,3})\b")
 _TAG_RE = re.compile(r"\[(?:REQ|SYS-TC):")
+# A decision record cited by its own repo-relative path (e.g.
+# ".wf/adrs/ADR-003-unified-requirement-model-compliance-orchestrator.md") points a
+# reader at one exact file — unlike a bare "ADR-3" floating in prose, it cannot drift
+# out of sync with a renumbered or superseded record. Escape hatch companion to
+# _TAG_RE: a spec id inside one of these spans is not narrative.
+_PATH_CITE_RE = re.compile(r"\S*/(?:REQ-\d+|ADR-\d+|CAP-\d+|SYS-TC-\d+|L-\d{2,3})\S*\.md\b")
 # comment-ratio is only judged on files long enough for a ratio to mean anything;
 # short files legitimately run comment-heavy (a ports/interface file's doc lines).
 _RATIO_MIN_LINES = 50
@@ -100,6 +106,19 @@ def _blocks(indices):
     return out
 
 
+def _bare_spec_ref(line):
+    """True if `line` carries a spec-id reference that is neither inside a
+    [REQ:.../SYS-TC:...] tag nor part of a decision-record path citation — the
+    ambiguous form spec-narrative rejects."""
+    if _TAG_RE.search(line):
+        return False
+    cited = [m.span() for m in _PATH_CITE_RE.finditer(line)]
+    for m in _SPEC_ID_RE.finditer(line):
+        if not any(a <= m.start() and m.end() <= b for a, b in cited):
+            return True
+    return False
+
+
 def _go_funcs(lines):
     """(start, end) per top-level Go func, relying on gofmt's closing ``}`` at column 0."""
     out, start = [], None
@@ -151,7 +170,7 @@ def _check_file(relpath, text, cfg):
                             f"{blen}-line comment block > comment_block_max "
                             f"{cfg['comment_block_max']} — a comment states a constraint, "
                             f"not a narrative"))
-        if blen >= 3 and any(_SPEC_ID_RE.search(l) and not _TAG_RE.search(l) for l in block):
+        if blen >= 3 and any(_bare_spec_ref(l) for l in block):
             out.append(find("spec-narrative", "error", s,
                             "comment block narrates spec ids (REQ/ADR/CAP/L) — replace "
                             "with a tag or a one-line pointer"))
