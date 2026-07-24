@@ -186,10 +186,34 @@ def _untracked(root):
     return [l for l in r.stdout.splitlines() if l]
 
 
+def _shown(findings, args):
+    """The findings the caller asked to see — the full-sweep report is ~250KB, so
+    an agent narrows it by rule, severity, or file/dir before reading. Filters are a
+    display concern only: the verdict is always computed over the unfiltered set."""
+    def keep(f):
+        if args.rule and f["rule"] not in args.rule:
+            return False
+        if args.severity and f["severity"] != args.severity:
+            return False
+        if args.path and not any(f["file"] == p or f["file"].startswith(p.rstrip("/") + "/")
+                                 for p in args.path):
+            return False
+        return True
+    return [f for f in findings if keep(f)]
+
+
 def _check(rest):
     p = common.base_parser("hygiene check")
     p.add_argument("--diff-base", help="git rev to ratchet against: check only touched "
                                        "files, fail only on regressions")
+    p.add_argument("--rule", action="append", help="only show findings for this rule "
+                                                    "(repeatable)")
+    p.add_argument("--severity", choices=["error", "warn"], help="only show findings at "
+                                                                 "this severity")
+    p.add_argument("--path", action="append", help="only show findings for this file or "
+                                                    "directory prefix (repeatable)")
+    p.add_argument("--summary", action="store_true", help="emit per-rule/severity counts "
+                                                          "instead of the full findings list")
     args = p.parse_args(rest)
     cfg = _cfg(args.config)
     # The tree to lint is the one the caller stands in (a task worktree, typically);
@@ -242,13 +266,20 @@ def _check(rest):
         verdict = "fail" if regressions else "pass"
     else:
         verdict = "report"
-    common.emit({
-        "mode": "ratchet" if args.diff_base else "full",
-        "files_checked": checked,
-        "findings": findings,
-        "regressions": regressions,
-        "verdict": verdict,
-    }, args.format)
+    shown, shown_reg = _shown(findings, args), _shown(regressions, args)
+    out = {"mode": "ratchet" if args.diff_base else "full", "files_checked": checked}
+    if args.summary:
+        out["summary"] = {
+            "total": len(shown),
+            "by_severity": dict(Counter(f["severity"] for f in shown)),
+            "by_rule": dict(Counter(f["rule"] for f in shown)),
+            "regressions": len(shown_reg),
+        }
+    else:
+        out["findings"] = shown
+        out["regressions"] = shown_reg
+    out["verdict"] = verdict
+    common.emit(out, args.format)
     return 1 if verdict == "fail" else 0
 
 

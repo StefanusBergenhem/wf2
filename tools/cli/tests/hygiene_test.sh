@@ -131,6 +131,35 @@ rm -rf "$PROJ/.wf/tools"
 [ "$(has "$OUT" comment-ratio chatty.go)" = "True" ] && ok "H3c: comment-heavy file flagged" || bad "H3c" "$OUT"
 
 # ---------------------------------------------------------------------------
+# full-sweep filters + summary (L-060): an agent must be able to read its own output
+# ---------------------------------------------------------------------------
+RULEOUT="$(wf hygiene check --format json --rule spec-narrative)"
+[ "$(jget "$RULEOUT" "len(d['findings'])>0 and all(f['rule']=='spec-narrative' for f in d['findings'])")" = "True" ] \
+  && ok "filter: --rule keeps only that rule" || bad "filter rule" "$RULEOUT"
+SEVOUT="$(wf hygiene check --format json --severity error)"
+[ "$(jget "$SEVOUT" "len(d['findings'])>0 and all(f['severity']=='error' for f in d['findings'])")" = "True" ] \
+  && ok "filter: --severity keeps only that severity" || bad "filter severity" "$SEVOUT"
+PATHOUT="$(wf hygiene check --format json --path long.go)"
+[ "$(jget "$PATHOUT" "len(d['findings'])>0 and all(f['file']=='long.go' for f in d['findings'])")" = "True" ] \
+  && ok "filter: --path keeps only that file" || bad "filter path" "$PATHOUT"
+mkdir -p "$PROJ/sub"; { echo "package p"; golines 45; } > "$PROJ/sub/deep.go"
+PREFIX="$(wf hygiene check --format json --path sub)"
+[ "$(jget "$PREFIX" "len(d['findings'])>0 and all(f['file'].startswith('sub/') for f in d['findings'])")" = "True" ] \
+  && ok "filter: --path matches a directory prefix" || bad "filter path prefix" "$PREFIX"
+rm -rf "$PROJ/sub"
+COMBO="$(wf hygiene check --format json --rule file-length --severity error --path long.go)"
+[ "$(jget "$COMBO" "len(d['findings'])>0 and all(f['rule']=='file-length' and f['severity']=='error' and f['file']=='long.go' for f in d['findings'])")" = "True" ] \
+  && ok "filter: combined filters intersect" || bad "filter combo" "$COMBO"
+# summary mode: counts only, no findings array
+SUM="$(wf hygiene check --format json --summary)"
+[ "$(jget "$SUM" "'findings' not in d")" = "True" ] && ok "summary: omits the findings list" || bad "summary findings" "$SUM"
+[ "$(jget "$SUM" "d['summary']['total']>0 and 'by_rule' in d['summary'] and 'by_severity' in d['summary']")" = "True" ] \
+  && ok "summary: reports total + by-rule/by-severity" || bad "summary breakdown" "$SUM"
+SUMF="$(wf hygiene check --format json --summary --rule spec-narrative)"
+[ "$(jget "$SUMF" "d['summary']['total']==d['summary']['by_rule'].get('spec-narrative',0) and d['summary']['total']>0")" = "True" ] \
+  && ok "summary: honours a --rule filter" || bad "summary filtered" "$SUMF"
+
+# ---------------------------------------------------------------------------
 # ratchet mode (--diff-base): errors only on what the diff made worse
 # ---------------------------------------------------------------------------
 
