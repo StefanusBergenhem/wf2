@@ -227,7 +227,9 @@ CPGB="$(wf "$PROJ_GB" pipeline current-phase --format json)"
   && ok "current-phase: sprint_branch falls back to the git branch when stored null" || bad "L-020 git fallback" "$CPGB"
 
 # dispatch maps agent → task state, records pass_index
-wf "$PROJ_M" pipeline dispatch --agent wf-build --task T1 --attempt 1 >/dev/null
+DSPC="$(wf "$PROJ_M" pipeline dispatch --agent wf-build --task T1 --attempt 1 --format json)"
+[ "$(jget "$DSPC" "d.get('ok') is True and d.get('event')=='dispatch' and d.get('status')=='building'")" = "True" ] \
+    && ok "dispatch emits a success confirmation (L-059)" || bad "dispatch confirm" "$DSPC"
 [ "$(jget "$(wf "$PROJ_M" pipeline task-state T1 --format json)" "d['state']")" = "building" ] \
     && ok "dispatch wf-build → building" || bad "dispatch build state" ""
 wf "$PROJ_M" pipeline dispatch --agent wf-security-review --task T1 --attempt 1 --pass 1 >/dev/null
@@ -236,40 +238,52 @@ TSR="$(wf "$PROJ_M" pipeline task-state T1 --format json)"
 [ "$(jget "$TSR" "d['pass_index']")" = "1" ] && ok "dispatch records pass_index" || bad "pass_index" "$TSR"
 
 # complete-task → completed + commits
-wf "$PROJ_M" pipeline complete-task T1 --commit abc123 --merge def456 >/dev/null
+CMPC="$(wf "$PROJ_M" pipeline complete-task T1 --commit abc123 --merge def456 --format json)"
+[ "$(jget "$CMPC" "d.get('ok') is True and d.get('event')=='task_completed' and d.get('status')=='completed'")" = "True" ] \
+    && ok "complete-task emits a success confirmation (L-059)" || bad "complete confirm" "$CMPC"
 TSC="$(wf "$PROJ_M" pipeline task-state T1 --format json)"
 [ "$(jget "$TSC" "d['state']")" = "completed" ] && ok "complete-task → completed" || bad "complete" "$TSC"
 [ "$(jget "$TSC" "d['build_commit']")" = "abc123" ] && ok "complete-task records build_commit" || bad "build_commit" "$TSC"
 
 # approve-task → approved (passed all passes, awaiting the end_of_stage batch merge)
 PROJ_AP="$(echo "$DIAMOND" | new_proj)"
-wf "$PROJ_AP" pipeline approve-task T1 --commit cab00d >/dev/null
+APPC="$(wf "$PROJ_AP" pipeline approve-task T1 --commit cab00d --format json)"
+[ "$(jget "$APPC" "d.get('ok') is True and d.get('event')=='task_approved' and d.get('status')=='approved'")" = "True" ] \
+    && ok "approve-task emits a success confirmation (L-059)" || bad "approve confirm" "$APPC"
 TSAP="$(wf "$PROJ_AP" pipeline task-state T1 --format json)"
 [ "$(jget "$TSAP" "d['state']")" = "approved" ] && ok "approve-task → approved" || bad "approve" "$TSAP"
 [ "$(jget "$TSAP" "d['build_commit']")" = "cab00d" ] && ok "approve-task records build_commit" || bad "approve build_commit" "$TSAP"
 
 # reject-task → building, attempt++, pass_index reset to 0 (N-pass restart at build)
 wf "$PROJ_M" pipeline dispatch --agent wf-review --task T2 --attempt 1 --pass 1 >/dev/null
-wf "$PROJ_M" pipeline reject-task T2 --feedback /tmp/fb.yaml >/dev/null
+RJC="$(wf "$PROJ_M" pipeline reject-task T2 --feedback /tmp/fb.yaml --format json)"
+[ "$(jget "$RJC" "d.get('ok') is True and d.get('event')=='task_rejected'")" = "True" ] \
+    && ok "reject-task emits a success confirmation (L-059)" || bad "reject confirm" "$RJC"
 TSJ="$(wf "$PROJ_M" pipeline task-state T2 --format json)"
 [ "$(jget "$TSJ" "d['state']")" = "building" ] && ok "reject-task → building" || bad "reject state" "$TSJ"
 [ "$(jget "$TSJ" "d['attempt_counter']")" = "1" ] && ok "reject-task bumps attempt_counter" || bad "reject attempt" "$TSJ"
 [ "$(jget "$TSJ" "d['pass_index']")" = "0" ] && ok "reject-task resets pass_index to 0" || bad "reject pass_index" "$TSJ"
 
 # block-task → blocked
-wf "$PROJ_M" pipeline block-task T3 --reason "manual" >/dev/null
+BLC="$(wf "$PROJ_M" pipeline block-task T3 --reason "manual" --format json)"
+[ "$(jget "$BLC" "d.get('ok') is True and d.get('event')=='task_blocked' and d.get('status')=='blocked'")" = "True" ] \
+    && ok "block-task emits a success confirmation (L-059)" || bad "block confirm" "$BLC"
 [ "$(jget "$(wf "$PROJ_M" pipeline task-state T3 --format json)" "d['state']")" = "blocked" ] \
     && ok "block-task → blocked" || bad "block" ""
 
 # record-design-issue → design_issue + surfaces as unresolved
-wf "$PROJ_M" pipeline record-design-issue DI-1 --task T4 --severity high --fix_kind contract_amendment >/dev/null
+RDC="$(wf "$PROJ_M" pipeline record-design-issue DI-1 --task T4 --severity high --fix_kind contract_amendment --format json)"
+[ "$(jget "$RDC" "d.get('ok') is True and d.get('event')=='design_issue_recorded' and d.get('di_id')=='DI-1'")" = "True" ] \
+    && ok "record-design-issue emits a success confirmation (L-059)" || bad "record-DI confirm" "$RDC"
 [ "$(jget "$(wf "$PROJ_M" pipeline task-state T4 --format json)" "d['state']")" = "design_issue" ] \
     && ok "record-design-issue → design_issue" || bad "DI state" ""
 UDI="$(wf "$PROJ_M" pipeline unresolved-design-issues --format json)"
 [ "$(jget "$UDI" "d['count']")" = "1" ] && ok "unresolved-design-issues counts the open DI" || bad "DI count" "$UDI"
 
 # resolve-design-issue flips the entry to resolved; it drops out of unresolved
-wf "$PROJ_M" pipeline resolve-design-issue DI-1 >/dev/null
+RSC="$(wf "$PROJ_M" pipeline resolve-design-issue DI-1 --format json)"
+[ "$(jget "$RSC" "d.get('ok') is True and d.get('event')=='design_issue_resolved' and d.get('di_id')=='DI-1'")" = "True" ] \
+    && ok "resolve-design-issue emits a success confirmation (L-059)" || bad "resolve-DI confirm" "$RSC"
 UDR="$(wf "$PROJ_M" pipeline unresolved-design-issues --format json)"
 [ "$(jget "$UDR" "d['count']")" = "0" ] && ok "resolve-design-issue drops the DI from unresolved" || bad "DI resolve" "$UDR"
 HDR="$(wf "$PROJ_M" pipeline history-tail 5 --format json)"

@@ -491,6 +491,11 @@ def _dispatch(rest):
         entry["pass_index"] = args.pass_index
     doc.setdefault("history", []).append(entry)
     _save_state(args, doc)
+    conf = {"ok": True, "event": "dispatch", "task_id": args.task, "agent": args.agent,
+            "status": ts["status"], "attempt": int(args.attempt)}
+    if args.pass_index is not None:
+        conf["pass_index"] = args.pass_index
+    common.emit(conf, args.format)
     return 0
 
 
@@ -511,6 +516,8 @@ def _complete_task(rest):
         "build_commit": args.commit, "merge_commit": args.merge,
     })
     _save_state(args, doc)
+    common.emit({"ok": True, "event": "task_completed", "task_id": args.task_id,
+                 "status": "completed"}, args.format)
     return 0
 
 
@@ -531,6 +538,8 @@ def _approve_task(rest):
         "build_commit": args.commit,
     })
     _save_state(args, doc)
+    common.emit({"ok": True, "event": "task_approved", "task_id": args.task_id,
+                 "status": "approved"}, args.format)
     return 0
 
 
@@ -551,6 +560,8 @@ def _reject_task(rest):
         "feedback_path": args.feedback, "next_attempt": ts["attempt_counter"],
     })
     _save_state(args, doc)
+    common.emit({"ok": True, "event": "task_rejected", "task_id": args.task_id,
+                 "status": "building", "attempt": ts["attempt_counter"]}, args.format)
     return 0
 
 
@@ -571,6 +582,8 @@ def _block_task(rest):
         "ts": _now(), "event": "task_blocked", "task_id": args.task_id, "reason": args.reason,
     })
     _save_state(args, doc)
+    common.emit({"ok": True, "event": "task_blocked", "task_id": args.task_id,
+                 "status": "blocked"}, args.format)
     return 0
 
 
@@ -626,6 +639,8 @@ def _record_design_issue(rest):
         "task_id": args.task, "fix_kind": args.fix_kind, "severity": args.severity,
     })
     _save_state(args, doc)
+    common.emit({"ok": True, "event": "design_issue_recorded", "di_id": args.di_id,
+                 "task_id": args.task, "status": "open"}, args.format)
     return 0
 
 
@@ -663,6 +678,8 @@ def _resolve_design_issue(rest):
         "ts": _now(), "event": "design_issue_resolved", "di_id": args.di_id,
     })
     _save_state(args, doc)
+    common.emit({"ok": True, "event": "design_issue_resolved", "di_id": args.di_id,
+                 "status": "resolved"}, args.format)
     return 0
 
 
