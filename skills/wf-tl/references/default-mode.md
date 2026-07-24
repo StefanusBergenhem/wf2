@@ -49,6 +49,11 @@ from the slice. When a task builds a component or widens a seam the slice's **In
 contracts** section fixes a shape for, set `interface_contract_ref` to that contract's
 name — the build implements the agreed shape, never one it discovers.
 
+**Plan the slice's architecture moves.** Each move (a rename, split, merge, extraction,
+removal, re-charter, or dependency-edge change) is carried out inside the edit set of the task
+whose requirement owns a component the move restructures — fold its files into that task. A
+move no in-slice requirement's edit set carries is a slice defect (**Halt conditions**).
+
 **Fold in the slice's Supersedes list.** For each superseded id the slice's **Supersedes**
 section carries, locate its proving test file(s) mechanically — grep the test tree for
 `[REQ:<old-id>]` / `[SYS-TC:<old-id>]` (or derive them via
@@ -128,6 +133,9 @@ Halt and report with outcome `escalated` if any condition below holds.
 - A requirement no component in the slice owns, or whose declared owner cannot express the
   behaviour at all. A requirement whose edit set spans several components is **not** this —
   an atomic edit set crossing component boundaries is normal, never a defect.
+- An **architecture move** the slice carries that no in-slice requirement's edit set carries
+  out. A move folded into an owning requirement's task is normal; only an unowned one is the
+  defect.
 - The slice's **Interface contracts** section fixes a shape the source contradicts — a type,
   sentinel, or signature the code does not use.
 - Satisfying a requirement would regress a working behaviour no requirement owns.

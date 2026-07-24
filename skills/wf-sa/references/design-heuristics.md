@@ -68,3 +68,8 @@ above** — sharper responsibility, lower coupling, a cleaner dependency directi
 a proposed move doesn't measurably improve one of these, don't make it: churn
 without a fitness gain is cost with no benefit. Every move you do make is a
 load-bearing decision (candidate ADR) and a reason to re-run discover afterwards.
+
+Every move you put in a slice must be **realized by a requirement's edit set** — a component
+the move restructures needs a requirement in that same slice whose build performs it. A move
+no requirement carries is unowned scope: defer it to a later slice, or give the restructured
+component a driven requirement whose build performs it.
