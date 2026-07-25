@@ -32,17 +32,25 @@ over time.
 
 Most documents are transient handovers between roles. The durable set is small:
 
-- **Capabilities** — the *why*, kept as an **open work-set** of *un-shipped* demand:
-  user-voice needs the PO has raised whose solution is not yet built. The SA drains a
-  capability when the backlog design serving it drains — i.e. when `reconcile` finds its
-  work shipped and its essence now lives in the code's `[REQ]` tags + any ADR — so the set
-  never becomes an accumulating catalog of shipped features. The drain is keyed on *shipped
-  evidence*, never on the SA's own "I designed it" — like every other drain here, it derives
-  from a fact rather than a role's self-report. So a slice that gets rejected or re-cut
-  leaves the *why* intact for the re-design to reason from, including fix mode's judgement
-  of whether the driving capability is itself wrong.
+- **Capabilities** — the *why*, kept as an **open work-set** of *un-proven* demand:
+  user-voice needs the PO has raised whose solution is not yet proven built. The SA drains
+  a capability only through a two-gate proof: its covering **system tests** shipped
+  (mechanical — the `[SYS-TC]` tags in the test tree), and a dispatched **wf-adequacy**
+  review finds the scenario set covers the capability's whole promise (judgment —
+  adversarial, grounded in source, never in the design's own decomposition). The drain is
+  keyed on *proof*, never on the SA's "I designed it" and never on requirement
+  coverage alone — dems proved four times that a design's proofs can all be present while
+  the capability is false (each design faithfully proved its own decomposition, which had
+  missed sibling code paths; only source-grounded adversarial review caught the misses).
+  A failed adequacy review re-scopes the capability's notes with the residual paths and
+  feeds the next design. So a rejected slice, a re-cut, or a false-complete build all
+  leave the *why* intact for the re-design to reason from.
 - **Design backlog** — the SA's *committed but draining* record of designed-but-unbuilt
-  work. The SA appends a design and removes it as `reconcile` shows it shipped; it empties
+  work. Each design block carries its **narrative** (the change's story — shape,
+  end-to-end flow with wiring, each component's role; the prose that survives the
+  SA → TL → build handovers) plus its requirements and scenarios. The SA appends;
+  `wf pipeline complete-sprint` trims each id at sprint close once its covering task
+  merged (the merge record), and it empties
   to nothing, so it is working state, not a durable spec (its load-bearing decisions live
   in the ADRs).
 - **ADRs** — deliberate architecture decisions: the choice made, the
@@ -52,16 +60,27 @@ Most documents are transient handovers between roles. The durable set is small:
 - **`AGENTS.md` files, in a directory hierarchy** — borrowing the industry's
   best practice. Hold commands, gotchas, and conventions, co-located with the
   code they govern.
-- **Requirement tags in test cases** — every test proving a requirement carries its
-  greppable tag plus the full statement on the tag line. A script harvests ids,
-  statements, and coverage on demand into a fresh summary; nothing is maintained.
+- **Proving tags in system tests — the only spec tag in code.** A system test carries
+  `[SYS-TC:id]` **plus its scenario description** — a test's description describes the
+  test, so it cannot rot apart from it, and the shipped scenario set is the durable
+  proof-of-capability record. Component requirements are **never tagged in code**: the
+  id and its EARS statement live exclusively in the transient chain (backlog → slice →
+  contract) and drain from the **merge record** at sprint close — persisted requirement
+  prose in code claims spec authority, rots invisibly, and makes agents work *around*
+  old requirements instead of replacing them (dems: ~90% of tagged statements were
+  orphans, one id carried two contradictory statements, and the prose was the top
+  hygiene-debt source), while even a bare id-tag is weaker evidence than the merge it
+  duplicates (a tag proves a test *mentions* an id; a merged task proves its tests *ran
+  green* through the gate). A requirement no test can observe (a lint/CI gate fact) is
+  marked `proof: inspection` in the backlog, its acceptance criteria are gate-verified,
+  and it drains on the same merge record.
 - **Tooling** — config + scripts/CLI. Machinery, kept separate from intent.
 
 Everything else (the repo map, component descriptions, plans, contracts) is
 derived on demand or discarded after the step that produced it.
 
 **The maintainer archive is outside all of this.** As each transient drains from the
-working set (capabilities/learnings when the SA drains their shipped design; slice, sprint,
+working set (capabilities and learnings as the SA drains them; slice, sprint,
 and backlog snapshot at sprint close), a copy is written to `paths.archive` — a
 **write-only** sink for the wf2 maintainer to study run quality offline. It is *not* part of the durable working set and
 **no wf role is ever instructed to read it**. The governor forbids storing what code can

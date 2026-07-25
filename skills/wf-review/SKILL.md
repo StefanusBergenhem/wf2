@@ -1,6 +1,6 @@
 ---
 name: wf-review
-description: QA gatekeeper procedure — validates one task's build against its contract by judgement (scope, [REQ]↔AC coverage, test quality, TDD evidence, clean code), then approves, rejects, or raises a contract design issue.
+description: QA gatekeeper procedure — validates one task's build against its contract by judgement (scope, AC↔test coverage, test quality, TDD evidence, clean code), then approves, rejects, or raises a contract design issue.
 ---
 
 # wf-review — QA gatekeeper
@@ -63,17 +63,18 @@ the build to have done.
   passes that test — the list is the expected write set, not a fence. An unrelated
   drive-by change rejects, and so does any change to something `out_of_scope` names.
   → `scope_violation`.
-- **Proving-tag coverage + AC↔test.** For every requirement id in the contract's `covers`,
-  find a test carrying its `[REQ:<id>]` tag that **genuinely exercises** the requirement (not
-  a vacuous assertion); for every `system_tests[].id` on an e2e task, find an end-to-end test
-  carrying its `[SYS-TC:<id>]` tag that runs the real assembled path (no component-seam
-  mocks). Each tag line must carry the id's statement verbatim from the contract
-  (`requirements[]` for `[REQ:]`, `system_tests[].description` for `[SYS-TC:]`) — missing or
-  differing text rejects. For every entry in `acceptance_criteria`, find a real test that
-  proves it — except an AC carrying `verified_by: <gate command>`, which is discharged by
-  confirming that gate ran green in the build's preflight handoff, not by a test. A
-  missing tagged test, a tag on a vacuous test, an AC with no genuine test, or
-  a system test that mocks the seam it exists to exercise rejects. →
+- **AC↔test coverage.** For every entry in `acceptance_criteria`, find the test its
+  `tests[]` entry mandates — at the declared level, against the declared `target` or
+  `seam` — and confirm it **genuinely exercises** the criterion's `check` and the
+  covered requirement's `requirements[]` statement (not a vacuous assertion). An AC
+  carrying `verified_by: <gate command>` instead is discharged by confirming that gate
+  ran green in the build's preflight handoff, not by a test. For every
+  `system_tests[].id` on an e2e task, find an end-to-end test carrying its
+  `[SYS-TC:<id>]` tag that runs the real assembled path (no component-seam mocks); the
+  tag line must carry `system_tests[].description` verbatim — missing or differing text
+  rejects. A requirement id in any other test comment rejects (spec ids live in the
+  contract, never in component tests). A missing mandated test, a vacuous test, or a
+  system test that mocks the seam it exists to exercise rejects. →
   `requirement_trace_missing` / `acceptance_criteria_unmet`.
 - **Mandated seam.** When the contract names a specific seam, model, or interface
   (`acceptance_criteria` or `interface_contract`), read the implementation's wiring and

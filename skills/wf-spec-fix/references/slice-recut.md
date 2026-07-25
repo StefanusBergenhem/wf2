@@ -16,8 +16,8 @@ Read each blocker's `requirement`, `summary`, `evidence`, and `needs`; the
 `paths.design_backlog` design the slice was cut from; `paths.design_slice`; and each ADR in
 `paths.adrs` whose `governs_components` names a component a blocker implicates. Reuse what the
 entry's `working_notes[]` already settle rather than re-deriving them. Drill what the blockers
-implicate (wf-sa's **Scouting & the drill-cache**). **Derive the requirement register and read
-its in-scope entries**, as Phase 1's grounding does. Reconcile nothing, and drain nothing.
+implicate (wf-sa's **Scouting & the drill-cache**). **Derive the system-test register and read
+its in-scope entries**, as Phase 1's grounding does. Drain nothing.
 
 ## Deciding — replaces Phase 4
 
@@ -29,8 +29,9 @@ Take every decision yourself and record each in the decision report (SKILL.md St
   mark it **CONFIRMED** in the slice, and record the chosen-vs-rejected reading in the report.
   `wf slice check` passes only on CONFIRMED assumptions; you are the authority that confirms
   them.
-- **Supersessions** — where the re-cut retires or changes a shipped requirement (one the
-  register tags `[REQ:<id>]` / `[SYS-TC:<id>]`), record it in the slice's **Supersedes** list
+- **Supersessions** — where the re-cut retires or changes shipped behaviour (a register
+  scenario by its `SYS-TC-<n>` id; component behaviour by its proving test file(s)),
+  record it in the slice's **Supersedes** list
   and name it on the report's **Superseded** line.
 
 The **only** decision you do not take is a change to the driving capability itself — that is the

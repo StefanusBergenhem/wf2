@@ -48,17 +48,14 @@ deferred:** the maintained `MEMORY.yaml` lessons store (dedup, capacity-cap, con
 reinforcement) — wf1's governor-ish overreach, and nothing in wf2 consumes a
 distilled-lessons store.
 
-**Also deferred — `handled` is an optimistic close.** wf-sa flips a learning to
-`handled` when it *designs* the fix, not when build *lands* it; nothing downstream
-confirms the code shipped. Recoverable — an abandoned fix's smell re-surfaces in a later
-observation and re-distils. When the `[REQ]`-style coverage harvester exists, `handled`
-can become *derived from commit citations* instead of a stored flag — the same move
-made for superseded requirements (retired ids verified gone via reconcile, 2026-07-10).
+**The optimistic-close half resolved 2026-07-25:** learnings now drain mechanically at
+sprint close — `wf pipeline complete-sprint` removes a learning only when the last
+design serving it has fully merged (the merge record), so "designed but never landed"
+can no longer close one.
 
 **Trigger to act:** the orchestration half is done. Build the `MEMORY.yaml` store only if a
 real consumer for a maintained lessons store appears (none today — the open learnings streams
-suffice). When the coverage harvest is wired into build/review, switch `handled` to derived
-(above).
+suffice).
 
 ---
 
@@ -91,6 +88,16 @@ work-set.
 proving tests) from the tags on demand (and since 2026-07-10 wf-sa consumes it as its
 what's-already-promised input). Still missing for a full compliance trace: the
 capability → user-need apex, which graduation drops.
+
+**Update 2026-07-25 — the REQ layer left the code entirely.** The target-shape redesign
+(`doc/notes/wf-target-shape-20260725.md`) removed `[REQ:]` tags altogether: requirement
+ids and statements are planning-time working state that drains from the merge record at
+sprint close; nothing requirement-shaped persists in the tree. What survives for a
+trace: the SYS-TC lane carries each scenario's user-voice description in the test
+itself, and archived sprint/backlog snapshots in `paths.archive` hold the full
+statements (and now the design narrative) at drain time. If a compliance mandate ever
+fires this trigger, the trace is built from the archive + SYS-TC lane — nothing else
+exists.
 
 **Trigger to act:** when a project with a real audit/traceability mandate adopts wf2
 (the user works in such industries and expects to need it — but no current run does).
@@ -167,7 +174,7 @@ sourced from discover/drill rather than a durable DESIGN.
 
 **Date:** 2026-06-21
 **Context:** the drain-pipeline model has wf-sa cut a design-slice from the committed design
-backlog, and remove built requirements from the backlog when reconcile confirms them. The
+backlog; `complete-sprint` trims built ids from it at sprint close (2026-07-25). The
 current model assumes the flow is **human-controlled and strictly sequential across roles**
 (SA → TL → build, one increment at a time), so nothing marks which backlog entries are
 already cut into a live slice/sprint and *building*. wf-sa's "don't re-cut an in-flight
@@ -338,28 +345,6 @@ wf-init from repo evidence like the other commands — not a dir-copy heuristic.
 
 ---
 
-## C26 — wf-tl: SYS-TC `depends_on` resolution for a learnings-driven slice
-
-**Date:** 2026-07-12
-**Context:** dems `sprint-20260711-typed-edge-hardening` (wf-learning L-013). `default-mode.md`
-Phase 3 / `task-contract.md` resolve a SYS-TC's `depends_on` as "the tasks building the
-requirements **driven by that capability**" — a CAP → REQ link read off the slice. A slice
-with **no new capabilities** (its requirements serve `L-NNN`, not `CAP-NNN`) has no such link,
-so a SYS-TC that `Covers CAP-NNN` cannot be mechanically resolved to its building tasks. The
-TL fell back to mapping by "the tasks that assemble the path the case exercises."
-
-**Observation:** the CAP-driver resolution rule assumes every slice introduces capabilities.
-A learnings-driven slice (bug-hardening, refactors) breaks that assumption. Either the SA must
-attach a driver the SYS-TC can resolve against, or `default-mode.md` needs an explicit
-"no-capability-driver" resolution rule (map the case to the tasks that build the path it
-exercises).
-
-**Trigger to act:** a second learnings-driven slice reaches the TL and the SYS-TC
-`depends_on` is again resolved by hand. Then add the fallback rule to `default-mode.md`
-(and/or have wf-sa carry a resolvable driver on a learnings-only SYS-TC).
-
----
-
 ## C27 — build Step-4 gate can exclude the very tests a task's ACs are proven by
 
 **Date:** 2026-07-12
@@ -501,7 +486,9 @@ presented, so it takes an SA omission to slip through — softer, and the reason
 
 **Trigger to act:** a supersession reaching a sprint unratified (from either mode), or the
 next time `slice.py` is opened for other work — the marker + check is small, and it retires
-a prose rule in fix-mode.md.
+a prose rule in fix-mode.md. **2026-07-25: the trigger fired** — `slice.py` was opened to
+add the A6 design-narrative gate; the supersession marker was not folded in (kept out of
+an already-large redesign). Next `slice.py` touch should carry it, or promote it now.
 
 ---
 
@@ -599,6 +586,16 @@ built any time `tools/cli/` is open. The role half needs a decision about whethe
 reviewer — cf. the standing rule that if SA output needs review, you introduce a reviewer role rather
 than bolting checks onto the next consumer. That rule was written about the slice; it applies to the
 skills themselves.
+
+**2026-07-24 — the PILOT-SIDE deployment of the role half SHIPPED as `wf-adequacy`**
+(spec-layer-redesign; see `doc/notes/spec-layer-redesign-20260724.md`). Trigger evidence: dems
+drained CAP-023 four times with every covering SYS-TC present and passing — each scenario proved
+the design's decomposition, not the capability's promise; only adversarial source-grounded drills
+found the residuals. `wf-adequacy` is that drill as a standing role, dispatched by wf-sa at the
+capability-drain gate and at design validation. **Still open here:** (a) the `wf skills check`
+linter half, unchanged; (b) the **wf2-side deployment** — an adversarial reviewer for wf2's own
+skill prose (this file's original evidence) is still manual practice, not a role. Do not mark C37
+resolved on the pilot-side ship alone.
 
 ---
 

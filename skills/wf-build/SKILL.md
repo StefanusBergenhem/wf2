@@ -1,6 +1,6 @@
 ---
 name: wf-build
-description: TDD developer procedure — executes one task contract red→green→refactor, derives test oracles from its acceptance criteria, stamps each requirement's [REQ:<id>] tag, runs preflight, and writes the review handoff.
+description: TDD developer procedure — executes one task contract red→green→refactor, derives test oracles from its acceptance criteria, stamps an e2e task's [SYS-TC:<id>] tag, runs preflight, and writes the review handoff.
 ---
 
 # wf-build — execute one task contract
@@ -64,18 +64,12 @@ Announce each phase.
 
 1. Write the test for every AC `tests` entry: set up specific inputs, invoke the
    code under test, assert specific outputs.
-2. **Stamp the proving tag.** In each test, place a plain comment carrying the tag AND,
-   on the same line, the full statement it proves — verbatim from the contract, no hash,
-   any comment style:
-   - a component task: `[REQ:<id>] <statement>` where `<id>` is the parent requirement of
-     the AC it covers and `<statement>` is that id's entry in the contract's
-     `requirements` — a test covering `REQ-1.AC-2` carries
-     `// [REQ:REQ-1] When an operator submits credentials, the system shall return a session token within 200ms p95.`
-     Every requirement in the contract's `covers` must end with at least one tagged test.
-   - an e2e task: `[SYS-TC:<id>] <description>` for each `system_tests[].id`, the
-     description taken verbatim from that entry — the end-to-end test proving `SYS-TC-1`
-     carries `[SYS-TC:SYS-TC-1] <its system_tests[].description>`.
-   That tag line is what the reconcile harvester reads and the reviewer verifies.
+2. **On an e2e task, stamp the proving tag.** In each end-to-end test, place a plain
+   comment — any comment style — carrying `[SYS-TC:<id>] <description>` for each
+   `system_tests[].id`, the description taken verbatim from that entry: the test proving
+   `SYS-TC-1` carries `[SYS-TC:SYS-TC-1] <its system_tests[].description>`. That tag
+   line is the durable proof record the reviewer verifies. A component task's tests
+   carry **no** tag of any kind — requirement ids live only in the contract.
 3. Check each test against the `wf-testing-anti-patterns` table. A match means restructure
    it before continuing.
 4. Run the project's test command for what you changed and **confirm the tests FAIL** for
@@ -105,8 +99,9 @@ confirm it passes. A test you cannot make fail this way is vacuous — restructu
 
 With tests green: no dead code, no debug output, no `TODO`/`HACK`/`FIXME`, no
 commented-out code, no suppression directive, no narrative comment blocks — a comment
-states a constraint the code cannot; spec context lives in the `[REQ:]`/`[SYS-TC:]`
-tag line, never in comment prose.
+states a constraint the code cannot. Never paraphrase a requirement's statement or id
+into a comment — tests carry no spec prose; the only spec reference in any test is an
+e2e task's `[SYS-TC:]` tag line.
 
 ### Step 3b — Design issue (contract or merged code)
 
@@ -151,9 +146,9 @@ you cannot fix without restructuring beyond the contract is a design issue (Step
    ```
    Do not push — the orchestrator merges at the stage boundary.
 3. Write `paths.review_ready` from `assets/review_ready.yaml.tmpl` — a presence marker. Its
-   presence is the ready-for-review signal; the reviewer judges the committed diff, the
-   contract, and the `[REQ]` tags in the tests, never a build self-report, so the file
-   carries nothing but the task id.
+   presence is the ready-for-review signal; the reviewer judges the committed diff
+   against the contract, never a build self-report, so the file carries nothing but the
+   task id.
 
 ## Fix mode (`paths.feedback` present)
 

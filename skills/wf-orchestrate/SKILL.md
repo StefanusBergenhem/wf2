@@ -189,8 +189,10 @@ python3 <paths.tools>/cli/wf orchestrate dispatch-fix <di-id>
 - a `wf-*` agent name → dispatch that agent (e.g. `wf-retrospective`).
 - `ship` → the terminal publish: read `paths.spec_decisions` for the PR body (the run's
   autonomous spec-fix decisions) **before** `wf pipeline complete-sprint` drains it;
-  complete-sprint archives the plan + final state, drains the working set, and resets to
-  `idle`; then commit its archive snapshots and push the sprint branch + open a PR against the
+  complete-sprint archives the plan + final state, drains the working set — trimming the
+  design backlog and learnings from the merge record and writing the drain report — and
+  resets to `idle`; then commit its archive snapshots plus the trimmed backlog/learnings
+  and push the sprint branch + open a PR against the
   base branch — one push, everything in the PR. See
   [GIT_OPERATIONS.md](assets/GIT_OPERATIONS.md) § Ship.
 

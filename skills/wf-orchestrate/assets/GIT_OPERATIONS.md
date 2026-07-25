@@ -64,24 +64,29 @@ Worktree cleanup is mandatory — never leave an orphan.
 ## Ship (closeout)
 
 Close the sprint first, then publish it in the run's **one** push. `complete-sprint`
-archives and drains the sprint's working set into `<paths.archive>/<sprint_id>/` and
-resets the run state; committing those snapshots before the push carries them into the PR
-instead of stranding them as an uncommitted, un-pushed dirty tree:
+archives and drains the sprint's working set into `<paths.archive>/<sprint_id>/`, runs
+the close-time drain — trimming shipped ids from `paths.design_backlog`, draining served
+learnings from `paths.learnings`, and writing `paths.drain_report` (transient, for the
+next wf-sa run) — and resets the run state. Committing the snapshots **and the trimmed
+backlog/learnings** before the push carries the drain into the PR instead of stranding
+it as an uncommitted, un-pushed dirty tree:
 
 Capture the spec-fix decision report **before** `complete-sprint` drains it: read
 `paths.spec_decisions` if present — its blocks go in the PR body under **Spec decisions**.
 
 ```
 wf pipeline complete-sprint
-git add -A -- <paths.archive>
-git commit -m "sprint close: archive <sprint-id>"     # skip if nothing was archived (empty stage)
+git add -A -- <paths.archive> <paths.design_backlog> <paths.learnings>
+git commit -m "sprint close: archive + drain <sprint-id>"   # skip if nothing changed (empty stage)
 git push -u origin <sprint-branch>
 gh pr create --base <base> --head <sprint-branch> --title "<sprint summary>" --body "<body>"
 ```
 
-The PR body lists completed tasks, any escalated/blocked tasks, design issues, and — under
+The PR body lists completed tasks, any escalated/blocked tasks, design issues, the
+`drain` summary complete-sprint emitted (emptied designs, drained learnings, proof-gate
+candidates), and — under
 **Spec decisions** — the `paths.spec_decisions` blocks captured above, so the human reviews
-every autonomous spec fix (and any shipped requirement it superseded) alongside the diff.
+every autonomous spec fix (and any shipped behaviour it superseded) alongside the diff.
 
 `complete-sprint` resets the run state to `idle`, so it is the point of no return: if the
 push or PR then fails (auth, remote, conflict), the sprint is already closed locally —

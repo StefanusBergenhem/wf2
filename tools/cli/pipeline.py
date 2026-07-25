@@ -21,10 +21,15 @@ inspect/dispatch helpers.
 from __future__ import annotations
 
 import datetime
+import re
+import sys
 from pathlib import Path
 
 import archive
 import common
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "reconcile"))
+from reconcile import DEFAULT_TEST_GLOBS, harvest  # noqa: E402
 
 # Effective task status → bucket. Live state (pipeline_state.task_states[id].status)
 # wins; otherwise the sprint-authored status; otherwise "pending".
@@ -863,17 +868,214 @@ def _archive_history(rest):
     return 0
 
 
+# ── The close-time drain ─────────────────────────────────────────────────────
+#
+# The merge record (which tasks completed, what they cover/serve) is the drain signal
+# for the working state: complete-sprint trims shipped ids from the design backlog,
+# drains learnings whose last serving design just emptied, sweeps the slice's
+# superseded SYS-TC tags, and appends a drain report for wf-sa's proof gate
+# (capabilities never drain here — that takes the adequacy judgment).
+
+_BACKLOG_BULLET_RE = re.compile(r"^- \*\*((?:REQ|SYS-TC)-\d+)\*\*")
+_BACKLOG_LABEL_RE = re.compile(r"^\*\*(Component requirements|System test cases|Supersedes):\*\*")
+_DRIVER_ID_RE = re.compile(r"\b(?:CAP|L)-\d+\b")
+_ID_LANES = ("Component requirements", "System test cases")
+
+
+def _completed_tasks(sprint_doc, task_states):
+    tasks = [t for t in (sprint_doc.get("tasks") or []) if isinstance(t, dict) and t.get("id")]
+    return [t for t in tasks
+            if _effective_status(t["id"], t.get("status"), task_states) in _COMPLETED]
+
+
+def _shipped_ids(completed):
+    """(req+systc id set, {systc id: {description, covers}}) from the merged tasks."""
+    ids, scenarios = set(), {}
+    for t in completed:
+        cov = t.get("covers")
+        ids.update([cov] if isinstance(cov, str) else (cov or []))
+        for st in t.get("system_tests") or []:
+            if isinstance(st, dict) and st.get("id"):
+                ids.add(st["id"])
+                scenarios[st["id"]] = {"description": st.get("description", ""),
+                                       "covers": list(st.get("covers") or [])}
+    return ids, scenarios
+
+
+def _split_backlog(text):
+    """(preamble_lines, blocks) — a block starts at a `## ` heading and carries its
+    header line, body lines, and the driver ids of its `— serves` header."""
+    preamble, blocks, cur = [], [], None
+    for line in text.splitlines():
+        if line.startswith("## "):
+            cur = {"header": line, "lines": [], "serves": _DRIVER_ID_RE.findall(line)}
+            blocks.append(cur)
+        elif cur is None:
+            preamble.append(line)
+        else:
+            cur["lines"].append(line)
+    return preamble, blocks
+
+
+def _trim_block(block, shipped):
+    """Remove shipped id bullets (bullet line + indented continuations) from the block's
+    requirement/system-test lanes. Returns (kept_lines, trimmed_ids, remaining_ids) —
+    Supersedes bullets are neither trimmed nor counted as remaining work."""
+    kept, trimmed, remaining = [], [], []
+    label, skipping = None, False
+    for line in block["lines"]:
+        m = _BACKLOG_LABEL_RE.match(line)
+        if m:
+            label, skipping = m.group(1), False
+            kept.append(line)
+            continue
+        b = _BACKLOG_BULLET_RE.match(line)
+        if b and label in _ID_LANES:
+            if b.group(1) in shipped:
+                trimmed.append(b.group(1))
+                skipping = True
+                continue
+            remaining.append(b.group(1))
+            skipping = False
+        elif skipping and (line.startswith((" ", "\t"))):
+            continue  # a trimmed bullet's wrapped continuation goes with it
+        else:
+            skipping = False
+        kept.append(line)
+    return kept, trimmed, remaining
+
+
+def _block_title(block):
+    return block["header"].lstrip("# ").split("— serves")[0].strip()
+
+
+def _trim_backlog(path, shipped):
+    """Trim shipped ids; drop emptied blocks. Returns the drain facts."""
+    preamble, blocks = _split_backlog(path.read_text())
+    out_lines = list(preamble)
+    emptied, partial, emptied_serves = [], [], []
+    for block in blocks:
+        kept, trimmed, remaining = _trim_block(block, shipped)
+        if trimmed and not remaining:
+            emptied.append(_block_title(block))
+            emptied_serves.extend(block["serves"])
+            continue  # the whole block drains
+        if trimmed:
+            partial.append({"design": _block_title(block),
+                            "shipped": sorted(trimmed), "remaining": sorted(remaining)})
+        out_lines.append(block["header"])
+        out_lines.extend(kept)
+    path.write_text("\n".join(out_lines) + "\n")
+    surviving = "\n".join(out_lines)
+    return emptied, partial, emptied_serves, surviving
+
+
+def _drain_learnings(path, drained_ids):
+    doc = common.load_yaml(path)
+    entries = doc.get("learnings") or []
+    doc["learnings"] = [e for e in entries
+                        if not (isinstance(e, dict) and e.get("id") in drained_ids)]
+    _write_yaml(path, doc)
+
+
+def _superseded_sys_tc_survivors(slice_text, args):
+    """The slice's superseded SYS-TC ids still tagged in the test tree — the build was
+    required to remove them; a survivor is a finding for the next slice."""
+    m = re.search(r"^##\s+Supersedes\s*$(.*?)(?=^##\s|\Z)", slice_text,
+                  re.MULTILINE | re.DOTALL)
+    ids = re.findall(r"^- \*\*(SYS-TC-\d+)\*\*", m.group(1), re.MULTILINE) if m else []
+    if not ids:
+        return []
+    cfg_tests = (common.config_doc(args.config).get("paths") or {}).get("tests")
+    roots = [cfg_tests] if isinstance(cfg_tests, str) else list(cfg_tests or [])
+    root_dir = common.project_root(args.config)
+    dirs = [d for d in (root_dir / r for r in roots) if d.is_dir()]
+    if not dirs:
+        return []
+    harvested = harvest(dirs, DEFAULT_TEST_GLOBS)
+    return [{"id": rid, "files": sorted(set(harvested[rid]["files"]))}
+            for rid in ids if rid in harvested]
+
+
+def _drain_working_set(args, doc, sprint_doc, paths):
+    """Run the close-time drain; returns the drain summary (empty when no merge
+    record exists — nothing shipped, nothing to drain)."""
+    if not sprint_doc:
+        return {}
+    completed = _completed_tasks(sprint_doc, doc.get("task_states") or {})
+    shipped, scenarios = _shipped_ids(completed)
+
+    survivors = []
+    if paths.get("design_slice"):
+        sp = common.resolve_path(args.config, "design_slice", None)
+        if sp.exists():
+            survivors = _superseded_sys_tc_survivors(sp.read_text(), args)
+
+    emptied, partial, emptied_serves, surviving = [], [], [], ""
+    if paths.get("design_backlog"):
+        bp = common.resolve_path(args.config, "design_backlog", None)
+        if bp.exists() and shipped:
+            emptied, partial, emptied_serves, surviving = _trim_backlog(bp, shipped)
+
+    def unserved(prefix):
+        seen, out = set(), []
+        for did in emptied_serves:
+            if did.startswith(prefix) and did not in seen:
+                seen.add(did)
+                if not re.search(rf"\b{re.escape(did)}\b", surviving):
+                    out.append(did)
+        return out
+
+    drained_learnings = unserved("L-")
+    if drained_learnings and paths.get("learnings"):
+        lp = common.resolve_path(args.config, "learnings", None)
+        if lp.exists():
+            _drain_learnings(lp, set(drained_learnings))
+        else:
+            drained_learnings = []
+
+    candidates = [{"capability": cid,
+                   "shipped_scenarios": [{"id": sid, **info}
+                                         for sid, info in sorted(scenarios.items())
+                                         if cid in info["covers"]]}
+                  for cid in unserved("CAP-")]
+
+    return {
+        "emptied_designs": emptied,
+        "partially_shipped": partial,
+        "proof_gate_candidates": candidates,
+        "learnings_drained": drained_learnings,
+        "superseded_survivors": survivors,
+    }
+
+
+def _append_drain_report(args, paths, sprint_id, drain):
+    if not paths.get("drain_report") or not any(drain.values()):
+        return None
+    rp = common.resolve_path(args.config, "drain_report", None)
+    doc = common.load_yaml(rp, optional=True)
+    doc.setdefault("reports", []).append({"sprint_id": sprint_id, "closed_at": _now(), **drain})
+    _write_yaml(rp, doc)
+    return str(rp)
+
+
 def _complete_sprint(rest):
     """Close the sprint and reset the pipeline for the next one. Run during ship, before
-    the push, so its archive snapshots commit into the PR. When paths.archive is set,
-    snapshot the sprint's working set into
-    paths.archive/<sprint_id>/ as it drains — the sprint, the design-slice, and the
-    host design-issues file are moved out (drained), the design-backlog and final run
-    state are copied (reconcile drains the backlog on its own). The archive is a
-    write-only maintainer sink; no role reads
-    it. Then reset pipeline_state to a bare ``idle`` so the next run starts clean instead
-    of overlaying the shipped sprint's all-completed task states. When paths.archive is
-    unset, the sprint slot is simply cleared (no archive).
+    the push, so its archive snapshots and working-set trims commit into the PR.
+
+    The drain: from the merge record (completed tasks' covers/system_tests/serves),
+    trim shipped ids from paths.design_backlog (dropping emptied design blocks), drain
+    learnings whose last serving design emptied, sweep the slice's superseded SYS-TC
+    ids for surviving tags, and append the drain report (paths.drain_report) that hands
+    wf-sa its capability proof-gate candidates. Capabilities are NOT drained here —
+    only the adequacy judgment drains a capability.
+
+    When paths.archive is set, snapshot the working set into paths.archive/<sprint_id>/:
+    backlog + learnings + final run state are copied (backlog/learnings pre-trim), and
+    the sprint, design-slice, design-issues, and spec-decisions files are moved out
+    (drained). The archive is a write-only maintainer sink; no role reads it. Then reset
+    pipeline_state to a bare ``idle``. When paths.archive is unset the working-set slots
+    are simply cleared — the drain itself runs either way.
 
     Git is intentionally NOT touched — a pure file/state mutation."""
     args = common.base_parser("pipeline complete-sprint").parse_args(rest)
@@ -885,10 +1087,22 @@ def _complete_sprint(rest):
 
     paths = common.config_doc(args.config).get("paths") or {}
     archived = {}
-    if paths.get("archive"):
-        root = common.resolve_path(args.config, "archive", None)
-        # sprint + slice + design-issues drain out of the working set; backlog +
-        # run-state are snapshots.
+    root = common.resolve_path(args.config, "archive", None) if paths.get("archive") else None
+
+    # Pre-trim snapshots: the archive keeps the backlog/learnings as the sprint left them.
+    if root:
+        for key in ("design_backlog", "learnings"):
+            if paths.get(key):
+                p = common.resolve_path(args.config, key, None)
+                if p.exists():
+                    archived[key] = str(archive.snapshot(root, sprint_id, p, move=False))
+
+    drain = _drain_working_set(args, doc, sprint_doc, paths)
+    report_path = _append_drain_report(args, paths, sprint_id, drain)
+
+    if root:
+        # sprint + slice + design-issues + spec-decisions drain out of the working set;
+        # the final run state is a snapshot.
         if sprint_path.exists():
             archived["sprint"] = str(archive.snapshot(root, sprint_id, sprint_path, move=True))
         if paths.get("design_slice"):
@@ -908,10 +1122,6 @@ def _complete_sprint(rest):
             sdp = common.resolve_path(args.config, "spec_decisions", None)
             if sdp.exists():
                 archived["spec_decisions"] = str(archive.snapshot(root, sprint_id, sdp, move=True))
-        if paths.get("design_backlog"):
-            bp = common.resolve_path(args.config, "design_backlog", None)
-            if bp.exists():
-                archived["backlog"] = str(archive.snapshot(root, sprint_id, bp, move=False))
         if _state_path(args).exists():
             archived["pipeline_state"] = str(archive.snapshot(root, sprint_id, _state_path(args), move=False))
     else:
@@ -928,6 +1138,8 @@ def _complete_sprint(rest):
     common.emit({
         "sprint_id": sprint_id,
         "archived": archived,
+        "drain": drain,
+        "drain_report": report_path,
         "pipeline_state_reset": str(_state_path(args)),
     }, args.format)
     return 0

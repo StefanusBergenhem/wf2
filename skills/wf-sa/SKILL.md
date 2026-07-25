@@ -26,10 +26,10 @@ up in `paths.design_issues`. **If it is absent there, or its `status` is not `op
 `paths.decision_prep` and run default mode** — the escalation it prepared is already settled, and
 resuming it puts a dead run's decisions to the human.
 
-Otherwise you are resuming that escalation: **skip Phase 1's drain** — nothing has shipped
-since the escalation. Ground from the entry's `blockers[]` and `working_notes[]`,
+Otherwise you are resuming that escalation: **skip Phase 1's proof gate** — nothing has
+shipped since the escalation. Ground from the entry's `blockers[]` and `working_notes[]`,
 `paths.decision_prep` itself, the backlog design, and `paths.design_slice`, and **derive the
-requirement register** as Phase 1's grounding does — a redirection at Phase 4 folds back into
+system-test register** as Phase 1's grounding does — a redirection at Phase 4 folds back into
 Phase 3, which triages against it. Then enter at Phase 4 and put each prepared decision to
 the human, and carry on through Phase 6 — its step 3 re-cuts the slice and closes the entry.
 **Delete `paths.decision_prep` once the re-cut lands**; left behind, it hijacks the next run.
@@ -51,14 +51,19 @@ digest looks stale against the current tree, re-drill rather than trust it.
 You sit in a pipeline of draining logs: each role appends to its output and drains its input.
 **Capabilities** (wf-po appends) and **learnings** (wf-retrospective appends) are your
 inputs; the **design backlog** (`paths.design_backlog`, committed) is your output — your
-designed-but-unbuilt work. You:
+designed-but-unbuilt work, each design carrying its narrative, requirements, system test
+cases, and Supersedes list. The mechanics:
 
-- **drain the built** — a backlog id is built when a proving test carries its tag: `[REQ:<id>]`
-  for a component requirement, `[SYS-TC:<id>]` for a system test case. Run **reconcile**
-  (`<paths.tools>/reconcile/reconcile.py`, see its README) against the test tree and remove
-  every built id (then any emptied design) from the backlog — and drain each capability and
-  learning along with the last design serving it. Nothing stores "done"; reconcile derives it
-  from the tests.
+- **The backlog and learnings drain without you.** At sprint close, `wf pipeline
+  complete-sprint` trims from the backlog every id whose covering task merged, removes a
+  design when its last id goes, drains learnings no surviving design serves, sweeps the
+  slice's superseded `[SYS-TC:]` tags, and appends what it did — and the capabilities
+  that lost their last serving design — to `paths.drain_report`. Never trim the backlog
+  or drain a learning by hand.
+- **You drain capabilities — through the proof gate only** (Phase 1): a dispatched
+  **wf-adequacy** review finds the shipped scenario set covers the capability's whole
+  promise. Nothing stores "done"; it is derived from the tests, the source, and the
+  review.
 - **design new input** — shape a solution for each in-scope capability/learning and append it
   to the backlog. Its driver stays in its input log until the design's work ships; a capability
   or learning is already designed when a surviving backlog design serves it, which you read by
@@ -74,50 +79,41 @@ codebase's (re-derived by discover); only the ADRs remain.
 
 ### Phase 1 — Ground the change
 
-**First, drain what shipped.** Take steps 1–6 in that order: the driver drain (step 5) reads
-the `— serves` header of every design the trim (step 4) removes, so trimming first destroys
-the input it needs.
+**First, run the capability proof gate.** The mechanical drain already happened at sprint
+close (see **The drain pipeline**); what remains is the one judgment call — whether a
+capability whose designs have all shipped is *proven*.
 
-1. **Reconcile.** Run reconcile against the test tree (see **The drain pipeline**) to derive
-   which backlog ids are now built. A design whose ids are **all** built is *emptied*.
-2. **Collect the drivers of the emptied designs.** For each emptied design, read the ids in
-   its `— serves CAP-NNN / L-NNN` header and note them — this is step 5's input. Step 4
-   deletes those headers; an id you fail to collect here is unrecoverable, and its driver
-   then sits in `paths.capabilities` forever as a shipped-feature catalog entry.
-3. **Sweep the Supersedes list of each emptied design**, before step 4 removes it:
+1. **Read `paths.drain_report`.** Absent → no sprint closed since the last run: skip to
+   grounding. Each report entry carries:
+   - `proof_gate_candidates` — capabilities that lost their last serving design, each
+     with the SYS-TC scenarios the closing sprint shipped for it: step 2's input.
+   - `superseded_survivors` — superseded `[SYS-TC:]` tags the build failed to remove:
+     record each as a finding and fold its removal into this run's slice; never proceed
+     past one silently.
+   The human may name additional candidates the report cannot know (a capability
+   believed built before this report existed) — gate them identically.
+2. **Dispatch the proof gate per candidate** still present in `paths.capabilities`
+   (one already drained or removed by the human is skipped). Derive the system-test
+   register first (grounding step 3 below), then dispatch **`wf-adequacy`** with: the
+   capability's id and full statement, the report's shipped scenarios as the **claimed
+   scenarios**, and the register's other SYS-TC ids as **candidate shipped scenarios** —
+   omitting the candidates falsely fails the drain (an earlier design may have shipped
+   proof this report cannot see). **Gate: only an `adequate` verdict drains the
+   capability.** Never substitute your own read of the scenario set for the dispatched
+   review: you wrote the designs it must distrust.
+   - **adequate** — snapshot, then remove the capability's entry from `paths.capabilities`:
 
-   ```sh
-   python3 <paths.tools>/reconcile/retired.py --ids <the superseded ids> \
-     --tests <root> [--tests <root> ...]        # every root in paths.tests
-   ```
-
-   Pass a `--tests` for **each** root in `paths.tests`; it sweeps their union. Dropping one hides
-   the tags it holds, so a superseded id reads as swept when it is still in the tree.
-
-   A non-zero exit lists superseded tags still in the test tree — the build failed to remove
-   them. Record each survivor as a finding and fold its removal into the next slice; never
-   drain past it silently.
-4. **Trim the backlog.** Remove every now-built requirement from `paths.design_backlog`, and every
-   emptied design.
-5. **Drain the drivers whose last design just went.** For each id collected in step 2, grep
-   the **now-trimmed** `paths.design_backlog` for it:
-   - **a hit** — another surviving design still serves it: **leave it** in its log.
-   - **no hit** — nothing designs it any more: it drains.
-
-   Snapshot a log before you remove anything from it — an unsnapshotted drain is
-   unrecoverable:
-
-   ```sh
-   python3 <paths.tools>/cli/wf archive add <paths.capabilities> --label capabilities
-   python3 <paths.tools>/cli/wf archive add <paths.learnings> --label learnings
-   ```
-
-   Then remove the draining ids from `paths.capabilities` and `paths.learnings`.
-6. **Commit the trim**, staging `paths.design_backlog`, the drained logs, and `paths.archive` (staging
-   the whole dir also commits any closeout snapshots left pending from the last sprint). If
-   the environment forbids committing (sandbox, CI, detached-HEAD or read-only worktree), the
-   drain is already written — report the trim as uncommitted and carry on; that is a clean
-   outcome, not a failure.
+     ```sh
+     python3 <paths.tools>/cli/wf archive add <paths.capabilities> --label capabilities
+     ```
+   - **inadequate** — keep it open and append the verdict's residuals to its `notes`
+     (residual-scoped) — they are input to this run's design, not a finding to park.
+3. **Delete `paths.drain_report` and commit**, staging `paths.capabilities` and
+   `paths.archive` (staging the whole dir also commits closeout snapshots left pending
+   from the last sprint). The commit body names each drained capability's adequacy
+   digest path. If the environment forbids committing (sandbox, CI, detached-HEAD or
+   read-only worktree), the drain is already written — report it as uncommitted and
+   carry on; a clean outcome, not a failure.
 
 Then ground the new change:
 
@@ -129,16 +125,20 @@ Then ground the new change:
 2. Read `paths.discover_brief` for the current system shape. **HALT if it is absent** — ask the user
    to run `wf-discover` first, or to confirm the repo is greenfield (design from the
    drivers alone, no existing components to ground against).
-3. **Derive the requirement register and read its in-scope entries** — what the system
-   already promises today, the peer of the brief:
+3. **Derive the system-test register and read its in-scope entries** — the end-to-end
+   behaviour the system already provably promises, the peer of the brief:
 
    ```sh
    python3 <paths.tools>/reconcile/register.py --tests <root> [--tests <root> ...]   # every root in paths.tests
    ```
 
-   Read only the entries touching the components in scope (the register covers the whole
-   repo); you triage every new requirement against them in Phase 3. On a greenfield repo
-   with no test tree yet, skip this — nothing is shipped to triage against.
+   Each row is a shipped scenario with its description; you triage every new scenario and
+   requirement against the in-scope rows in Phase 3, and the adequacy dispatches (Phase 1
+   step 2, Phase 5) take the rows as candidate scenarios. Shipped *component* behaviour
+   has no register — its statements died with their slices: when it matters to the
+   triage, read the component's tests (the test names and assertions are the behaviour)
+   or drill. On a greenfield repo with no test tree yet, skip this — nothing is shipped
+   to triage against.
 4. **Ground every in-scope item in a drill digest before Phase 2.** For each in-scope
    capability/learning that touches existing code, a drill digest covering the
    components and seams it implicates MUST exist before you shape anything — from
@@ -203,13 +203,15 @@ satisfy all of it. If they cannot, the driver is too big to design whole — **s
 the human and stop**. Never design part of one, and never split, renumber, or reword a driver
 yourself.
 
-**Triage every requirement against the in-scope register entries** (Phase 1):
-- **unrelated** — no shipped requirement overlaps: new id, proceed;
-- **extends** — it builds on a shipped requirement: new id, and note the existing id in
-  its trace;
-- **supersedes** — it invalidates a shipped requirement: record the superseded id (REQ or
-  SYS-TC), a one-line reason, and the successor id. A shipped behavior this change removes
-  outright is also a supersession — record it with no successor ("retired, no successor").
+**Triage every requirement against what is already shipped** — the in-scope register
+rows (Phase 1) and, where component behaviour matters, the component's own tests:
+- **unrelated** — nothing shipped overlaps: proceed;
+- **extends** — it builds on shipped behaviour: note what it extends in its trace;
+- **supersedes** — it invalidates shipped behaviour. For an end-to-end scenario, record
+  the superseded `SYS-TC-<n>`; for component behaviour (which has no durable id), name
+  the proving test file(s) and the behaviour retired. Either way: a one-line reason and
+  the successor requirement id — or "retired, no successor" when the change removes the
+  behavior outright.
 Every supersession is presented at Phase 4 like an assumption: the human ratifies that
 shipped behavior is being changed or retired.
 
@@ -229,17 +231,11 @@ wiring step is how a feature ships half-built: a `nil`-wired dependency that com
 silently does nothing. The Tech Lead orders the resulting per-component
 requirements with task `depends_on`.
 
-Give each requirement a **repo-unique id** (per `references/requirement-syntax.md`). Do not
-number them by hand — run the allocator for the whole set you derived:
-
-```sh
-python3 <paths.tools>/reconcile/next_id.py --count <how many you are minting> \
-  --scan <each root in paths.tests> --scan <paths.design_backlog> --scan <paths.adrs>
-```
-
-Assign the printed ids in order. If alignment (Phase 4) adds a requirement, continue numbering
-from the highest you have already assigned this session — re-running the allocator before you
-commit hands back the same base, so two requirements would take the same id.
+Give each requirement a **repo-unique id** (per `references/requirement-syntax.md`):
+mint from `max(id_counters.req in .wf/config.yaml, highest REQ-<n> in
+paths.design_backlog) + 1` upward. If alignment (Phase 4) adds a requirement, continue
+from the highest you have assigned this session. Ids only ever increase — never renumber,
+never reuse; Phase 6 bumps the counter to the highest you minted.
 **Self-check each against the INCOSE checklist** in the reference.
 
 **Write the interface contract for every new component and widened shared seam.** A
@@ -266,12 +262,8 @@ writing an end-to-end scenario from memory smuggles in component-level (EARS) th
 seam mocks that make it not a system test. For each end-to-end behaviour the change delivers,
 write a **system test case**: a Gherkin-light scenario that **covers the capability**
 (`Covers: CAP-<n>`), never a component requirement. It answers directly to the capability —
-there is no requirement above it. Give each a repo-unique `SYS-TC-<n>` id from its own lane:
-
-```sh
-python3 <paths.tools>/reconcile/next_id.py --prefix SYS-TC --count <how many> \
-  --scan <each root in paths.tests> --scan <paths.design_backlog> --scan <paths.adrs>
-```
+there is no requirement above it. Give each a repo-unique `SYS-TC-<n>` id from its own
+lane, minted the same way from `id_counters.sys_tc` (Phase 6 bumps it).
 
 A single-component change with no observable end-to-end behaviour needs none.
 
@@ -290,11 +282,17 @@ has a stop in it; the design is not a report you deliver, it is a thing you talk
 
 #### 4a — Render the view, then hand it over and stop
 
-Author the design graph as JSON and pipe it to the renderer. It is a transient
-conversation aid — never commit it.
+Author the design graph as JSON, **write it to `paths.design_graph`**, and render it.
+Both files are transient — never committed. The graph file outlives this session's
+render: wf-tl reads it as the change's shape, so re-write it (and re-render) whenever
+the design shifts, including Phase 4's redirections.
 
 ```sh
-cat <<'JSON' | python3 <paths.tools>/design_view/render_design.py --out <paths.design_view>
+# author the JSON into paths.design_graph, then:
+python3 <paths.tools>/design_view/render_design.py --out <paths.design_view> < <paths.design_graph>
+```
+
+```json
 { "title": "<change summary>",
   "components":   [{"id": "auth", "label": "auth", "state": "existing",
                     "note": "<what THIS CHANGE does to it — omit when it is untouched>"}],
@@ -309,15 +307,14 @@ cat <<'JSON' | python3 <paths.tools>/design_view/render_design.py --out <paths.d
                     "options": [{"label": "<option>", "pros": "…", "cons": "…"}],
                     "recommended": "<option label>", "status": "open",
                     "components": ["auth"]}] }
-JSON
 ```
 
 Name each component with the id `paths.discover_brief` lists for it (e.g. `internal/auth`) — the
 renderer resolves an id it shares with the brief, and invents nothing for one it does not.
 **Author only what this change adds.** The renderer reads discover's structure model and
 the test tree itself — straight from `.wf/config.yaml`, no path from you — and derives
-every component's description and the requirements and system tests already shipped into
-it. Retyping those burns your context and drifts from the tests, which are the truth.
+every component's description and the system-test scenarios already proven. Retyping
+those burns your context and drifts from the tests, which are the truth.
 
 `state` marks the move — components `existing | new | split | merged | removed`,
 dependencies `existing | added | removed | changed`. Every non-obvious decision,
@@ -339,17 +336,23 @@ diagram HTML — a hand-built artifact cannot be regenerated and rots.
 
 Give the human the orientation the diagram cannot: **several paragraphs of plain prose** —
 what you designed and *why it came out this way*. Cover the shape you chose and the force
-that drove it, how the change flows through the components end to end, what is new against
-what was already there, and what you are about to ask them to decide. Point at the view as
-you go ("the two green nodes are new"). No question box in this message — they are reading,
-not answering. Then **WAIT**, inviting them to react to the design as a whole before you
+that drove it, how the change flows through the components end to end — **wiring
+included** (composition root, orchestration) — what is new against what was already
+there, and what you are about to ask them to decide. Point at the view as you go ("the
+two green nodes are new"). No question box in this message — they are reading, not
+answering. Then **WAIT**, inviting them to react to the design as a whole before you
 narrow into single decisions.
+
+This walk is the draft of the design's **narrative** — Phase 6 records it (updated for
+everything the alignment changes) in the backlog block and the slice, where the Tech
+Lead and the build read it as the change's story. Write it to survive the handover, not
+as a throwaway summary.
 
 #### 4c — Then take the decisions, one at a time
 
 Only now start questioning. Present each non-obvious decision, each **assumption** from
 Phase 3 (the chosen reading against the rejected one), and each **supersession** (the
-shipped requirement invalidated, why, and its successor or "retired, no successor") in the
+shipped behaviour invalidated, why, and its successor or "retired, no successor") in the
 **decision brief** format below — **one per message** — and **WAIT** for the answer before
 the next.
 
@@ -378,9 +381,21 @@ with its justification, or the conflict it surfaces. These verdicts become the d
 does each move still hold given the others (or did a later decision undercut it), and does no
 requirement smuggle a design choice that belongs in an ADR?
 
-This is the soundness gate. If a heuristic fails or a conflict surfaces, return to Phase 2 or 3
-and re-settle it — do not paper over it in the slice, and do not record a pass you cannot
-justify.
+**Then gate the scenario set.** For each capability this design serves, dispatch the
+**`wf-adequacy`** agent with: the capability's id and full statement, the **claimed
+scenarios** — this design's SYS-TC ids covering it, each with its Given/When/Then inline
+(they are not built yet; the agent cannot grep them) — and, as **candidate shipped
+scenarios**, the register's SYS-TC ids. **Do not hand over on an `inadequate` verdict:**
+fold each residual back into
+Phase 3 — a scenario for the path it names, plus any requirement the scenario needs — and
+re-dispatch until adequate. A residual this design genuinely cannot cover means the driver
+is too big to design whole — surface it to the human and stop (the Phase 3 rule).
+Skip the dispatch only when the design serves no capability (a
+learnings-only hardening design has no promise to judge).
+
+This is the soundness gate. If a heuristic fails, a conflict surfaces, or the scenario set
+comes back inadequate, return to Phase 2 or 3 and re-settle it — do not paper over it in
+the slice, and do not record a pass you cannot justify.
 
 ### Phase 6 — Record & commit
 
@@ -396,15 +411,21 @@ The judgement already happened; this is capture.
    second block for the same drivers and the defective one's never-to-be-built ids linger
    there forever, so the design never empties and its drivers never drain. Shape per
    `assets/design-backlog.md.tmpl`, headed `## <design title> — serves CAP-NNN / L-NNN`
-   naming **every** driver the design serves: the design's component requirements (each with
-   its repo-unique id, owner, and driver), its **system test cases** (each `SYS-TC-<n>`,
-   covering a capability), its **Supersedes** list (each superseded id with its one-line
+   naming **every** driver the design serves: the design's **narrative** (the Phase 4b
+   walk, updated for everything the alignment changed), its component requirements (each
+   with its repo-unique id, owner, and driver — and, when its proof is a gate/config fact
+   rather than a test, `proof: inspection — <the source fact>` per
+   `references/requirement-syntax.md`), its **system test cases** (each `SYS-TC-<n>`,
+   covering a capability), its **Supersedes** list (each entry with its one-line
    reason and successor id, or "retired, no successor"), the architecture moves, and the ADRs
-   that bind it. A driver missing from that header never drains — Phase 1's drain reads it
-   there. Reference the brief and drill-cache by path — do **not** restate structure.
+   that bind it. A driver missing from that header never drains — the close-time drain
+   reads it there. Reference the brief and drill-cache by path — the narrative describes
+   only the change; do **not** restate existing structure.
 3. **Cut the design-slice.** Fill `paths.design_slice` from `assets/design-slice.md.tmpl` with a
    **buildable increment** of the backlog — the whole backlog if it fits one slice, else a
-   coherent subset along the dependency spine: its requirements (with owners and drivers), the
+   coherent subset along the dependency spine: the **design narrative** (the backlog
+   design's narrative, excerpted to this increment when the design spans several slices),
+   its requirements (with owners and drivers), the
    **system test cases** for its end-to-end behaviours, the moves, the **interface contracts**
    for its new/widened seams, the **NFR & authz** outcomes, the **Supersedes** list (each
    entry ratified at Phase 4), the binding ADRs (new + standing),
@@ -413,8 +434,9 @@ The judgement already happened; this is capture.
    **Gate: run `python3 <paths.tools>/cli/wf slice check`. Do not proceed to step 4 until it
    reports `verdict: pass` (exit 0)** — a failure names an assumption the human never
    ratified (return to Phase 4 and close it, never edit the marker to silence the gate),
-   or an ADR citation that resolves to nothing, to the wrong file, or ambiguously across
-   two ADR sets. Read the `adr_sets` it lists: any set you did not sweep in Phase 2 may
+   a missing or empty **Design narrative** section (write the story, never a filler
+   sentence to silence the gate), or an ADR citation that resolves to nothing, to the
+   wrong file, or ambiguously across two ADR sets. Read the `adr_sets` it lists: any set you did not sweep in Phase 2 may
    hold a standing constraint on this change — read it before handing over. Check each
    `adr_citations` title against the decision you cited it for; a title that names a
    different decision means the citation points at the wrong ADR.
@@ -428,12 +450,14 @@ The judgement already happened; this is capture.
    or the environment forbids committing (sandbox, CI, detached-HEAD or read-only worktree),
    the durable files are already written (steps 1–2) — **report exactly what is left
    uncommitted and stop. A clean outcome, not a failure.**
-5. On approval, commit the **durable** files — the new/changed ADRs, the
-   `paths.design_backlog`, and any lint/gate rule step 1 added. The design-slice is
-   gitignored (transient) — nothing to commit for it.
+5. On approval, first bump `id_counters.req` / `id_counters.sys_tc` in `.wf/config.yaml`
+   to the highest id you minted this session (skip either you minted none in). Then
+   commit the **durable** files — the new/changed ADRs, the
+   `paths.design_backlog`, the config when you bumped a counter, and any lint/gate rule
+   step 1 added. The design-slice is gitignored (transient) — nothing to commit for it.
    Stage explicit paths — never `git add .`:
    ```sh
-   git add <paths.adrs>/<new-or-changed ADRs> <paths.design_backlog> <lint/gate rules from step 1>
+   git add <paths.adrs>/<new-or-changed ADRs> <paths.design_backlog> .wf/config.yaml <lint/gate rules from step 1>
    git diff --cached --stat   # verify nothing unexpected is staged
    ```
 6. Glance at recent commit style (`git log --oneline -5`) and commit with a subject like

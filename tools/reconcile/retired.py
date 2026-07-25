@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
-"""retired.py — the superseded-id sweep (wf2 retirement check).
+"""retired.py — the superseded SYS-TC sweep (wf2 retirement check).
 
-Verifies that a list of superseded requirement ids no longer appears as a
-proving-test tag anywhere in the test tree. When the SA supersedes a shipped
-requirement, the sprint that builds the successor must update or delete the
-old proving test and its tag — this is the mechanical check that it happened.
+Verifies that a list of superseded system-test ids no longer appears as a
+`[SYS-TC:]` proving-test tag anywhere in the test tree. When the SA supersedes a
+shipped scenario, the sprint that builds the successor must update or delete the
+old proving test and its tag — this is the mechanical check that it happened
+(complete-sprint runs the same sweep at close from the slice's Supersedes list).
 
-Reuses reconcile.py's harvester, so it sweeps both lanes ([REQ:<id>] and
-[SYS-TC:<id>]) with the same exact-id matching (REQ-2 never matches REQ-20).
+Reuses reconcile.py's harvester: exact-id matching (SYS-TC-2 never matches
+SYS-TC-20), test files only. Only SYS-TC ids are sweepable — component
+requirements are not tagged in code, so a REQ id here is an input error, not a
+vacuous pass.
 
 Usage:
-    retired.py --ids <id> [<id> ...] --tests <test-root>
+    retired.py --ids <SYS-TC-id> [<id> ...] --tests <test-root>
 
 Exit: 0 when every id is gone; 1 when any id survives (each survivor listed
 with the files still carrying its tag); 2 on input error. Stdlib only.
@@ -24,9 +27,9 @@ from reconcile import DEFAULT_TEST_GLOBS, harvest  # noqa: E402
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description="wf2 superseded-id sweep")
+    ap = argparse.ArgumentParser(description="wf2 superseded SYS-TC sweep")
     ap.add_argument("--ids", nargs="+", required=True,
-                    help="superseded ids that must be gone (REQ-<n> / SYS-TC-<n>)")
+                    help="superseded system-test ids that must be gone (SYS-TC-<n>)")
     ap.add_argument("--tests", action="append", required=True, metavar="PATH",
                     help="test-tree root to sweep (repeatable; sweeps the union of "
                          "roots — pass each root of a split test tree)")
@@ -34,6 +37,12 @@ def main(argv=None):
                     help="extra test-file name glob, added to the built-in defaults "
                          "(repeatable) — e.g. '*Test.java'")
     args = ap.parse_args(argv)
+
+    bad_ids = [i for i in args.ids if not i.startswith("SYS-TC-")]
+    if bad_ids:
+        print(f"retired: only SYS-TC ids are sweepable (component requirements are not "
+              f"tagged in code): {', '.join(bad_ids)}", file=sys.stderr)
+        return 2
 
     for troot in args.tests:
         if not os.path.isdir(troot):

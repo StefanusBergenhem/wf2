@@ -25,7 +25,8 @@ defective statement — a stale copy reproduces the defect:
 Never reshape a boundary, add requirements, or redesign beyond the defect — a fix that needs
 re-design is the over-scope halt (SKILL.md Step 2), not a bigger amendment.
 
-If your amendment retires or changes an already-shipped requirement (one the test tree tags
-`[REQ:<id>]` / `[SYS-TC:<id>]`), name it on the report's **Superseded** line in Step 4.
+If your amendment retires or changes already-shipped behaviour (a scenario the test tree
+tags `[SYS-TC:<id>]`, or component behaviour named by its proving test), name it on the
+report's **Superseded** line in Step 4.
 
 Return to SKILL.md Step 4.

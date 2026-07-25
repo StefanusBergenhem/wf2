@@ -6,15 +6,15 @@ Contents:
 - Complementary-pair rule
 - Measurable NFRs (five elements)
 - Where a cross-cutting requirement lives
+- Proof: merge record or inspection
 - The INCOSE checklist
 - What not to write
 
 Each requirement is a **component requirement**: an EARS statement that one named
 component owns, tracing to the capability or learning that drove it. Give each a
-**repo-unique id** (`REQ-<n>`, monotonic over the whole repo, never reused) — a proving
-test tags it `[REQ:REQ-<n>]` and reconcile matches the tag to confirm it is built, so a
-design-local id would collide with a retired design's lingering tag. You write the
-requirement; the acceptance criteria that operationalize it are the Tech Lead's.
+**repo-unique id** (`REQ-<n>`, minted from `id_counters.req` in `.wf/config.yaml`,
+monotonic, never reused). You write the requirement; the acceptance criteria that
+operationalize it are the Tech Lead's.
 
 ## The five EARS forms
 
@@ -89,6 +89,29 @@ altitude is the capability. Place it by kind:
 - A **budget or constraint** (a latency budget split across components, a technology
   bound) → an ADR. A budget is a decision, not a behavior; record it where decisions
   live.
+
+## Proof: merge record or inspection
+
+Every requirement is proven by its **covering task merging**: the Tech Lead's acceptance
+criteria mandate the tests (or gates) that prove it, the merge gate runs them green, and
+`wf pipeline complete-sprint` trims the id from the backlog at close. The default needs
+no marking.
+
+A requirement whose proof is a **gate or config fact** — a lint rule, a CI check, a build
+gate, a doc convention the gate enforces — cannot be observed by a test. Append the
+annotation inside the backlog entry's owner parenthetical:
+
+```
+- **REQ-27** — <EARS statement>  *(owner: <component> · L-NNN · proof: inspection —
+  <the source fact that proves it, e.g. "depguard rule denying internal/repository
+  imports in backend/.golangci.yml, run by the lint gate">)*
+```
+
+The annotation directs the Tech Lead: every acceptance criterion for such a requirement
+is gate-verified (`verified_by`), and its task mandates no test — so name the fact
+concretely enough that the TL can name the verifying gate command. It drains like any
+other id: its covering task merged with those gates green. Use this lane only when no
+test can observe the behaviour; a behaviour a test *could* prove takes tests.
 
 ## The INCOSE checklist
 

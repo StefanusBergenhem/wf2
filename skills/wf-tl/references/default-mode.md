@@ -11,12 +11,20 @@ a task.
 
 ## Phase 1 — Ground
 
-1. Read `paths.design_slice` — one **buildable increment**:
-   the component requirements (each with its owner and driver), the **system test cases**
-   (wf-sa wrote them; you plan each into a task), the architecture moves, the governing ADRs,
+1. Read `paths.design_slice` — one **buildable increment**. **Read its `## Design
+   narrative` first**: it is the change's story — the shape chosen, how each end-to-end
+   behaviour flows through the components in order (wiring included), and each
+   component's role. Decompose against that story; a task set that satisfies every
+   requirement but does not assemble the narrative's flow is a wrong decomposition.
+   Then the component requirements (each with its owner and driver), the **system test
+   cases** (wf-sa wrote them; you plan each into a task), the architecture moves, the
+   governing ADRs,
    and the **risks wf-sa flagged for you** (fragile seams, ordering constraints, external deps
    — they shape your decomposition). Its requirements are your whole scope. **HALT and report
    if it is absent**.
+   When `paths.design_graph` exists, read it too — the authored change-graph (components
+   with their states, dependency edges, allocation) is the narrative's shape in
+   mechanical form.
 2. Read the relevant `paths.adrs` for the rationale you must respect when writing
    `implementation_notes`.
 3. Read source **targeted to the decomposition decision, not wholesale.** The slice already
@@ -54,15 +62,16 @@ removal, re-charter, or dependency-edge change) is carried out inside the edit s
 whose requirement owns a component the move restructures — fold its files into that task. A
 move no in-slice requirement's edit set carries is a slice defect (**Halt conditions**).
 
-**Fold in the slice's Supersedes list.** For each superseded id the slice's **Supersedes**
-section carries, locate its proving test file(s) mechanically — grep the test tree for
-`[REQ:<old-id>]` / `[SYS-TC:<old-id>]` (or derive them via
-`python3 <paths.tools>/reconcile/register.py --tests <root> [--tests <root> ...]`, one for every
-root in `paths.tests`) — never guess. Add those
+**Fold in the slice's Supersedes list.** For a superseded **SYS-TC id**, locate its
+proving test file(s) mechanically — grep the test tree for `[SYS-TC:<old-id>]` (or derive
+them via `python3 <paths.tools>/reconcile/register.py --tests <root> [--tests <root> ...]`,
+one for every root in `paths.tests`) — never guess. For a superseded **component
+behaviour**, the entry itself names the proving test file(s). Add those
 files to `files_to_touch` of the task covering the successor requirement (a dedicated
 removal task when the entry has no successor), with an explicit note in its
-`implementation_notes`: update or delete the old proving test and its tag — a superseded
-tag must not survive the sprint.
+`implementation_notes`: update or delete the old proving test — and, for a SYS-TC, its
+tag: a superseded tag must not survive the sprint (complete-sprint sweeps it at close
+and reports a survivor as a finding).
 
 **Plan the slice's system test cases.** For each `SYS-TC-<n>` case wf-sa wrote, add an e2e
 task whose `system_tests` names that case's id (the materializer fills its text). The case

@@ -27,10 +27,56 @@ YAML
 SLICE="$PROJ/.wf/design-slice.md"
 wf() { "$PYTHON" "$WF" "$@" --config "$PROJ/.wf/config.yaml"; }
 
-# no assumptions section at all -> pass
+# A reusable narrative block — the A6 gate requires one on every passing slice.
+NARR='## Design narrative
+
+The widget gains a validation seam. Flow: API handler -> core validator -> store,
+wired in the composition root.
+'
+
+# ---------------------------------------------------------------------------
+# Design narrative (A6) — the section is mandatory and must hold prose
+# ---------------------------------------------------------------------------
+
+# no narrative section at all -> fail with A6
 cat > "$SLICE" <<'MD'
 # Design-slice — widget
 
+## Component requirements
+
+- **REQ-1** — the widget does X  *(owner: core · CAP-1)*
+MD
+OUT="$(wf slice check --format json)"; RC=$?
+[ "$RC" -eq 1 ] && ok "missing narrative exits 1" || bad "narrative missing exit" "rc=$RC $OUT"
+[ "$(jget "$OUT" "any(f['code']=='A6' for f in d['errors'])")" = "True" ] \
+  && ok "missing narrative finding is A6" || bad "A6 code" "$OUT"
+
+# a narrative section holding only comments/blanks -> still A6
+cat > "$SLICE" <<'MD'
+# Design-slice — widget
+
+## Design narrative
+
+<!-- write the story here -->
+
+## Component requirements
+
+- **REQ-1** — the widget does X  *(owner: core · CAP-1)*
+MD
+OUT="$(wf slice check --format json)"; RC=$?
+[ "$RC" -eq 1 ] && ok "comment-only narrative exits 1" || bad "narrative empty exit" "rc=$RC $OUT"
+[ "$(jget "$OUT" "any(f['code']=='A6' for f in d['errors'])")" = "True" ] \
+  && ok "comment-only narrative finding is A6" || bad "A6 empty code" "$OUT"
+
+# ---------------------------------------------------------------------------
+# Assumptions (A3)
+# ---------------------------------------------------------------------------
+
+# narrative present, no assumptions section -> pass
+cat > "$SLICE" <<MD
+# Design-slice — widget
+
+$NARR
 ## Component requirements
 
 - **REQ-1** — the widget does X  *(owner: core · CAP-1)*
@@ -80,7 +126,7 @@ printf -- '---\nid: ADR-013\ntitle: widget port\n---\n\n## Context\n' \
 printf '# in-process goroutine workers\n' > "$PROJ/doc/design/adrs/ADR-011.md"
 
 # a citation resolving to exactly one ADR passes, and echoes that ADR's own title
-printf '# slice\n\n- bound by ADR-013\n' > "$SLICE"
+printf '# slice\n\n%s\n- bound by ADR-013\n' "$NARR" > "$SLICE"
 OUT="$(wf slice check --format json)"; RC=$?
 [ "$RC" -eq 0 ] && ok "resolvable ADR citation exits 0" || bad "adr ok exit" "rc=$RC $OUT"
 [ "$(jget "$OUT" "d['adr_citations'][0]['title']")" = "widget port" ] \
@@ -101,7 +147,7 @@ OUT="$(wf slice check --format json)"; RC=$?
   && ok "A5 lists both defining paths" || bad "A5 collide" "$OUT"
 
 # path-qualified, it resolves — and the echoed title exposes a mis-pointed citation
-printf '# slice\n\n- baseline edited in place (doc/design/adrs/ADR-011)\n' > "$SLICE"
+printf '# slice\n\n%s\n- baseline edited in place (doc/design/adrs/ADR-011)\n' "$NARR" > "$SLICE"
 OUT="$(wf slice check --format json)"; RC=$?
 [ "$RC" -eq 0 ] && ok "path-qualified colliding id resolves" || bad "adr path exit" "rc=$RC $OUT"
 [ "$(jget "$OUT" "d['adr_citations'][0]['title']")" = "in-process goroutine workers" ] \
@@ -115,7 +161,7 @@ OUT="$(wf slice check --format json)"; RC=$?
   && ok "A4 names where the ADR actually lives" || bad "A4 badpath" "$OUT"
 
 # a two-id shorthand 'REQ-216/ADR-013' is not a path citation — ADR-013 still resolves (L-066)
-printf '# slice\n\n- REQ-216/ADR-013 governs this door\n' > "$SLICE"
+printf '# slice\n\n%s\n- REQ-216/ADR-013 governs this door\n' "$NARR" > "$SLICE"
 OUT="$(wf slice check --format json)"; RC=$?
 [ "$RC" -eq 0 ] && ok "spec-id shorthand before an ADR is not a path citation" || bad "shorthand exit" "rc=$RC $OUT"
 [ "$(jget "$OUT" "any(f['code']=='A4' for f in d['errors'])")" = "False" ] \

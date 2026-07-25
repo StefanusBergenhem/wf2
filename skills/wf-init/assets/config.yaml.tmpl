@@ -36,14 +36,15 @@ paths:
                                               # token/tool rows. wf-retrospective drains it to
                                               # paths.archive at closeout, so it holds one cycle,
                                               # not all history (bounds the retrospective's own read).
-  capabilities: ".wf/CAPABILITIES.yaml"       # User-voice capabilities (wf-po appends; wf-sa drains when built). Committed.
+  capabilities: ".wf/CAPABILITIES.yaml"       # User-voice capabilities (wf-po appends; wf-sa drains when proven: system tests shipped + adequacy review). Committed.
 
-  # Test-tree roots — every root the tag scanners sweep for [REQ:]/[SYS-TC:] tags
-  # (reconcile.py, register.py, retired.py, next_id.py, render_design.py). A LIST, because
-  # the "test tree" is not one dir in a polyglot repo: Go's tests sit beside their source
-  # (so the root is the source root), while a TS app's live under its src, and e2e in its
-  # own tree. Coverage is the union across the roots. wf-init captures the real roots at
-  # init; the repo root is the safe fallback (correct, just slower — it greps vendored dirs).
+  # Test-tree roots — every root the tag scanners sweep for [SYS-TC:] tags
+  # (register.py, retired.py, render_design.py, complete-sprint's superseded sweep). A
+  # LIST, because the "test tree" is not one dir in a polyglot repo: Go's tests sit beside
+  # their source (so the root is the source root), while a TS app's live under its src, and
+  # e2e in its own tree. Coverage is the union across the roots. wf-init captures the real
+  # roots at init; the repo root is the safe fallback (correct, just slower — it greps
+  # vendored dirs).
   tests: ["."]
 
   # Learnings — distilled from telemetry by wf-retrospective. First-class design
@@ -56,17 +57,19 @@ paths:
   # design-backlog (committed); the design-slice, drill-cache, and sprint are transient —
   # regenerated per change, consumed by the next role, never hand-maintained.
   adrs: ".wf/adrs"                             # Durable architecture decision records (wf-sa). Committed dir, one .md per ADR.
-  design_backlog: ".wf/design-backlog.md"      # wf-sa's designed-but-unbuilt work; drains as reconcile shows it built. Committed.
+  design_backlog: ".wf/design-backlog.md"      # wf-sa's designed-but-unbuilt work; complete-sprint trims built ids from the merge record at sprint close. Committed.
   design_slice: ".wf/transient/design-slice.md"   # wf-sa cuts this from the backlog for wf-tl; retained through build, drained at complete-sprint. Transient.
   design_view: ".wf/transient/design-view.html"   # wf-sa interactive design diagram (render_design.py). Transient.
+  design_graph: ".wf/transient/design-graph.json" # wf-sa's authored change-graph (the renderer's input); wf-tl reads it to plan against the change's shape. Transient.
+  drain_report: ".wf/transient/drain-report.yaml" # complete-sprint appends what each closed sprint drained (emptied designs, drained learnings, capabilities that lost their last serving design); wf-sa's proof gate consumes and deletes it. Transient.
   domain_view: ".wf/transient/domain-view.html"   # wf-sa entity/domain-model diagram (render_design.py entity mode). Transient.
   decision_prep: ".wf/transient/decision-prep.md" # A capability decision the fixer could not take autonomously (wf-spec-fix on a capability halt): the brief + render_design decisions fields; the human's next wf-sa run presents it, then deletes it. Transient.
-  drill_cache: ".wf/transient/drill-cache"        # Shared scout digests (wf-po/wf-sa dispatch wf-drill, which appends; both read). Transient dir.
+  drill_cache: ".wf/transient/drill-cache"        # Shared scout digests (wf-po/wf-sa dispatch wf-drill, wf-sa also wf-adequacy; the agents append, both roles read). Transient dir.
   sprint: ".wf/transient/sprint.yaml"             # wf-tl task DAG the orchestrator executes. Transient.
 
   # Maintainer research archive (committed). WRITE-ONLY: the drain sites snapshot each
-  # artifact here as it leaves the working set (capabilities/learnings when wf-sa drains
-  # their shipped design; slice + sprint + shipped backlog at complete-sprint). NO wf role
+  # artifact here as it leaves the working set (capabilities + learnings as wf-sa drains
+  # them; slice + sprint + shipped backlog at complete-sprint). NO wf role
   # is ever instructed to read it — it exists solely so the wf2 maintainer can study run
   # quality offline. It is OUTSIDE the governed working set, so the governor's
   # derive-don't-store rule does not apply: nothing consumes it as truth, so it cannot rot.
@@ -74,9 +77,9 @@ paths:
 
   # Orchestration (the build pipeline). pipeline-state is the live run state the brain
   # and the orchestrator read/write on every transition; pipeline-history is its spilled
-  # audit tail. Both transient (machine-owned, gitignored) — completion is derived from
-  # [REQ] tags, never stored here. complete-sprint snapshots the shipped plan + final state
-  # to paths.archive before resetting.
+  # audit tail. Both transient (machine-owned, gitignored). complete-sprint drains the
+  # working set from the merge record (backlog trim, learnings drain, drain report) and
+  # snapshots the shipped plan + final state to paths.archive before resetting.
   pipeline_state: ".wf/transient/pipeline-state.yaml"      # live run state: stages, task_states, design_issues, history. Transient.
   pipeline_history: ".wf/transient/pipeline-history.yaml"  # archived history overflow. Transient.
 
@@ -140,3 +143,5 @@ id_counters:            # high-water marks for draining id lanes — only ever i
   cap: 0                # CAP-NNN (wf-po bumps)
   learning: 0           # L-NNN in paths.learnings (wf-retrospective bumps)
   wf_learning: 0        # L-NNN in paths.wf_learnings (wf-retrospective bumps)
+  req: 0                # REQ-<n> — component requirements (wf-sa bumps; ids live only in backlog/slice/contract)
+  sys_tc: 0             # SYS-TC-<n> — system test cases (wf-sa bumps; ids persist as [SYS-TC:] tags in tests)

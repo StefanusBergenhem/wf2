@@ -2,15 +2,16 @@
 #
 # Path is set by `paths.capabilities` in .wf/config.yaml; this filename is only the
 # default. wf-po appends user-voice statements of what the product lets a user, operator,
-# or external system do; wf-sa drains them (removes one once the design serving it ships).
+# or external system do; wf-sa drains them (removes one once it is proven).
 # Never reference components, libraries, or implementation patterns here — that is the SA's
 # job, not this file's.
 #
-# This file is the UN-SHIPPED demand, not a catalog of everything the product does: it holds
-# user-voice intent whose solution is not yet built. wf-sa removes a capability when the
-# design serving it drains from the design backlog — when its work is built and its essence
-# lives in the `[REQ]` tags + any ADR it motivated — so this set never accumulates shipped
-# features. An entry here may already be designed and building; it stays until it ships.
+# This file is the UN-PROVEN demand, not a catalog of everything the product does: it holds
+# user-voice intent not yet proven built. wf-sa removes a capability only when its system
+# tests have shipped AND an adequacy review finds they cover the whole promise — its essence
+# then lives in those system tests + any ADR it motivated — so this set never accumulates
+# shipped features. An entry here may already be designed, building, or even built but not
+# yet proven; it stays until proven.
 #
 # This scaffold ships EMPTY (every example below is a comment), so a fresh adopter
 # never inherits fictional capabilities. wf-po sets

@@ -133,7 +133,7 @@ cat > "$REPO/backend/internal/auth/auth_test.go" <<'EOF'
 func TestIssue(t *testing.T) {}
 EOF
 cat > "$REPO/frontend/src/api/client.test.ts" <<'EOF'
-// [REQ:REQ-5] The api client shall retry an idempotent request once on a 503.
+// [SYS-TC:SYS-TC-2] Given an expired session, when the client retries, then a fresh login is forced.
 EOF
 cat > "$REPO/e2e/login.spec.ts" <<'EOF'
 // [SYS-TC:SYS-TC-1] Given a registered user, when they log in, then a session cookie is set.
@@ -196,24 +196,20 @@ grep -q "Owns session issuance and validation" "$ROUT" \
 grep -q "new persistence" "$ROUT" && ok "rich: authored note kept for a new component" \
   || bad "rich: authored note lost"
 
-# 19 — requirements ALREADY shipped into the component, with their statements, derived
-#      from the proving-test tags (the whole point: the slice seen in context)
-grep -q "REQ-1" "$ROUT" && grep -q "shall issue a signed token" "$ROUT" \
-  && ok "rich: shipped requirement + statement derived from tags" \
-  || bad "rich: shipped requirement/statement missing"
-grep -q "retry an idempotent request" "$ROUT" \
-  && ok "rich: shipped requirement found across a second test root" \
-  || bad "rich: second test root not harvested"
+# 19 — legacy [REQ:] tags are the retired lane: never harvested, never rendered
+grep -q "shall issue a signed token" "$ROUT" \
+  && bad "rich: legacy REQ tag leaked into the view" \
+  || ok "rich: legacy [REQ:] tags ignored (retired lane)"
 
-# 20 — a shipped requirement is attributed to the component whose path proves it
-python3 - "$ROUT" <<'PY' && ok "rich: shipped reqs attributed to the right component" \
-  || bad "rich: shipped-req attribution wrong"
+# 20 — shipped scenarios union across every test root
+python3 - "$ROUT" <<'PY' && ok "rich: shipped scenarios harvested across all roots" \
+  || bad "rich: shipped-scenario harvest wrong"
 import json, re, sys
 d = json.loads(re.search(r'\nconst DATA = (\{.*?\});\n', open(sys.argv[1]).read(), re.S).group(1))
-n = {x["id"]: x for x in d["nodes"]}
-auth = [r["id"] for r in n["internal/auth"]["shipped"]]
-api  = [r["id"] for r in n["frontend/src/api"]["shipped"]]
-sys.exit(0 if auth == ["REQ-1"] and api == ["REQ-5"] and not n["token-store"]["shipped"] else 1)
+ids = sorted(t["id"] for t in d["sys_shipped"])
+assert ids == ["SYS-TC-1", "SYS-TC-2"], ids
+assert all("shipped" not in n for n in d["nodes"]), d["nodes"]
+sys.exit(0)
 PY
 
 # 21 — the NEW requirement carries its statement, not just its id
@@ -235,41 +231,16 @@ grep -q "Decisions" "$ROUT" && ok "rich: decisions panel view present" || bad "r
 grep -q "highlight" "$ROUT" && ok "rich: decision highlights its components on the graph" \
   || bad "rich: decision does not highlight components"
 
-# 24 — a shipped tag that maps to NO component at all is reported, never silently dropped
+# 24 — a tree full of legacy REQ tags renders clean: nothing leaks, nothing crashes
 mkdir -p "$REPO/backend/internal/orphan"
 cat > "$REPO/backend/internal/orphan/o_test.go" <<'EOF'
-// [REQ:REQ-77] An orphan requirement in no modelled component.
+// [REQ:REQ-77] A legacy requirement tag in no modelled component.
 EOF
 echo "$RICH" | python3 "$SCRIPT" --out "$TMP/orph.html" --model "$TMP/model.json" \
   --tests "$REPO/backend" >"$TMP/orph.log" 2>&1
-grep -q "REQ-77" "$TMP/orph.html" && ok "rich: unclaimed shipped requirement still surfaced" \
-  || bad "rich: unclaimed shipped requirement silently dropped"
-
-# 25 — a requirement shipped into a REAL component that this slice simply does not touch is
-#      out of scope, not an orphan: counted, not listed. Every repo has hundreds of these;
-#      listing them buries the slice the view exists to explain.
-mkdir -p "$REPO/backend/internal/billing"
-cat > "$REPO/backend/internal/billing/b_test.go" <<'EOF'
-// [REQ:REQ-88] The billing component shall invoice monthly.
-EOF
-cat > "$TMP/model2.json" <<'EOF'
-{"nodes": {
-  "go:internal/auth":    {"uid":"go:internal/auth","id":"internal/auth","path":"backend/internal/auth","lang":"go"},
-  "go:internal/billing": {"uid":"go:internal/billing","id":"internal/billing","path":"backend/internal/billing","lang":"go"}
-}}
-EOF
-echo "$RICH" | python3 "$SCRIPT" --out "$TMP/oos.html" --model "$TMP/model2.json" \
-  --tests "$REPO/backend" >/dev/null 2>&1
-python3 - "$TMP/oos.html" <<'PY' && ok "rich: out-of-scope requirement counted, not listed as an orphan" \
-  || bad "rich: out-of-scope requirement mis-reported"
-import json, re, sys
-d = json.loads(re.search(r'\nconst DATA = (\{.*?\});\n', open(sys.argv[1]).read(), re.S).group(1))
-orphan_ids = [o["id"] for o in d["orphans"]]
-# REQ-88 lives in a modelled component outside the view -> counted only.
-# REQ-77 lives in no modelled component at all -> a genuine orphan.
-sys.exit(0 if "REQ-88" not in orphan_ids and "REQ-77" in orphan_ids
-         and d["out_of_scope"] >= 1 else 1)
-PY
+[ -f "$TMP/orph.html" ] && ! grep -q "REQ-77" "$TMP/orph.html" \
+  && ok "rich: legacy-tagged tree renders with no REQ leakage" \
+  || bad "rich: legacy REQ tag surfaced or render failed"
 
 # 25 — the derivation flags stay optional (the bare authored graph still renders)
 echo "$SAMPLE" | python3 "$SCRIPT" --out "$TMP/plain.html" >/dev/null 2>&1
@@ -300,15 +271,15 @@ paths:
   tests: ["backend", "frontend/src"]
 EOF
 
-# 27 — with a config, the bare command derives descriptions AND shipped requirements
+# 27 — with a config, the bare command derives descriptions AND shipped scenarios
 echo "$RICH" | python3 "$SCRIPT" --out "$TMP/cfg.html" --config "$PROJ/.wf/config.yaml" \
   >"$TMP/cfg.log" 2>"$TMP/cfg.err"
 [ $? -eq 0 ] || bad "config: bare render failed ($(cat "$TMP/cfg.err"))"
 grep -q "Owns session issuance" "$TMP/cfg.html" \
   && ok "config: descriptions resolved from paths.discover_subsystems (no flag passed)" \
   || bad "config: descriptions not resolved from config"
-grep -q "shall issue a signed token" "$TMP/cfg.html" \
-  && ok "config: shipped requirements resolved from paths.tests (no flag passed)" \
+grep -q "a fresh login is forced" "$TMP/cfg.html" \
+  && ok "config: shipped scenarios resolved from paths.tests (no flag passed)" \
   || bad "config: test roots not resolved from config"
 python3 - "$TMP/cfg.html" <<'PY' && ok "config: paths.discover_model resolved (exact attribution)" \
   || bad "config: model not resolved from config"

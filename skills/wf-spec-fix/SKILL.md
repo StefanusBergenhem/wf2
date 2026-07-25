@@ -89,7 +89,7 @@ here for Step 4. Two rules those procedures assume:
    ## <di_id> — <fix_kind>
    Issue: <the summary, one line>
    Fix: <what you changed — files, requirements, ADRs, or the follow-up task id>
-   Superseded: <every shipped [REQ:<id>]/[SYS-TC:<id>] you retired or changed, or "none">
+   Superseded: <every shipped SYS-TC id or shipped behaviour (named by its proving test) you retired or changed, or "none">
    ```
 
    Keep it to those lines — the human reads this in the PR at ship, not a transcript. The

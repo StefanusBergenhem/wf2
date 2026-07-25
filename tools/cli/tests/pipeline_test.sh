@@ -435,6 +435,151 @@ HT="$(wf "$PROJ_H" pipeline history-tail 100 --format json)"
 [ "$(jget "$HT" "len(d)")" = "4" ] && ok "archive-history keeps cap + the archival marker live" || bad "archive-history live" "$HT"
 [ -f "$PROJ_H/.wf/transient/pipeline-history.yaml" ] && ok "archive-history writes the spill file" || bad "archive-history spill" "missing"
 
+# ── complete-sprint: the close-time drain (backlog trim, learnings, drain report) ──
+
+yget() { "$PYTHON" -c 'import sys,yaml; d=yaml.safe_load(open(sys.argv[1])); print(eval(sys.argv[2]))' "$1" "$2"; }
+
+PROJ_D="$(mktemp -d)"; mkdir -p "$PROJ_D/.wf/transient" "$PROJ_D/tests"
+cat > "$PROJ_D/.wf/config.yaml" <<'YAML'
+version: 1
+paths:
+  sprint: ".wf/transient/sprint.yaml"
+  design_slice: ".wf/transient/design-slice.md"
+  design_backlog: ".wf/design-backlog.md"
+  learnings: ".wf/LEARNINGS.yaml"
+  drain_report: ".wf/transient/drain-report.yaml"
+  pipeline_state: ".wf/transient/pipeline-state.yaml"
+  archive: ".wf/archive"
+  tests: ["tests"]
+YAML
+cat > "$PROJ_D/.wf/transient/sprint.yaml" <<'YAML'
+sprint_id: sprint-drain
+tasks:
+- id: T1
+  covers: [REQ-1, REQ-2]
+  serves: [CAP-3]
+- id: T2
+  system_tests:
+  - id: SYS-TC-1
+    description: bad X rejected end-to-end
+    covers: [CAP-3]
+  serves: [CAP-3]
+- id: T3
+  covers: [REQ-3]
+  serves: [L-2]
+- id: T4
+  covers: [REQ-4]
+  serves: [L-5]
+YAML
+cat > "$PROJ_D/.wf/transient/pipeline-state.yaml" <<'YAML'
+current_phase: end_of_sprint
+task_states:
+  T1: {status: completed}
+  T2: {status: completed}
+  T3: {status: escalated}
+  T4: {status: completed}
+YAML
+cat > "$PROJ_D/.wf/design-backlog.md" <<'MD'
+# Design backlog
+
+## Widget validation — serves CAP-3 / L-2 / L-7
+
+**Narrative:** validation flows API -> core -> store.
+
+**Component requirements:**
+- **REQ-1** — the widget validates X  *(owner: core · CAP-3)*
+- **REQ-2** — the API rejects bad X  *(owner: api · CAP-3 · proof: inspection — lint
+  rule in .golangci.yml)*
+
+**System test cases:**
+- **SYS-TC-1** — bad X rejected end-to-end  *(covers CAP-3)*
+
+## Perf hardening — serves L-2 / L-5
+
+**Component requirements:**
+- **REQ-3** — the store batches writes  *(owner: store · L-2)*
+- **REQ-4** — the store caps fan-out  *(owner: store · L-5)*
+MD
+cat > "$PROJ_D/.wf/LEARNINGS.yaml" <<'YAML'
+version: 1
+learnings:
+- id: L-2
+  observation: batching
+- id: L-7
+  observation: validation gap
+YAML
+cat > "$PROJ_D/.wf/transient/design-slice.md" <<'MD'
+# slice
+
+## Supersedes
+
+- **SYS-TC-9** — replaced end-to-end · successor **SYS-TC-1**
+- **REQ-9** — replaced · successor **REQ-1**
+MD
+printf '// [SYS-TC:SYS-TC-9] old scenario\nfunc TestOld(t *testing.T) {}\n' > "$PROJ_D/tests/old_test.go"
+
+CD="$("$PYTHON" "$WF" pipeline complete-sprint --config "$PROJ_D/.wf/config.yaml" --format json)"
+BL="$PROJ_D/.wf/design-backlog.md"
+
+# backlog trim: the fully-shipped design block is gone; the partial one keeps its unshipped id
+grep -q "Widget validation" "$BL" && bad "drain: emptied design removed" "block survived" \
+    || ok "drain: fully-shipped design block removed from the backlog"
+grep -q "REQ-3" "$BL" && ok "drain: unshipped REQ-3 kept in the backlog" || bad "drain REQ-3 kept" "gone"
+grep -q "REQ-4" "$BL" && bad "drain: shipped REQ-4 trimmed" "still present" \
+    || ok "drain: shipped REQ-4 trimmed from the partial design"
+grep -q "Perf hardening" "$BL" && ok "drain: partial design block survives" || bad "drain partial block" "gone"
+
+# learnings: L-7 (last server emptied) drains; L-2 (still served by the partial design) stays
+LRN="$PROJ_D/.wf/LEARNINGS.yaml"
+[ "$(yget "$LRN" "[e['id'] for e in d['learnings']]")" = "['L-2']" ] \
+    && ok "drain: L-7 drained, L-2 kept (still served)" || bad "drain learnings" "$(cat "$LRN")"
+
+# drain report: capability candidate, shipped scenario, partial ship, survivors
+RPT="$PROJ_D/.wf/transient/drain-report.yaml"
+[ -f "$RPT" ] && ok "drain: report written" || bad "drain report" "missing"
+[ "$(yget "$RPT" "d['reports'][0]['sprint_id']")" = "sprint-drain" ] \
+    && ok "report: names the sprint" || bad "report sprint_id" "$(cat "$RPT")"
+[ "$(yget "$RPT" "d['reports'][0]['emptied_designs']")" = "['Widget validation']" ] \
+    && ok "report: emptied design listed" || bad "report emptied" "$(cat "$RPT")"
+[ "$(yget "$RPT" "d['reports'][0]['proof_gate_candidates'][0]['capability']")" = "CAP-3" ] \
+    && ok "report: CAP-3 is a proof-gate candidate" || bad "report candidate" "$(cat "$RPT")"
+[ "$(yget "$RPT" "d['reports'][0]['proof_gate_candidates'][0]['shipped_scenarios'][0]['id']")" = "SYS-TC-1" ] \
+    && ok "report: candidate carries its shipped scenario" || bad "report scenario" "$(cat "$RPT")"
+[ "$(yget "$RPT" "sorted(d['reports'][0]['partially_shipped'][0]['remaining'])")" = "['REQ-3']" ] \
+    && ok "report: partial design's remaining ids listed" || bad "report partial" "$(cat "$RPT")"
+[ "$(yget "$RPT" "d['reports'][0]['learnings_drained']")" = "['L-7']" ] \
+    && ok "report: drained learning listed" || bad "report learnings" "$(cat "$RPT")"
+[ "$(yget "$RPT" "d['reports'][0]['superseded_survivors'][0]['id']")" = "SYS-TC-9" ] \
+    && ok "report: surviving superseded SYS-TC tag listed" || bad "report survivors" "$(cat "$RPT")"
+
+# archive: the backlog + learnings snapshots hold the PRE-trim state
+grep -q "Widget validation" "$PROJ_D/.wf/archive/sprint-drain/"*__design-backlog.md 2>/dev/null \
+    && ok "archive: backlog snapshot is pre-trim" || bad "archive pre-trim backlog" "$(ls "$PROJ_D/.wf/archive/sprint-drain" 2>&1)"
+ls "$PROJ_D/.wf/archive/sprint-drain/"*__LEARNINGS.yaml >/dev/null 2>&1 \
+    && ok "archive: learnings snapshot present" || bad "archive learnings snap" "$(ls "$PROJ_D/.wf/archive/sprint-drain" 2>&1)"
+
+# the emitted summary carries the drain
+[ "$(jget "$CD" "d['drain']['emptied_designs']")" = "['Widget validation']" ] \
+    && ok "emit: drain summary in the command output" || bad "emit drain" "$CD"
+
+# no-archive project: the trim still runs (draining is not archiving)
+PROJ_D2="$(mktemp -d)"; mkdir -p "$PROJ_D2/.wf/transient"
+cat > "$PROJ_D2/.wf/config.yaml" <<'YAML'
+version: 1
+paths:
+  sprint: ".wf/transient/sprint.yaml"
+  design_backlog: ".wf/design-backlog.md"
+  drain_report: ".wf/transient/drain-report.yaml"
+  pipeline_state: ".wf/transient/pipeline-state.yaml"
+YAML
+printf 'sprint_id: s2\ntasks:\n- id: T1\n  covers: [REQ-8]\n  serves: [L-1]\n' > "$PROJ_D2/.wf/transient/sprint.yaml"
+printf 'task_states:\n  T1: {status: completed}\n' > "$PROJ_D2/.wf/transient/pipeline-state.yaml"
+printf '# Design backlog\n\n## Small fix — serves L-1\n\n**Component requirements:**\n- **REQ-8** — x  *(owner: core · L-1)*\n' > "$PROJ_D2/.wf/design-backlog.md"
+"$PYTHON" "$WF" pipeline complete-sprint --config "$PROJ_D2/.wf/config.yaml" --format json >/dev/null
+grep -q "Small fix" "$PROJ_D2/.wf/design-backlog.md" && bad "no-archive trim" "block survived" \
+    || ok "drain: trim runs without an archive configured"
+[ -f "$PROJ_D2/.wf/transient/drain-report.yaml" ] && ok "drain: report written without an archive" || bad "no-archive report" "missing"
+
 # ── summary ──
 echo ""
 echo "  pipeline brain: $pass passed, $fail failed"

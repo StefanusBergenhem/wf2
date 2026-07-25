@@ -3,6 +3,7 @@
 Contents:
 - The Gherkin-light form
 - Covering capabilities (`Covers:`)
+- Cover the whole promise
 - The end-to-end rule
 - Verifiable assertions
 - The system-test checklist
@@ -11,9 +12,11 @@ Contents:
 A **system test case** is a capability-level, black-box scenario that proves a capability
 end-to-end by exercising the assembled path across components. There is no requirement
 above it — it answers directly to the capability. You write the human-readable scenario
-and give it a repo-unique `SYS-TC-<n>` id; wf-tl plans it as its own e2e task and the
-build writes the executable test tagged `[SYS-TC:SYS-TC-<n>]`, which `reconcile` harvests
-to confirm the capability is proven. It **covers capabilities**, never component
+and give it a repo-unique `SYS-TC-<n>` id (minted from `id_counters.sys_tc`); wf-tl
+plans it as its own e2e task and the build writes the executable test tagged
+`[SYS-TC:SYS-TC-<n>] <description>` — the durable proof record the register derives on
+demand. The shipped scenario set is the capability's **proof** — a scenario the set is
+missing keeps the capability open. It **covers capabilities**, never component
 requirements.
 
 ## The Gherkin-light form
@@ -45,6 +48,14 @@ Every case declares the capabilities it proves on a `Covers:` line.
   obligation.
 - One capability may need several cases (distinct end-to-end behaviours); one case may
   cover several capabilities.
+
+## Cover the whole promise
+
+Write the **set** against the capability's statement, not against the design you just
+shaped — the design's decomposition is exactly what a narrow set inherits its blind spots
+from. **Load `references/promise-sweep.md` and sweep every class it lists before calling
+the set done** — a class you skip is a scenario the adequacy review will name as a
+residual, at the cost of a re-cut.
 
 ## The end-to-end rule
 

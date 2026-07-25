@@ -76,8 +76,8 @@ For each requirement a task `covers`, write the testable conditions that prove i
   agent must be able to write a failing test from the `check` alone, without
   re-reading the requirement.
 - **Identified and traced.** Give each criterion an id `REQ-N.AC-M` scoped to its
-  requirement, so the build's test tags reference it and the trace
-  AC → requirement → driver stays intact.
+  requirement — the reviewer's and the feedback loop's stable handle, keeping the trace
+  AC → requirement → driver intact.
 - **Complete for the requirement.** Cover the requirement's failure and boundary
   behaviour, not just its happy path — a requirement with only happy-path criteria is
   an incomplete set.
@@ -94,7 +94,9 @@ For each requirement a task `covers`, write the testable conditions that prove i
   code is never stale" enforced by a codegen-drift gate — add `verified_by: <the gate
   command>` and no `tests`; it then needs no covering test. Never use `verified_by` for
   a criterion a test could prove — that is dodging the mandate, and the reviewer will
-  treat it as an unmet AC.
+  treat it as an unmet AC. A slice requirement annotated `proof: inspection — <fact>` is
+  the whole-requirement case: no test can observe it, so **every** criterion you write
+  for it is gate-verified and the task mandates no test for it.
 
 Good: *"For 1,000 concurrent users, median response ≤ 180ms and p99 ≤ 250ms over a 5-minute window."*
 Bad: *"The system performs well under load."*

@@ -8,9 +8,9 @@ regenerated as the design evolves, never a committed artifact.
 
 Author only the CHANGE. Everything the toolchain already knows is derived, not retyped:
 each component's prose description from discover's model + subsystem map, and the
-requirements and system test cases already shipped into it, harvested from the proving-test
-tags the same way reconcile does. The view then shows the slice IN CONTEXT — new work
-against what each component already promises.
+system test cases already proven, harvested from the [SYS-TC:] proving-test tags
+(reconcile's harvester). The view then shows the slice IN CONTEXT — new work against
+what the system already provably promises end-to-end.
 
 Those three inputs are MECHANICAL — discover writes its output to config-declared paths and
 the test roots are config-declared — so they default from `.wf/config.yaml`
@@ -177,10 +177,9 @@ function highlight(ids){const net=WF.net(); if(!net) return;
 // break out of it; escape both quote forms.
 const hl=ids=>`highlight(${JSON.stringify(ids||[]).replace(/'/g,"&#39;").replace(/"/g,"&quot;")})`;
 const SCAN=DATA.tags_scanned;
-const unscanned='<div class=empty>not scanned — set paths.tests to list what is already required</div>';
-const reqLine=(r,old)=>`<div class="req${old?" old":""}"><span class="rid">${esc(r.id)}</span>`+
-  `<span class="st">${esc(r.statement)||"<span class=empty>no statement carried</span>"}</span>`+
-  `${old&&r.files&&r.files.length?`<div class="src">${r.files.map(esc).join("<br>")}</div>`:""}</div>`;
+const unscanned='<div class=empty>not scanned — set paths.tests to list what is already proven</div>';
+const reqLine=r=>`<div class="req"><span class="rid">${esc(r.id)}</span>`+
+  `<span class="st">${esc(r.statement)||"<span class=empty>no statement carried</span>"}</span></div>`;
 
 function showAll(){
   WF.panelHead("Components ("+DATA.nodes.length+")");
@@ -188,14 +187,8 @@ function showAll(){
     `<tr class="row" onclick="showOne('${n.id}')"><td class="e">${esc(n.label)}<br>${chip(n.state)}</td>`+
     `<td><div class="dsc">${esc(n.desc)||esc(n.note)||"<span class=empty>—</span>"}</div>`+
     `${n.reqs.length?`<div class="rq">▸ new: ${n.reqs.map(r=>esc(r.id)).join(", ")}</div>`:""}`+
-    `${SCAN&&n.shipped.length?`<div class="meta">${n.shipped.length} already required here</div>`:""}`+
     `</td></tr>`).join("");
-  // Never let a shipped requirement vanish just because no component's path claimed it.
-  const orph=DATA.orphans.length?`<div class="grp">Shipped, claimed by no component (${DATA.orphans.length})</div>`+
-    DATA.orphans.map(r=>reqLine(r,true)).join(""):"";
-  const oos=DATA.out_of_scope?`<div class="meta" style="margin-top:12px">`+
-    `+ ${DATA.out_of_scope} shipped requirement(s) in components outside this slice</div>`:"";
-  WF.panel("<table>"+rows+"</table>"+orph+oos);
+  WF.panel("<table>"+rows+"</table>");
 }
 function showOne(id){const n=N[id]; if(!n) return;
   WF.panelHead("Component");
@@ -209,10 +202,7 @@ function showOne(id){const n=N[id]; if(!n) return;
     `<div class="desc">${esc(n.desc)||esc(n.note)||"<span class=empty>no description</span>"}</div>`+
     (n.desc&&n.note?`<div class="grp">This change</div><div class="desc">${esc(n.note)}</div>`:"")+
     `<div class="grp">New in this slice (${n.reqs.length})</div>`+
-    (n.reqs.length?n.reqs.map(r=>reqLine(r,false)).join(""):"<div class=empty>none</div>")+
-    `<div class="grp">Already required here ${SCAN?`(${n.shipped.length})`:""}</div>`+
-    (!SCAN?unscanned:
-      n.shipped.length?n.shipped.map(r=>reqLine(r,true)).join(""):"<div class=empty>none</div>")+
+    (n.reqs.length?n.reqs.map(reqLine).join(""):"<div class=empty>none</div>")+
     `<div class="grp">Depends on</div>${rel(OUT[id],true)}`+
     `<div class="grp">Depended on by</div>${rel(INC[id],false)}`);
 }
@@ -429,7 +419,7 @@ def harvest_tags(tests_roots, test_globs, required=True):
     """
     if not tests_roots:
         warn("no test roots (pass --tests, or set paths.tests in .wf/config.yaml) — "
-             "the requirements and system tests already shipped are NOT shown")
+             "the system tests already proven are NOT shown")
         return {}
     records = {}
     for root in tests_roots:
@@ -450,59 +440,6 @@ def harvest_tags(tests_roots, test_globs, required=True):
     return records
 
 
-def _segments(p):
-    return [s for s in os.path.normpath(p).split(os.sep) if s and s != "."]
-
-
-def _match_score(comp_path, file_path):
-    """How well a component's path claims a proving-test file. 0 = not this component.
-
-    A prefix match ("backend/internal/auth" owns "backend/internal/auth/x_test.go") is
-    exact and scores highest. Containment is the fallback for a component whose authored
-    id omits the repo prefix ("internal/auth" against "backend/internal/auth/x_test.go"),
-    which is what the ids look like when no --model is supplied to resolve real paths.
-    Longer paths win, so the most specific component claims the file.
-    """
-    cs, fs = _segments(comp_path), _segments(file_path)
-    if not cs or len(cs) >= len(fs):
-        return 0
-    if fs[:len(cs)] == cs:
-        return 2 * len(cs)
-    for i in range(1, len(fs) - len(cs) + 1):
-        if fs[i:i + len(cs)] == cs:
-            return len(cs)
-    return 0
-
-
-def attribute(tags, view_paths, outside_paths, lane):
-    """Route each shipped tag by the component whose path most specifically proves it.
-
-    Returns ({component id -> [record]}, [orphan record], out_of_scope_count).
-
-    A tag whose winner is a component OUTSIDE this view is merely out of scope — the repo
-    is full of them, and listing them would bury the slice. Only a tag no component claims
-    at all is an orphan worth surfacing. Without a --model there are no outside paths, so
-    every unclaimed tag reads as an orphan.
-    """
-    owned, orphans, out_of_scope = {}, [], 0
-    for rid in sorted(tags, key=lambda r: (len(r), r)):
-        if not rid.startswith(lane):
-            continue
-        rec = tags[rid]
-        best, best_score, in_view = None, 0, False
-        for cid, cpath in list(view_paths.items()) + list(outside_paths.items()):
-            score = max((_match_score(cpath, f) for f in rec["files"]), default=0)
-            if score > best_score:
-                best, best_score, in_view = cid, score, cid in view_paths
-        if best and in_view:
-            owned.setdefault(best, []).append(rec)
-        elif best:
-            out_of_scope += 1
-        else:
-            orphans.append(rec)
-    return owned, orphans, out_of_scope
-
-
 def build_data(design, model=None, descriptions=None, tags=None, tags_scanned=True):
     comps = design["components"]
     deps = design.get("dependencies", []) or []
@@ -517,26 +454,6 @@ def build_data(design, model=None, descriptions=None, tags=None, tags_scanned=Tr
             continue
         reqs.setdefault(a.get("component"), []).append(
             {"id": a["requirement"], "statement": a.get("statement", "")})
-
-    comp_paths = {}
-    for c in comps:
-        cid = c.get("id") or c.get("label")
-        if not cid:
-            fail("every component needs an 'id' or 'label'")
-        comp_paths[cid] = (model.get(cid, {}).get("path") or cid)
-
-    # Every component the repo has that this view does not show. A requirement proved
-    # inside one of those is out of scope for this slice, not an orphan.
-    in_view = set(comp_paths.values())
-    outside_paths = {}
-    for entry in model.values():
-        path = entry.get("path")
-        if path and path not in in_view:
-            outside_paths[entry.get("uid") or path] = path
-
-    new_ids = {r["id"] for rs in reqs.values() for r in rs}
-    shipped_tags = {k: v for k, v in tags.items() if k not in new_ids}
-    owned, orphans, out_of_scope = attribute(shipped_tags, comp_paths, outside_paths, "REQ-")
 
     nodes = []
     for c in comps:
@@ -556,7 +473,6 @@ def build_data(design, model=None, descriptions=None, tags=None, tags_scanned=Tr
             "lang": m.get("lang", ""),
             "loc": m.get("loc", ""),
             "reqs": reqs.get(cid, []),
-            "shipped": owned.get(cid, []),
         })
 
     edges = []
@@ -596,9 +512,9 @@ def build_data(design, model=None, descriptions=None, tags=None, tags_scanned=Tr
     return {
         "nodes": nodes, "edges": edges,
         "sys_new": sys_new, "sys_shipped": sys_shipped,
-        "decisions": decisions, "orphans": orphans, "out_of_scope": out_of_scope,
-        # False = the tags were never harvested, so "already shipped" is UNKNOWN here.
-        # Rendering it as an empty list would assert the components promise nothing.
+        "decisions": decisions,
+        # False = the tags were never harvested, so "already proven" is UNKNOWN here.
+        # Rendering it as an empty list would assert the system promises nothing.
         "tags_scanned": tags_scanned,
         "node_palette": {k: list(v) for k, v in NODE_STYLE.items()},
         "edge_palette": {k: list(v) for k, v in EDGE_STYLE.items()},
@@ -644,7 +560,7 @@ def main():
     ap.add_argument("--descriptions", help="discover subsystems.json — each component's "
                                            "prose description (default: paths.discover_subsystems)")
     ap.add_argument("--tests", action="append", metavar="PATH",
-                    help="test-tree root to harvest shipped [REQ:]/[SYS-TC:] tags from "
+                    help="test-tree root to harvest shipped [SYS-TC:] tags from "
                          "(repeatable; default: every root in paths.tests)")
     ap.add_argument("--test-glob", action="append", dest="test_glob", metavar="GLOB",
                     help="extra test-file name glob, added to the defaults (repeatable)")

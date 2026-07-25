@@ -10,6 +10,9 @@ human) is still there rather than after a full decomposition:
   colliding ids, so the index is built from every ADR-shaped file in the tree; a
   colliding id must be cited with its path. Resolved citations are echoed with the
   ADR's own title, so a citation pointing at the wrong decision is visible.
+- **A6** — the ``## Design narrative`` section exists and holds prose (comments and
+  blanks do not count). The narrative is the TL's and the build's orientation on the
+  change; a slice without it hands over a bag of atomized requirements.
 
 Exits non-zero on any error finding.
 """
@@ -21,6 +24,7 @@ from pathlib import Path
 import common
 
 _ASSUMPTIONS_HEADER = "Assumptions requiring confirmation"
+_NARRATIVE_HEADER = "Design narrative"
 _SKIP_DIRS = {".git", ".venv", "node_modules", "__pycache__", "dist", "build"}
 _ADR_FILE_RE = re.compile(r"^ADR-(\d+)")
 _ADR_CITE_RE = re.compile(r"(?:(?P<dir>[\w./-]+)/)?ADR-(?P<num>\d+)")
@@ -48,6 +52,19 @@ def unconfirmed_assumptions(text):
             who = ident.group(1) if ident else "an assumption"
             msgs.append(f"slice: {who} is UNCONFIRMED — close SA alignment before build")
     return msgs
+
+
+def missing_narrative(text):
+    """The A6 findings: the Design narrative section is absent, or holds nothing but
+    comments and blank lines."""
+    body = section(text, _NARRATIVE_HEADER)
+    if not re.search(rf"^##\s+{_NARRATIVE_HEADER}\s*$", text, re.MULTILINE):
+        return ["slice: no '## Design narrative' section — write the change's story "
+                "(shape, end-to-end flow with wiring, each component's role) before handover"]
+    prose = re.sub(r"<!--.*?-->", "", body, flags=re.DOTALL).strip()
+    if not prose:
+        return ["slice: '## Design narrative' holds no prose — comments are not a narrative"]
+    return []
 
 
 def _adr_title(path):
@@ -123,6 +140,7 @@ def _check(rest):
 
     text = path.read_text()
     errors = [{"code": "A3", "msg": m} for m in unconfirmed_assumptions(text)]
+    errors += [{"code": "A6", "msg": m} for m in missing_narrative(text)]
     index = adr_index(common.project_root(args.config))
     adr_errors, citations = adr_citations(text, index)
     errors += adr_errors
