@@ -1,12 +1,19 @@
 ---
 name: wf-discover
 description: Derives a transient subsystem read-view of a repo — a mechanical structure spine plus LLM-scout descriptions, rendered to an interactive HTML map and an agent brief. Run when orienting on an unfamiliar repo before planning.
+tools: Read, Grep, Glob, Bash, Write
+model: sonnet
 ---
+
 
 # wf-discover
 
-**Read `wf-basics` first for the `.wf/` layout and config rules**. Resolve every path
-below from `.wf/config.yaml`:
+You derive a transient subsystem read-view of a repo.
+
+Read `{{WF_SKILLS_DIR}}/wf-basics/SKILL.md` for the `.wf/` layout and the telemetry
+handshake, and record the session start stamp now per wf-basics §2 — your first action.
+
+Resolve every path below from `.wf/config.yaml`:
 
 - `DIR`         = `paths.discover`        (working dir, cleared each run)
 - `MODEL`       = `paths.discover_model`
@@ -15,9 +22,10 @@ below from `.wf/config.yaml`:
 - `VIEW`        = `paths.discover_view`
 - `BRIEF`       = `paths.discover_brief`
 - `NAME`        = `project.name`
+- `TOOLS`       = `paths.tools`                (example shape + telemetry recorder live here)
 
 The discover tools live under `<paths.tools>/discover/`. Pipeline:
-`extract → spine merge → cluster` (mechanical) → scout (LLM) → `render`.
+`extract → spine merge → cluster` (mechanical) → scout (you) → `render`.
 
 ## Step 1 — Clear previous output
 
@@ -57,11 +65,38 @@ python3 <paths.tools>/discover/discover.py --repo . --out "$DIR" --name "$NAME" 
 Writes `$MODEL` (component graph) and `$CLUSTERS` (three candidate clusterings:
 folder · depgraph · git-cochange).
 
-## Step 4 — Scout augmentation (subagent)
+## Step 4 — Scout augmentation (LLM judgement)
 
-Dispatch the **`wf-scout`** agent — it reads `$MODEL` + `$CLUSTERS` and writes
-`$SUBSYSTEMS`. After it returns, verify `$SUBSYSTEMS` exists on disk before Step 5 —
-absent → HALT and report.
+
+
+Reconcile the mechanical clusterings into ONE subsystem partition and
+describe every component.
+
+
+### What you are given
+
+`$MODEL` — its `nodes` is a dict keyed by uid — and `$CLUSTERS`, three candidate
+clusterings (folder · depgraph · git-cochange). Full artifact shapes are in
+`$TOOLS/discover/README.md`.
+
+### What you do
+
+- **Reconcile, don't pick a winner.** Synthesize the three clusterings into ONE
+  partition (~6–10 subsystems; every uid in exactly one subsystem; a "Shared /
+  cross-cutting" bucket is fine). Surface where they disagree.
+- **Describe every component** in 1–2 grounded sentences — prefer its existing
+  `synopsis`, else its `types`/`functions` signatures; read source only when
+  signatures are insufficient.
+
+Read-only on source: never modify the codebase. Your only write is `$SUBSYSTEMS`.
+
+### What you produce
+
+Write `$SUBSYSTEMS` to the shape in `$TOOLS/discover/subsystems.example.json`:
+`system_summary`, `subsystems[]` (`name`, `summary`, `members`, `basis`),
+`component_descriptions{uid}` for EVERY uid, and `disagreements[]` (each entry
+`{finding, components}`). Verify the partition and full coverage before writing.
+
 
 ## Step 5 — Render and report
 
@@ -69,8 +104,6 @@ absent → HALT and report.
 python3 <paths.tools>/discover/render.py --model "$MODEL" --subsystems "$SUBSYSTEMS" --out "$VIEW"  --title "$NAME"
 python3 <paths.tools>/discover/brief.py  --model "$MODEL" --subsystems "$SUBSYSTEMS" --out "$BRIEF" --title "$NAME"
 ```
-
-Point the human at `$VIEW` (interactive map) and `$BRIEF` (compact agent digest).
 
 ## Final — record telemetry (REQUIRED)
 
