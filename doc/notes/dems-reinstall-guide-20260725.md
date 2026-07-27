@@ -5,6 +5,23 @@ spec-layer changes (wf-adequacy, no-REQ-tags, close-time drain, design narrative
 `install.sh` never touches an already-scaffolded config and never reconciles stale
 renders — every step below exists because a past install missed it.
 
+> **DONE 2026-07-27 — steps 1–6 ran; dems `b9c602e`, installed from wf2 `da35869`.**
+> Only **§7 is still open**. Deviations worth knowing:
+> - **§1** — installed on `main`, no branch: an unrelated REQ/AC-tag strip pass was
+>   live in the tree, and `checkout -b` would have relabelled its HEAD. Only `.wf/`,
+>   `.claude/` and the two §5 scripts were staged.
+> - **§5 was wrong to expect no stale renders.** wf2 `31856bc` landed *after* this note
+>   and repurposed discover skill→agent + deleted `wf-scout`, so `agents/wf-scout.md`
+>   and `skills/wf-discover/` both had to be removed by hand (plus a long-dead empty
+>   `skills/wf-skill-agent-preamble/`). **Always diff the target's rendered inventory
+>   against `wf2/skills` + `wf2/agents` — never predict "expect none" from the diff of
+>   one commit.**
+> - **§4 found a real defect**, and by running `_split_backlog`/`_trim_block` rather
+>   than eyeballing: `serves L-029..L-034` parsed to just `[L-029, L-034]` (wf-learning
+>   L-083). Expanded to individual ids. The other 3 blocks and all 51 id bullets parse.
+> - Ride-along: the rendered `tools/discover/README.md` was the last live `wf-scout`
+>   reference anywhere; fixed in wf2 `da35869`.
+
 ## 1. Install
 
 ```sh
