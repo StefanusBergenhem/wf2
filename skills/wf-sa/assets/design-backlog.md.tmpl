@@ -18,7 +18,10 @@
      - system test cases (SYS-TC-<n>) — capability-level end-to-end proofs, each covering a CAP.
      complete-sprint removes each id whose covering task merged; keep the bullet shapes
      below (`- **REQ-<n>**`, `- **SYS-TC-<n>**`, indented continuations) so the
-     mechanical trim can parse them. -->
+     mechanical trim can parse them.
+     The `— serves` header lists its drivers as individual ids, ALWAYS — the close-time
+     drain reads them out of it one by one, and a range (`CAP-001..CAP-020`) enumerates
+     nothing, so every capability it stands for stays open forever. -->
 
 ## <design title> — serves CAP-NNN / L-NNN
 

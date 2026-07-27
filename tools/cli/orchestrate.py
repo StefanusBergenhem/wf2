@@ -67,6 +67,25 @@ def _config_path_value(config_doc: dict, key: str) -> str:
     return "" if v is None else str(v)
 
 
+def _verdict_tip(worktree_path: Path):
+    """(HEAD's short sha, tip sha, tip subject), where the tip is the newest commit
+    that is NOT a preserve-uncommitted one. The protocol runs preserve FIRST, so an
+    agent that left a tracked file dirty (its own telemetry row) buries the commit
+    carrying its verdict one or more down. ('', '', '') when HEAD is unreadable."""
+    ok, head_sha = _git_out(worktree_path, "rev-parse", "--short", "HEAD")
+    if not ok:
+        return "", "", ""
+    tip_sha, tip_subject = head_sha, ""
+    _, log_lines = _git_out(worktree_path, "log", "-20", "--format=%h%x09%s", "HEAD")
+    for line in log_lines.splitlines():
+        sha, _, subject = line.partition("\t")
+        if _PRESERVE_SUBJECT_RE.match(subject.strip()):
+            continue
+        tip_sha, tip_subject = sha, subject
+        break
+    return head_sha, tip_sha, tip_subject
+
+
 def _open_design_issue_for_task(path: Path, task_id: str) -> str:
     """Return the id of the first OPEN design issue whose task_id matches, else ''.
     A design issue is a build/review result artifact: its presence (an open entry for
@@ -135,9 +154,14 @@ def _inspect_build_return(rest):
     else:
         verdict = "escalate_no_artifacts"
 
+    # The review protocol takes this sha as an argument; emitting it here is the only
+    # source that is not the build agent's prose, which routing must never read.
+    _, build_sha, _ = _verdict_tip(worktree_path)
+
     out = {
         "task_id": task_id,
         "verdict": verdict,
+        "build_commit_sha": build_sha or None,
         "artifact": artifact_rel if artifact_rel else None,
         "di_id": di_id if di_id else None,
     }
@@ -197,26 +221,14 @@ def _inspect_review_return(rest):
     abs_review_ready = worktree_path / p_review_ready
 
     # --- Git state ---
-    ok, head_sha = _git_out(worktree_path, "rev-parse", "--short", "HEAD")
-    if not ok:
+    head_sha, tip_sha, tip_subject = _verdict_tip(worktree_path)
+    if not head_sha:
         return _err(f"error: failed to read HEAD from {rest[0]}")
 
     # Normalise the build sha to short form; fall back to the raw input.
     ok_b, build_short = _git_out(worktree_path, "rev-parse", "--short", build_commit_sha)
     if not ok_b:
         build_short = build_commit_sha
-
-    # The verdict-bearing tip: HEAD with any preserve-uncommitted commits peeled off.
-    # The protocol runs preserve FIRST, so a review agent that left one tracked file
-    # dirty (its own telemetry row) buries its verdict commit one or more down.
-    tip_sha, tip_subject = head_sha, ""
-    _, log_lines = _git_out(worktree_path, "log", "-20", "--format=%h%x09%s", "HEAD")
-    for line in log_lines.splitlines():
-        sha, _, subject = line.partition("\t")
-        if _PRESERVE_SUBJECT_RE.match(subject.strip()):
-            continue
-        tip_sha, tip_subject = sha, subject
-        break
 
     head_advanced = False
     if tip_sha != build_short:

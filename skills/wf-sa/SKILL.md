@@ -405,13 +405,20 @@ The judgement already happened; this is capture.
    threshold once more, write each survivor from `assets/adr.md.tmpl`, drop the rest.
    For each survivor whose `constraint:` a script can check, add the lint/gate rule
    and set `enforced_by:` per adr-rules' *Mechanize at acceptance* — in this same
-   change, never as follow-up work.
+   change, never as follow-up work. **When the only code the rule can fire on is the
+   very code this design exists to fix**, adding the gate here would red it on arrival:
+   instead record the rule verbatim in the ADR's Mechanisation section, marked as owned
+   by the fixing requirement, and make landing it an acceptance criterion of the
+   requirement that removes the violation. The rule still ships in this design — inside
+   the task that makes it pass, not beside it.
 2. **Record the design in the backlog.** Add a block to `paths.design_backlog` — but when this run
    re-cut against a design issue, **amend that design's existing block in place**: append a
    second block for the same drivers and the defective one's never-to-be-built ids linger
    there forever, so the design never empties and its drivers never drain. Shape per
    `assets/design-backlog.md.tmpl`, headed `## <design title> — serves CAP-NNN / L-NNN`
-   naming **every** driver the design serves: the design's **narrative** (the Phase 4b
+   naming **every** driver the design serves, each id written out in full — a range
+   (`CAP-001..CAP-020`) enumerates nothing, so every id it stands for silently fails to
+   drain. Under that header: the design's **narrative** (the Phase 4b
    walk, updated for everything the alignment changed), its component requirements (each
    with its repo-unique id, owner, and driver — and, when its proof is a gate/config fact
    rather than a test, `proof: inspection — <the source fact>` per

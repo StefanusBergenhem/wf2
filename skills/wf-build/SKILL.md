@@ -81,12 +81,13 @@ Announce each phase.
    need a vacuity check: temporarily break the assertion, confirm it fails, then restore it.
 
 A test that passes before any implementation exists is testing the wrong thing —
-investigate, do not proceed. **Exception — e2e task over merged dependencies:** when the
-task is an e2e/system-test task and the behaviour under test is built by already-merged
-`depends_on` tasks, a new test may correctly pass on first run. Do not treat that pass as
-a Red failure — instead prove the test is not vacuous: temporarily break the asserted
-behaviour (or mutate the expected value), confirm the test fails, then restore it and
-confirm it passes. A test you cannot make fail this way is vacuous — restructure it.
+investigate, do not proceed. **Exception — the behaviour is already built:** when the code
+the test exercises exists before this task writes a line (an e2e task over merged
+`depends_on` work, a coverage task over a shipped helper), a correct new test passes on
+first run. Do not treat that pass as a Red failure — instead prove each such test is not
+vacuous: temporarily break the behaviour it asserts (or mutate the expected value),
+confirm it fails, then restore and confirm it passes. Do this once per AC, not once for
+the task. A test you cannot make fail this way is vacuous — restructure it.
 
 ### Green
 
@@ -118,9 +119,12 @@ the open entry and parks the task — you never go on to review.
 
 ## Step 4 — Gate
 
-Run `commands.preflight` (pipe to `/tmp/wf-build-<task-id>-preflight.log`; read the outcome
-per `wf-agent-preamble`, not the whole log). It must exit clean. A gate that cannot run
-because its environment is unavailable is a HALT, not a pass — do not write `review_ready`.
+Run `commands.preflight` **in the foreground** — never a shell `&`, never a background
+tool mode: a backgrounded gate completes with no turn watching, so you park waiting on a
+notification that never arrives and the whole cycle is spent again. Pipe to
+`/tmp/wf-build-<task-id>-preflight.log`; read the outcome per `wf-agent-preamble`, not the
+whole log. It must exit clean. A gate that cannot run because its environment is
+unavailable is a HALT, not a pass — do not write `review_ready`.
 
 Then run the hygiene ratchet **from your worktree root** — before Step 5's commit, so
 `HEAD` is still the fork point. It lints the tree you are standing in:

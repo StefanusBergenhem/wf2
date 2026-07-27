@@ -224,12 +224,19 @@ python3 <paths.tools>/cli/wf orchestrate inspect-build-return <worktree> <task-i
 | `design_issue` | park, don't review — record it (Design issues, below); the verdict carries `di_id`. |
 | `escalate_no_artifacts` | escalate; `wf pipeline block-task <id> --reason <…>`. |
 
+Keep the verdict's `build_commit_sha` for this task — the review protocol below and
+`approve-task`/`complete-task` all take it. It is the build's committed tip, and this
+JSON is where you get it: never recover a sha from an agent's prose or by reading the
+worktree log yourself.
+
 ### Review-pass return
 
 ```
 python3 <paths.tools>/cli/wf orchestrate preserve-uncommitted <worktree> <task-id>
 python3 <paths.tools>/cli/wf orchestrate inspect-review-return <worktree> <task-id> <build-commit-sha>
 ```
+
+`<build-commit-sha>` is the `build_commit_sha` the Build return emitted for this task.
 
 | verdict | action |
 |:--|:--|

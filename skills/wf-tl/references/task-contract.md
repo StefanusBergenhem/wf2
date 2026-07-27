@@ -41,9 +41,9 @@ Contents:
     - <a cross-slice deferral or adjacent behaviour no mechanism forbids>
   implementation_notes:
     - <pointer only: file:line · ADR-NNN + its one-clause constraint · named pattern>
-  interface_contract_ref: "<contract name>"  # ONLY when the slice's Interface contracts
-                                             # section fixes this task's shape; name the
-                                             # slice entry (a list when several apply)
+  interface_contract_ref: "<contract name>"  # the slice's Interface contracts entry for a
+                                             # shape this task builds, widens, OR consumes
+                                             # (a list when several apply)
 ```
 
 ## Materialized fields
@@ -155,6 +155,14 @@ sibling, config-declared codegen outputs). The tool's consumer/companion output 
 surfaces cross-task overlaps for ordering edges. A candidate you deliberately exclude
 from the task gets a one-line reason in `out_of_scope`.
 
+**A whole-tree AC is inventoried by running its own scan, never by sampling.** When an
+acceptance criterion states an invariant over the tree ("no bare citation remains", "every
+package carries a doc comment", "the scan reports none"), the file set that proves it is
+whatever that scan returns *right now* — run the criterion's own grep, linter, or check
+command at cut time and fold every hit into `files_to_touch`. A set assembled from the
+sites you already knew about is a guess: the build discovers the rest mid-task and either
+expands scope on its own or halts.
+
 **A signature or field change carries its consumers.** When a task changes a function
 signature, renames or relocates a field, or otherwise alters a shape other code depends
 on, declare the callers and fixtures that must update with it in `files_to_touch` — the
@@ -230,6 +238,12 @@ about existing code in its `acceptance_criteria` check text, `implementation_not
   invokes it through its interpreter (`bash <script>`, `python3 <script>`), never a bare or
   `./` path: a script checked in mode 100644 is not executable, and the check dies "Permission
   denied" before it runs.
+- **a helper the note says to reuse** ("reuse T23's scan fake, do not add a second") — open
+  both files and confirm the language actually lets the target see it: a Go test file in
+  the internal package cannot call a helper compiled into the external `_test` package,
+  and the same wall exists as module/visibility scope in other languages. A reuse
+  instruction the compiler forbids leaves the build choosing between a duplicate you told
+  it not to write and a halt.
 
 Cite what you verified with a `<path>:<symbol>` pointer on the claim. `sprint check`'s C11
 re-resolves every pointer into a file outside `files_to_touch` and errors when the symbol

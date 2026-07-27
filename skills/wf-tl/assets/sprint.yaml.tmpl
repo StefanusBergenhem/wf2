@@ -40,9 +40,9 @@ tasks:
       - "<a cross-slice deferral or adjacent behaviour no mechanism forbids>"
     implementation_notes:
       - "<pointer only: file:line · ADR-NNN + its one-clause constraint · named pattern>"
-    # interface_contract_ref: "<contract name>"   # only when the slice's Interface contracts
-    #                                             # section fixes this task's shape; materialize
-    #                                             # inlines the block verbatim
+    # interface_contract_ref: "<contract name>"   # the slice's Interface contracts entry for
+    #                                             # a shape this task builds, widens OR
+    #                                             # consumes; materialize inlines it verbatim
 
   # An e2e task — one per SA system test case. depends_on the tasks building the
   # requirements DRIVEN BY the capability the case covers, so it runs the assembled path.

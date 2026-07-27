@@ -62,7 +62,11 @@ the build to have done.
   updated consumer, a test home). A file outside `files_to_touch` is fine when it
   passes that test — the list is the expected write set, not a fence. An unrelated
   drive-by change rejects, and so does any change to something `out_of_scope` names.
-  → `scope_violation`.
+  Judge each file on the diff itself; when the build offers a *reason* the file drifted
+  into scope ("a sibling task merged this after the contract was cut", "this is
+  generated"), verify it — `git blame`/`git log` the lines in question — before letting
+  it stand. The expansion can be right and the story wrong, and an unchecked story is how
+  a genuine contract-cut miss gets recorded as someone else's doing. → `scope_violation`.
 - **AC↔test coverage.** For every entry in `acceptance_criteria`, find the test its
   `tests[]` entry mandates — at the declared level, against the declared `target` or
   `seam` — and confirm it **genuinely exercises** the criterion's `check` and the

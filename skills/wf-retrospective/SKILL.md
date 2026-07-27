@@ -124,6 +124,10 @@ the whole deliverable, and the human applies or rejects it.
    from its template (`assets/learnings.yaml.tmpl`, `assets/wf-learnings.yaml.tmpl`) if absent.
    If you minted any id, bump its lane's counter in `.wf/config.yaml`
    (`id_counters.learning` / `id_counters.wf_learning`) to the highest id minted.
+   **Appending is the only write you make to either file.** Never remove an entry and
+   never annotate one as drained, archived, or closed — draining is `complete-sprint`'s,
+   off the merge record, and it snapshots to the archive as it goes. A drain note you
+   write is believed by the next reader, who then skips a drain that never happened.
 2. **Write the run's digest to `$RETRO_REPORT`**, overwriting it — it holds one run. This
    is the deliverable that reaches the maintainer; a return alone is discarded by the
    orchestrator. Include: the new and reinforced entries per stream; the count dropped as

@@ -53,13 +53,23 @@ run without one for every language in scope.
 
 Pass `discover.py` one flag-group per language whose extractor you built — run
 `python3 <paths.tools>/discover/discover.py --help` for the flags each packed extractor
-takes. Roots are repo-relative:
+takes. **Every root and manifest path resolves against `--repo`, not against the
+language's own manifest.** A repo whose module/package manifest sits in a subdirectory
+therefore prefixes that subdirectory onto every one of its roots — get this wrong and the
+run does not error, it reports `found 0 components` for that language. Locate each
+manifest first (`go.mod`, `tsconfig.json`, …) and build the flag-group from where it
+actually sits:
 
 ```sh
+# manifest at the repo root
 python3 <paths.tools>/discover/discover.py --repo . --out "$DIR" --name "$NAME" \
   --model-out "$MODEL" --clusters-out "$CLUSTERS" \
   [--go-roots cmd,internal --go-mod go.mod] \
   [--ts-roots src --ts-tsconfig tsconfig.json --ts-exclude 'src/generated/**']
+
+# the same repo with the Go module under backend/ and the web app under web/
+  [--go-roots backend/cmd,backend/internal --go-mod backend/go.mod] \
+  [--ts-roots web/src --ts-tsconfig web/tsconfig.json]
 ```
 
 Writes `$MODEL` (component graph) and `$CLUSTERS` (three candidate clusterings:

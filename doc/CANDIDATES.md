@@ -642,3 +642,20 @@ own to write?" test the way C11 got one from `files_to_touch`.
 (it subsumes both without a heuristic). Cf. **C37** (skill prose — same shape), **C32** (dry-run
 the decomposition before the human ratifies), **C13** (verbatim interface contract in the task
 contract).
+
+**2026-07-27 — THE TRIGGER HAS FIRED; the type-claim member recurred a fourth time.** dems'
+sprint-20260725 batch carried five members of this family at once (L-075, L-079, L-086, plus
+recurrences of L-067 and L-069). Four had a *stateable* rule and were point-fixed this pass —
+whole-tree-invariant inventory computed by running the scan (L-075), `interface_contract_ref` on
+consumer tasks and not only producers (L-079), a reuse instruction checked against the target's
+package boundary (L-086), a wrapped SYS-TC scenario joined before parsing (L-074). The **residual
+type-claim member did not have one**: T2's `interface_contract` referenced `domain.AttachmentTarget`,
+a type that exists nowhere in the codebase and whose file was not in `files_to_touch` — the exact
+shape of the 2026-07-20 `domain.RuleConflict` recurrence, C11 still blind to it for the same reason
+(a bare qualified symbol carries no path to resolve against).
+
+Four point-fixes in one pass is the pattern this entry predicted would stop scaling: each rule is
+correct, each is one more paragraph a cut-time role must hold, and none of them would have caught
+the one member that had no rule. **Recommendation: act on C37's wf2-side half rather than a fifth
+point-fix** — the adversarial spec-layer reviewer subsumes both residual members without needing a
+heuristic that can distinguish "the task creates this type" from "this type does not exist."

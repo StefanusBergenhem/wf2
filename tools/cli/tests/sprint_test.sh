@@ -300,6 +300,48 @@ write_thin_sprint; write_mat_slice
 OUT="$(wf sprint materialize --format json)"; RC=$?
 [ "$RC" -eq 0 ] && ok "materialize: a complete SYS-TC description is not flagged truncated" || bad "mat trunc fp" "rc=$RC $OUT"
 
+# a wrapped case title / Given-When-Then bullet is joined, not cut at the line
+# break — the build stamps the description verbatim onto [SYS-TC:] (L-074)
+write_thin_sprint
+cat > "$SLICE" <<'MD'
+# Design-slice — widget
+
+**Serves:** CAP-1
+
+## Component requirements
+
+- **REQ-1** — the widget does X  *(owner: core · CAP-1)*
+- **REQ-2** — the widget rejects Y  *(owner: core · CAP-2)*
+- **REQ-3** — the tooling gate holds  *(owner: tooling · L-2)*
+
+## System test cases
+
+- **SYS-TC-1:** end-to-end widget flow across
+  the whole stack
+  **Covers:** CAP-1, CAP-2
+  - **Given** a widget with a rule that spans
+    more than one line in the slice
+  - **When** driven
+  - **Then** it works
+
+## Interface contracts
+
+- **Widget port (core)** — serves REQ-1; bound by ADR-13
+
+      type Widget interface {
+          Do(x string) error
+      }
+MD
+OUT="$(wf sprint materialize --format json)"; RC=$?
+[ "$RC" -eq 0 ] && ok "materialize: a wrapped SYS-TC scenario is not flagged truncated" || bad "mat wrap exit" "rc=$RC $OUT"
+DESC="$(yget "$SPRINT" "d['tasks'][1]['system_tests'][0]['description']")"
+echo "$DESC" | grep -q "flow across the whole stack" \
+  && ok "materialize: a wrapped case title is joined" || bad "mat wrap title" "$DESC"
+echo "$DESC" | grep -q "spans more than one line in the slice" \
+  && ok "materialize: a wrapped Given bullet is joined" || bad "mat wrap gwt" "$DESC"
+[ "$(yget "$SPRINT" "d['tasks'][1]['system_tests'][0]['covers']")" = "['CAP-1', 'CAP-2']" ] \
+  && ok "materialize: a wrapped title does not swallow the Covers line" || bad "mat wrap covers" "$(yget "$SPRINT" "d['tasks'][1]['system_tests'][0]")"
+
 write_mat_slice
 
 # a list-valued ref inlines every named contract

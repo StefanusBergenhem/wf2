@@ -59,6 +59,23 @@ rm "$R/.wf/transient/review-ready.yaml"
 [ "$(jget "$(wf orchestrate inspect-build-return "$R" T1)" "d['verdict']")" = "escalate_no_artifacts" ] \
     && ok "inspect-build: nothing present → escalate_no_artifacts" || bad "ib none" ""
 
+# the build sha travels in the verdict JSON — inspect-review-return takes it as an
+# argument, and the only other source is the build agent's prose, which the routing
+# protocol forbids reading (L-082)
+[ "$(jget "$(wf orchestrate inspect-build-return "$R" T1)" "d['build_commit_sha']")" = "None" ] \
+    && ok "inspect-build: no commit yet → build_commit_sha null" || bad "ib sha none" ""
+BUILD="$(gitc "$R" "T1 build: done")"
+: > "$R/.wf/transient/review-ready.yaml"
+OUT="$(wf orchestrate inspect-build-return "$R" T1)"
+[ "$(jget "$OUT" "d['build_commit_sha']")" = "$BUILD" ] \
+    && ok "inspect-build: emits the build commit sha" || bad "ib sha" "$OUT — expected $BUILD"
+# preserve-uncommitted runs FIRST in the protocol; its commit is not the build's
+gitc "$R" "chore(T1): preserve uncommitted files from a prior halted dispatch" > /dev/null
+OUT="$(wf orchestrate inspect-build-return "$R" T1)"
+[ "$(jget "$OUT" "d['build_commit_sha']")" = "$BUILD" ] \
+    && ok "inspect-build: peels a preserve commit off the build sha" || bad "ib sha preserve" "$OUT — expected $BUILD"
+rm "$R/.wf/transient/review-ready.yaml"
+
 # ── inspect-review-return ────────────────────────────────────────────────────
 
 R="$(mkrepo)"

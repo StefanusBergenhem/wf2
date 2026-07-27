@@ -53,9 +53,12 @@ For each task, author its **complete thin** contract per `references/task-contra
 `covers`, `files_to_touch` (the expected write set, cut with the impact tool), the
 per-criterion `tests`, `out_of_scope`, and pointer-only `implementation_notes`. Do **not** write `requirements`,
 `serves`, or `interface_contract` by hand — `wf sprint materialize` (Phase 5) inlines them
-from the slice. When a task builds a component or widens a seam the slice's **Interface
-contracts** section fixes a shape for, set `interface_contract_ref` to that contract's
-name — the build implements the agreed shape, never one it discovers.
+from the slice. Set `interface_contract_ref` to a contract's name on **every** task that
+touches that shape — the one that builds or widens it *and* every task that reads,
+renders, or asserts on it. The build implements or consumes the agreed shape, never one it
+discovers. A consumer task left without the ref has no source for the shape but prose and
+whatever it greps out of a sibling's merged code, and it silently drops the fields nobody
+told it about.
 
 **Plan the slice's architecture moves.** Each move (a rename, split, merge, extraction,
 removal, re-charter, or dependency-edge change) is carried out inside the edit set of the task
