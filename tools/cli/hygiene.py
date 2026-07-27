@@ -35,7 +35,12 @@ _SOURCE_EXT = {".go", ".ts", ".tsx", ".js", ".jsx", ".py"}
 _AGENT_DOCS = {"AGENTS.md", "CLAUDE.md"}
 _GENERATED_RE = re.compile(r"@generated|code generated|do not edit", re.I)
 _SPEC_ID_RE = re.compile(r"\b(?:REQ-\d+|ADR-\d+|CAP-\d+|SYS-TC-\d+|L-\d{2,3})\b")
-_TAG_RE = re.compile(r"\[(?:REQ|SYS-TC):")
+# Only the [SYS-TC:] proving tag is a legal spec reference in code. A [REQ:] token is
+# the retired lane — requirement ids live in the backlog/slice/contract and drain from
+# the merge record — so it earns no exemption: exempting it would let a block state a
+# requirement verbatim and pass, which is the persisted-spec-prose this rule exists to
+# stop.
+_TAG_RE = re.compile(r"\[SYS-TC:")
 # A decision record cited by its own repo-relative path (e.g.
 # ".wf/adrs/ADR-003-unified-requirement-model-compliance-orchestrator.md") points a
 # reader at one exact file — unlike a bare "ADR-3" floating in prose, it cannot drift
@@ -108,7 +113,7 @@ def _blocks(indices):
 
 def _bare_spec_ref(line):
     """True if `line` carries a spec-id reference that is neither inside a
-    [REQ:.../SYS-TC:...] tag nor part of a decision-record path citation — the
+    [SYS-TC:...] proving tag nor part of a decision-record path citation — the
     ambiguous form spec-narrative rejects."""
     if _TAG_RE.search(line):
         return False

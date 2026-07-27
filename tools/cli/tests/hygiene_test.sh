@@ -80,6 +80,18 @@ var b = 2
 // [REQ:REQ-42] The system shall resolve the effective requirement set per project.
 var c = 3
 GO
+# The retired [REQ:] lane earns no exemption: requirement ids no longer live in code
+# at all, so a block carrying one narrates spec exactly as a bare id does. Its fixture
+# is 3+ lines deliberately — the old one was a single line, so the block-length gate
+# short-circuited it and the exemption itself was never under test.
+cat > "$PROJ/legacy_tag.go" <<'GO'
+package p
+
+// [REQ:REQ-77] The system shall resolve the effective requirement set per
+// project, applying zone-inherited attachments before element-level ones, and
+// shall report an incomplete verdict when no reference side can be derived.
+var f = 1
+GO
 # a comment block citing a decision record by its full repo-relative path is a
 # stable one-file pointer, not a bare-id narrative — the path-cite carve-out exempts it
 cat > "$PROJ/pathcite.go" <<'GO'
@@ -117,7 +129,9 @@ has() { jget "$1" "any(f['rule']=='$2' and f['file']=='$3' for f in d['findings'
 [ "$(has "$OUT" comment-block comments.go)" = "True" ] && ok "H3a: long comment block flagged" || bad "H3a" "$OUT"
 [ "$(has "$OUT" spec-narrative comments.go)" = "True" ] && ok "H3b: spec-narrative comment block flagged" || bad "H3b" "$OUT"
 [ "$(jget "$OUT" "sum(1 for f in d['findings'] if f['rule']=='spec-narrative' and f['file']=='comments.go')")" = "1" ] \
-  && ok "H3b: the [REQ:] tag line alone is not narrative" || bad "H3b tag exempt" "$OUT"
+  && ok "H3b: a one-line [REQ:] comment is below the block-length gate" || bad "H3b tag exempt" "$OUT"
+[ "$(has "$OUT" spec-narrative legacy_tag.go)" = "True" ] \
+  && ok "H3e: a retired [REQ:] tag earns no exemption — the block still narrates" || bad "H3e legacy tag" "$OUT"
 [ "$(jget "$OUT" "any(f['rule']=='spec-narrative' and f['file']=='pathcite.go' for f in d['findings'])")" = "False" ] \
   && ok "H3d: a path-cited decision record is not narrative" || bad "H3d path-cite exempt" "$OUT"
 [ "$(has "$OUT" spec-narrative pathcite_mixed.go)" = "True" ] \
