@@ -19,8 +19,8 @@ per-language extractor (own toolchain)  ─┐
                                           ┘                      │
                                        cluster.py → clusters.json (3 candidate clusterings)
                                                                   │
-                            ── LLM step (the `wf-scout` agent) ──
-                                       scout reconciles → subsystems.json
+                            ── LLM step (the `wf-discover` agent) ──
+                                    it reconciles → subsystems.json
                                                                   │
                           render.py → view.html (human)   brief.py → brief.md (agent)
 ```
@@ -114,8 +114,8 @@ python3 discover.py --repo <REPO> --out <DIR> --name <NAME> \
 
 ## After the mechanical half
 
-The `wf-discover` skill dispatches the `wf-scout` agent (the one LLM step) to
-reconcile `clusters.json` into `subsystems.json`, then renders:
+The `wf-discover` agent reconciles `clusters.json` into `subsystems.json` (the one
+LLM step), then renders:
 
 ```sh
 python3 render.py --model <MODEL> --subsystems <SUBSYSTEMS> --out <VIEW>  --title "<NAME>"
