@@ -29,8 +29,8 @@ an absolute path to this task's worktree root.
 6. **Read-only operations are exempt** — `Read`, `Grep`, `cat`, and other non-mutating tools
    may reference files outside `worktree`. The restriction is write-only.
 
-A write outside `worktree` lands an uncommitted change in the parent repo that the
-orchestrator reverts — your work is lost.
+A write outside `worktree` lands an uncommitted change in the parent repo, which is
+reverted rather than merged — your work is lost.
 
 ## Test & gate output piping
 
@@ -78,11 +78,11 @@ character, rejects.
 
 ## Scope discipline
 
-- **The contract bounds the work, not the file list.** `files_to_touch` in
-  `paths.current_task` is the expected write set — start there, and write beyond it when
-  the task genuinely needs it (a consumer that won't compile otherwise, a test-file home,
-  a regenerated file). Every file you change must serve the contract's `covers`/acceptance
-  criteria; `out_of_scope` is binding, and an unrelated drive-by change is a review
+- **The contract bounds the work, not the file list.** The `grounding` pointers in
+  `paths.current_task` are a starting set, not a fence — write beyond them when the task
+  genuinely needs it (a consumer that won't compile otherwise, a test-file home, a
+  regenerated file). Every file you change must serve the contract's `covers`/acceptance
+  criteria; `boundaries` is binding, and an unrelated drive-by change is a review
   rejection.
 - **Commit every file you create** with the task's work — the merge to the sprint
   branch carries only committed files.
@@ -96,8 +96,8 @@ When a HALT fires, the report MUST contain:
    or the contract field that contradicts reality. Citations, not narrative.
 3. **The artifact you wrote** — most halts produce one (`design_issues`, `feedback`).
    Name the file and summarize its contents.
-4. **What's safe to do next** — re-dispatch with an amended contract / route the design
-   issue to `wf-spec-fix` / escalate to human. Match your role skill's halt protocol; do not invent states.
+4. **What's safe to do next** — re-dispatch with an amended contract / repair of the design
+   issue you wrote to `paths.design_issues` / escalate to human. Match your role skill's
+   halt protocol; do not invent states.
 
-A halt report missing any field is incomplete — the orchestrator may re-dispatch you to
-expand it before routing.
+A halt report missing any field is incomplete — write all four before you exit.

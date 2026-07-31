@@ -76,9 +76,30 @@ at a real artifact, field, or step; a vague "could be clearer" is noise — omit
   defaults to `none`).
 - **`--repo-observation`** — In the code you actually touched, did you hit a
   blocker, a surprise, or a smell a future task should address? Tie it to what you
-  worked on. *(Feeds the project backlog.)*
+  worked on. *(Feeds the project's learnings log.)*
 - **`--gotcha`** — Did you hit a non-obvious trap in *working with* this repo —
   an env, setup, or convention snag a future agent will hit again (e.g. a port
   collision unless a variable is pinned)? State it as one self-contained sentence
   with the exact fix. Code smells belong in `--repo-observation`, not here.
   *(Feeds a proposed AGENTS.md edit.)*
+
+## 3 — The unit hierarchy
+
+Work is nested four deep. Use these words for these things — meaning one level and saying
+another sends the next role at the wrong altitude.
+
+- **Sprint** — one loop iteration: one branch, one PR, one slice.
+- **Increment** — a design milestone inside the sprint: a component allocation, an
+  end-to-end flow, and an observable checkpoint. Increments run in the order the slice
+  gives them; each one's tasks merge before the next is planned.
+- **Sub-layer** — the tasks of one increment with no dependency between them; they build in
+  parallel worktrees and merge together.
+- **Task** — one contract, one build agent, one review chain.
+
+Two artifacts carry direction across sprints: `paths.charter` (where the system is going)
+and `paths.plan` (the next few milestones, re-validated every sprint). Neither is yours to
+write unless your own instructions say so.
+
+The slice states its **claimed scope** — what this sprint delivers of each capability's
+promise and what it knowingly leaves. No role declares a capability complete; the
+close-time adequacy gate detects that.

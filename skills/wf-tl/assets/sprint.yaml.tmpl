@@ -1,61 +1,47 @@
-# SPRINT — the task DAG the build pipeline executes. TRANSIENT.
+# SPRINT — one increment's task DAG, executed by the driver. TRANSIENT.
 #
-# Written by wf-tl from the design-slice; gitignored; consumed directly by the
-# build pipeline. Not hand-maintained, not committed, not read across changes.
-# One inline contract per task; see references/task-contract.md for the field rules.
-# Author the THIN fields only — `wf sprint materialize` inlines requirements,
-# serves, interface_contract, and the SYS-TC text from the slice.
-
-# sprint-<yyyymmdd>-<short-scope-slug> — filesystem- and branch-name-safe
-# ([a-z0-9-] only); names the task worktrees, task branches, and the archive file.
-sprint_id: "sprint-<yyyymmdd>-<short-scope-slug>"
-
-sprint:
-  summary: "<one line: what this change delivers>"
+# Written by wf-tl when its increment's turn comes; gitignored; consumed directly by the
+# build pipeline. Not hand-maintained, not committed. One inline contract per task; see
+# references/task-contract.md for the field rules. Author the fields below only —
+# `wf sprint materialize` inlines the increment narrative and the SYS-TC scenario text.
 
 tasks:
   - id: T1
-    title: "<imperative, one line>"
+    increment: 2
     depends_on: []
-    covers: [REQ-1]             # requirements + serves are materialized from the slice
-    files_to_touch:             # expected write set — a planning signal, cut with the
-                                # impact tool (task-contract.md Scope consistency)
-      - "<path>"
-      - "<the test file the mandated tests live in>"
-    acceptance_criteria:
-      - id: REQ-1.AC-1
-        check: "<testable statement with named inputs and expected outputs>"
+    covers: [CAP-NNN]           # and/or L-NNN — the driver this task serves
+    story: |
+      <2–4 paragraphs: what this task builds and why; how the change flows through the
+       code; what is new against what already exists.>
+    acceptance:
+      - id: AC-1
+        criterion: "<trigger → observable response, one behaviour>"
         tests:
-          - level: unit                    # unit | integration
-            target: "<file>:<function>"    # unit: the target under test
-      - id: REQ-1.AC-2
-        check: "<failure/boundary behaviour of the same requirement>"
+          - {level: unit, target: "<file>:<function>"}
+      - id: AC-2
+        criterion: "<a failure or boundary behaviour of the same change>"
         tests:
-          - level: integration
-            seam: "<the real external dep or cross-component wiring exercised>"
-      # - id: REQ-1.AC-3
-      #   check: "<criterion an existing mechanical gate enforces>"
-      #   verified_by: "<the gate command>"   # gate-verified: no tests entry
-    out_of_scope:
-      - "<a cross-slice deferral or adjacent behaviour no mechanism forbids>"
-    implementation_notes:
-      - "<pointer only: file:line · ADR-NNN + its one-clause constraint · named pattern>"
-    # interface_contract_ref: "<contract name>"   # the slice's Interface contracts entry for
-    #                                             # a shape this task builds, widens OR
-    #                                             # consumes; materialize inlines it verbatim
+          - {level: integration, seam: "<the real external dep or wiring exercised>", target: "<TestName>"}
+      # - id: AC-3
+      #   criterion: "<a fact only a gate can observe — name the source fact here>"
+      #   verified_by: inspection
+    boundaries: |
+      <out of scope · read-only files · fixed interfaces. Binding on the build.>
+    grounding:
+      - "<path>:<line> — <what is there>"
+      - "ADR-NNN — <the one-clause constraint, verbatim from its constraint: line>"
 
-  # An e2e task — one per SA system test case. depends_on the tasks building the
-  # requirements DRIVEN BY the capability the case covers, so it runs the assembled path.
+  # An e2e task — one per SYS-TC case this increment completes.
   - id: T2
+    increment: 2
     title: "System test: <the case's behaviour>"
-    depends_on: [T1]            # the tasks building the reqs driven by the case's capability
-    covers: []                  # an e2e task proves a SYS-TC, not a component requirement
-    files_to_touch:
-      - "<the e2e test file>"
-    acceptance_criteria: []     # the system test case IS the acceptance; no REQ-N.AC here
-    system_tests:
-      - id: SYS-TC-1            # description + covers materialized; build stamps [SYS-TC:SYS-TC-1]
-    out_of_scope:
-      - "Any component logic — the e2e task only exercises the assembled path."
-    implementation_notes:
+    depends_on: [T1]            # the tasks that assemble the path the case exercises
+    covers: [CAP-NNN]
+    story: |
+      <what end-to-end behaviour this proves and which assembled path it runs.>
+    acceptance: []              # the system test case IS the acceptance
+    system_tests: [SYS-TC-NNN]  # scenario text materialized; build stamps [SYS-TC:SYS-TC-NNN]
+    boundaries: |
+      Any component logic — this task only exercises the assembled path.
+    grounding:
       - "<the e2e home + how it runs — e.g. e2e/ ; establish one if none exists>"

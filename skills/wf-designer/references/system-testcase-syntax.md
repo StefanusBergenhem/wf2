@@ -50,7 +50,7 @@ Every case declares the capabilities it proves on a `Covers:` line.
 Write the **set** against the slice's **claimed scope** for each capability — the promise
 this iteration takes on — not against the increments you just cut. The decomposition is
 what a narrow set inherits its blind spots from. **Load
-`{{WF_SKILLS_DIR}}/wf-sa/references/promise-sweep.md` and sweep every class it lists
+`{{WF_SKILLS_DIR}}/wf-designer/references/promise-sweep.md` and sweep every class it lists
 before calling the set done** — a class you skip is a scenario the adequacy gate will name
 as a residual, at the cost of a re-cut.
 

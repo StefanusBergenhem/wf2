@@ -119,7 +119,8 @@ Write `paths.design_slice` from `assets/slice.md.tmpl`. Section by section:
 - **Design narrative** — the change's story in prose: the shape you chose and the force
   that drove it, how each end-to-end behaviour flows through the components **in order,
   wiring included** (composition root, orchestration), and each touched component's role.
-  This rides in every task envelope; it is what a build agent decomposes against.
+  It is copied verbatim into every task envelope — write it complete enough to stand alone,
+  and reference the brief and drill digests by path instead of restating structure.
 - **Claimed scope** — per served capability, what this iteration delivers of its promise
   and what it knowingly leaves. Slices are deliberately partial. **Never claim a capability
   complete**: completion is detected at sprint close by the adequacy gate, and a claim here
@@ -154,8 +155,8 @@ Write `paths.design_slice` from `assets/slice.md.tmpl`. Section by section:
 - **Binding ADRs** — the standing ADRs whose constraints bind this change, and any the
   human accepted through a ruling.
 - **Decision log** — the assumptions you took (the reading chosen against the reading
-  rejected), below-gate supersessions and deferrals, and plan reshuffles. This ships in the
-  sprint's PR body.
+  rejected), below-gate supersessions and deferrals, and plan reshuffles. Write each for a
+  human who reads only the PR body: one line, no transcript.
 
 ### Phase 4 — Walk the design for soundness
 

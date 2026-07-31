@@ -1,4 +1,4 @@
-# A slice-rejection design issue: the design slice cannot be decomposed as written.
+# A slice-rejection design issue: an increment cannot be built as allocated.
 # Transient, host-side. Written before you halt; one entry per rejection, carrying every
 # blocker — never one entry per blocker.
 # Append the entry to the existing `issues:` list; create the file only if absent. Never
@@ -6,16 +6,17 @@
 issues:
   - id: "DI-SLICE-<n>"        # ascending: 1 + the highest DI-SLICE-<n> already in the file
     task_id: null             # slice-scoped — raised before any task exists
+    increment: <n>            # the increment that cannot be built as allocated
     detected_by: tl
-    scope: slice              # marks a slice re-cut round; wf-spec-fix classifies the fix
+    scope: slice              # marks a slice re-cut round; the designer classifies the fix
     severity: high
     status: open
-    summary: "<one line: why the slice cannot be decomposed as written>"
+    summary: "<one line: why the increment cannot be built as allocated>"
     blockers:                 # every defect that must be resolved before decomposition
       - id: B1
-        requirement: "<the implicated REQ id, or null for a slice-level defect>"
+        component: "<the allocated component implicated, or null for an increment-level defect>"
         summary: "<what is wrong with it>"
         evidence: "<what you read or measured that proves it — file:line, command + output>"
-        needs: "<what the SA must decide or mint to unblock it>"
+        needs: "<what the designer must decide, allocate, or re-cut to unblock it>"
     working_notes:            # decomposition you worked out that does NOT block
-      - "<a measurement, a signature that unblocks a REQ, a trap the next cut must avoid>"
+      - "<a measurement, a signature that unblocks the work, a trap the next cut must avoid>"

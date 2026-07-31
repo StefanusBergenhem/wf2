@@ -2,23 +2,26 @@
 #
 # Path is set by `paths.capabilities` in .wf/config.yaml; this filename is only the
 # default. wf-po appends user-voice statements of what the product lets a user, operator,
-# or external system do; wf-sa drains them (removes one once it is proven).
-# Never reference components, libraries, or implementation patterns here — that is the SA's
-# job, not this file's.
+# or external system do. Never reference components, libraries, or implementation patterns
+# here — that is the design role's job, not this file's.
 #
 # This file is the UN-PROVEN demand, not a catalog of everything the product does: it holds
-# user-voice intent not yet proven built. wf-sa removes a capability only when its system
-# tests have shipped AND an adequacy review finds they cover the whole promise — its essence
-# then lives in those system tests + any ADR it motivated — so this set never accumulates
+# user-voice intent not yet proven built. An entry is removed only when its system tests
+# have shipped AND an adequacy review finds they cover the whole promise — its essence then
+# lives in those system tests + any ADR it motivated — so this set never accumulates
 # shipped features. An entry here may already be designed, building, or even built but not
 # yet proven; it stays until proven.
+#
+# An adequacy review that finds the promise NOT yet covered appends its residual paths to
+# that entry's `notes`; three such verdicts in a row set `status: parked`, which takes the
+# entry out of play until a wf-po session re-words it and sets it back to `planned`.
 #
 # This scaffold ships EMPTY (every example below is a comment), so a fresh adopter
 # never inherits fictional capabilities. wf-po sets
 # last_updated at its first commit.
 #
 # ID namespace — monotonic over the file's lifetime; never renumber, never reuse a
-# retired number (entries leave when the SA drains them, but their ids are not recycled):
+# retired number (entries leave when they are proven, but their ids are not recycled):
 #   CAP-NNN   capabilities (what a user/operator/external system can do)
 # The authoritative high-water mark is `id_counters.cap` in .wf/config.yaml — the ids
 # present in this file alone are not sufficient, because entries drain.
@@ -32,8 +35,7 @@ updated_by: ""
 # - id: "CAP-001"
 #   statement: "Field engineers can search past inspections by date and asset id."
 #   value: "Saves ~10 min per site visit; current workaround is paper logs."
-#   priority: high            # high | medium | low
-#   status: planned           # planned | deferred
+#   status: planned           # planned | deferred | parked
 #   depends_on: []            # other CAP-NNN this one needs
-#   notes: ""                 # context from the conversation
+#   notes: ""                 # context from the conversation; adequacy residuals append here
 capabilities: []

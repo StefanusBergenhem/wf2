@@ -1,267 +1,195 @@
 # Task contract
 
-A task contract is the unit the build pipeline executes against. It must be complete
-enough that a developer who has read only the contract (plus the source it points to)
-can build the task correctly and a reviewer can judge the diff against it alone.
+The unit the build pipeline executes against. It must be complete enough that a developer
+who has read only the contract (plus the source it points to) can build the task correctly,
+and a reviewer can judge the diff against it alone.
 
 Contents:
-- The fields
+- The four sections
 - Materialized fields
-- Acceptance criteria
+- Story
+- Acceptance
 - Tests on criteria
-- Scope consistency
-- Implementation notes are pointers
-- Out of scope
+- Boundaries
+- Grounding
+- Ground every claim about existing code
+- Sizing
+- End-to-end tasks
 
-## The fields
+## The four sections
+
+Each fact lives in exactly one section. A fact repeated in two of them is a contradiction
+waiting to happen.
 
 ```yaml
-- id: T1
-  title: <imperative, one line>
-  depends_on: []                 # task ids that must land first
-  covers: [REQ-1, REQ-2]         # the slice requirements this task satisfies
-  files_to_touch: [path, path]   # the expected write set — a planning signal, not a fence
-  acceptance_criteria:           # YOU author these — one testable condition per entry
-    - id: REQ-1.AC-1
-      check: <testable statement with named inputs and expected outputs>
+- id: T3
+  increment: 2
+  depends_on: [T1]           # task ids that must land first
+  covers: [CAP-024]          # and/or L-ids — the driver this task serves
+  story: |
+    <2–4 paragraphs, FIRST field: what this task builds and why, how the change flows
+     through the code, what is new against what already exists.>
+  acceptance:
+    - id: AC-1
+      criterion: <one behaviour: trigger → observable response>
       tests:
-        - level: unit            # unit | integration
-          target: "<file>:<function>"   # unit: the target under test
-    - id: REQ-1.AC-2
-      check: <failure/boundary behaviour of the same requirement>
+        - {level: integration, seam: "HTTP + postgres", target: TestZonesPatch}
+    - id: AC-2
+      criterion: <a failure or boundary behaviour of the same change>
       tests:
-        - level: integration
-          seam: "<the real external dep or cross-component wiring exercised>"
-    - id: REQ-1.AC-3
-      check: <criterion an existing mechanical gate enforces>
-      verified_by: <gate command>  # ONLY when a named gate, not a test, proves it
-  system_tests:                  # an e2e task ONLY: the SA's case, by id
-    - id: SYS-TC-1
-  out_of_scope:
-    - <a cross-slice deferral or adjacent behaviour no mechanism forbids>
-  implementation_notes:
-    - <pointer only: file:line · ADR-NNN + its one-clause constraint · named pattern>
-  interface_contract_ref: "<contract name>"  # the slice's Interface contracts entry for a
-                                             # shape this task builds, widens, OR consumes
-                                             # (a list when several apply)
+        - {level: unit, target: "internal/zones/patch.go:applyPatch"}
+    - id: AC-3
+      criterion: <a fact only a gate can observe>
+      verified_by: inspection   # name the source fact in the criterion itself
+  boundaries: |
+    <ONE merged section: what is out of scope, which files are read-only reference,
+     which interfaces are fixed. Binding — the build may not cross it, and a reviewer
+     rejects a diff that does.>
+  grounding:
+    - "backend/internal/handlers/zones.go:88 — current mount point"
+    - dependency_commits: {T1: <sha>}
+  system_tests: [SYS-TC-44]  # e2e tasks only
 ```
 
 ## Materialized fields
 
-Author only the thin fields above. After writing (and after **every** later edit to
-the sprint file), run:
+Author the fields above only. After writing, and after **every** later edit to the sprint
+file, run:
 
 ```
 python3 <paths.tools>/cli/wf sprint materialize
 ```
 
-It inlines, verbatim from the slice: each covered requirement's `requirements[]`
-entry (statement + its driver as `serves`), the task-level `serves` union, the
-`interface_contract` block each `interface_contract_ref` names, and each
-`system_tests` entry's `description` and `covers`. Never write those fields by
-hand and never paraphrase a statement — hand-written copies drift, and
-`wf sprint check` fails a sprint the materializer has not filled.
+It inlines the increment's narrative into each task envelope and each `system_tests`
+entry's scenario text. Never write those by hand and never paraphrase a scenario — hand
+copies drift, and `wf sprint check` fails a sprint the materializer has not filled.
 
-One exception: a follow-up task whose `covers` names a requirement **outside
-the slice** (a defect in code shipped by an earlier sprint) carries its
-`{id, statement, serves}` entry verbatim from the task that built it; the
-materializer keeps a carried entry the slice cannot supply.
+## Story
 
-## Acceptance criteria
+The first field, and the one the build reads first. Two to four paragraphs covering:
 
-You author the acceptance criteria — the slice gives you requirements, not criteria.
-For each requirement a task `covers`, write the testable conditions that prove it:
+- **What this task builds, and why** — the behaviour it delivers, in the increment's terms.
+- **How the change flows through the code** — the path a request, event, or call takes
+  through the files this task touches, in order.
+- **What is new against what exists** — name the current behaviour you are extending,
+  replacing, or wiring into.
 
-- **Testable from the source.** Name specific inputs and expected outputs; a build
-  agent must be able to write a failing test from the `check` alone, without
-  re-reading the requirement.
-- **Identified and traced.** Give each criterion an id `REQ-N.AC-M` scoped to its
-  requirement — the reviewer's and the feedback loop's stable handle, keeping the trace
-  AC → requirement → driver intact.
-- **Complete for the requirement.** Cover the requirement's failure and boundary
-  behaviour, not just its happy path — a requirement with only happy-path criteria is
-  an incomplete set.
-- **Within the requirement.** Do not invent criteria for behaviour the requirement
-  doesn't call for — that is scope creep. A requirement you cannot make testable from
-  the source is a design issue you raise per your mode's procedure, never a guess.
-- **Behaviour-level wording.** A `check` describes the observable behaviour or
-  output, never the underlying API call or library function — coupling a criterion
-  to a method name makes its test break on refactors that preserve behaviour.
-  - Bad: *"value is formatted via toLocaleString"* — names the mechanism.
-  - Good: *"value renders as a non-empty locale-formatted date string"*.
-- **Gate-verified, not test-provable.** When a criterion is enforced by an existing
-  mechanical gate (a preflight command, a CI check) rather than a test — e.g. "generated
-  code is never stale" enforced by a codegen-drift gate — add `verified_by: <the gate
-  command>` and no `tests`; it then needs no covering test. Never use `verified_by` for
-  a criterion a test could prove — that is dodging the mandate, and the reviewer will
-  treat it as an unmet AC. A slice requirement annotated `proof: inspection — <fact>` is
-  the whole-requirement case: no test can observe it, so **every** criterion you write
-  for it is gate-verified and the task mandates no test for it.
+Write it so the build needs no other prose. A story that only restates the task title is
+not a story; `wf sprint check` fails a trivial one.
 
-Good: *"For 1,000 concurrent users, median response ≤ 180ms and p99 ≤ 250ms over a 5-minute window."*
-Bad: *"The system performs well under load."*
+## Acceptance
+
+The acceptance criteria are the task's requirement layer — there is no separate statement
+above them. Write the criteria that prove the task's part of the increment:
+
+- **Complete for the task** — cover the failure and boundary behaviour, not just the happy
+  path. Happy-path-only acceptance is an incomplete set.
+- **Within the task** — do not write criteria for behaviour the increment does not call
+  for. Behaviour you cannot make testable from the source is a slice defect you raise, never
+  a guess.
+- **Ids are `AC-<n>`, scoped to the task** — the reviewer's and the build feedback loop's
+  stable handle.
+
+Phrase every criterion per `references/criterion-syntax.md`.
 
 ## Tests on criteria
 
-Each criterion's `tests` entries say **where it is proven** — the level and
-placement. The `check` already says what to prove; do not restate it as a test
-description.
+Each criterion carries either `tests` or `verified_by` — never neither, never both.
 
-- **`level: unit`** — the criterion is proven against a single target in isolation;
-  `target: "<file>:<function>"` names it. Every AC provable in isolation gets one.
-- **`level: integration`** — the criterion is proven across a real seam;
-  `seam:` names the external dependency (database, network, filesystem, queue,
-  cache), the new exposed interface, or the cross-component wiring exercised.
-  **Required** on at least one criterion whenever `files_to_touch` crosses such a
-  seam — the seam is exercised for real, never mocked.
-- An AC may carry both levels when its behaviour needs proving in isolation and
-  across the seam.
-- A task whose criteria mandate no test at all (every AC gate-verified) states why
-  in `implementation_notes`.
+- **`level: unit`** — proven against a single target in isolation; `target:
+  "<file>:<function>"` names it. Every criterion provable in isolation gets one.
+- **`level: integration`** — proven across a real seam; `seam:` names the external
+  dependency (database, network, filesystem, queue, cache), the new exposed interface, or
+  the cross-component wiring exercised, and `target:` names the test function.
+  **Required** on at least one criterion whenever the task crosses such a seam — the seam
+  is exercised for real, never mocked.
+- A criterion may carry both levels when it needs proving in isolation *and* across the seam.
+- **`verified_by: inspection`** — only when no test can observe the criterion: a lint rule,
+  a CI gate, a build or config fact. The criterion itself names the source fact
+  (*"`.golangci.yml` carries a depguard rule denying `internal/repository` → `internal/compliance`"*)
+  so the reviewer can check it. Never use it for something a test could prove — the
+  reviewer treats that as an unmet criterion.
 
-**System (end-to-end)** tests come from the **SA's `SYS-TC-<n>` cases in the design
-slice**; you do not derive them. Plan each case as its **own e2e task** whose
-`system_tests` names the case id (the materializer fills its text). The case covers a
-**capability**, so the task's `depends_on` names the tasks building the requirements
-**driven by that capability** (read the drivers off the slice), putting it downstream
-of the assembled path. When the slice drives no requirement from that capability — a
-hardening slice whose requirements serve a learning — name instead the tasks building the
-requirements whose components assemble the path the case exercises. Its `files_to_touch`
-is the e2e test file (it exercises —
-imports — the components without owning them); the build stamps
-`[SYS-TC:SYS-TC-<n>]` in that test. This is the level that catches a `nil`-wired
-dependency that compiles and silently does nothing — per-component unit tests, which
-mock what they wire, never substitute for it.
+**Every `target` must be a test function name that does not already exist in its package.**
+Grep the tree before you name one: a duplicate name collides at merge with a sibling task's
+test and one of the two silently disappears.
 
-## Scope consistency
+## Boundaries
 
-`files_to_touch` is the task's **expected write set** — a planning signal, not a fence.
-It feeds two things: **stage ordering** (two tasks whose declared sets overlap need a
-dependency edge, or they risk a merge conflict at the stage boundary — an honest set is
-what makes the overlap visible) and the **build agent's starting pointers**. The build
-may write beyond the set when the task genuinely needs it; what bounds the build is
-`covers`, the acceptance criteria, and `out_of_scope`.
+One prose section holding everything that bounds the build:
 
-**Cut an honest expected set with the impact tool.** For every symbol, field, table, or
-column the task changes, and every file it edits, run:
+- **Out of scope** — what a diligent developer might otherwise absorb: an adjacent behaviour
+  belonging to a later increment, a refactor the task does not need, a consumer deliberately
+  left untouched (with the reason).
+- **Read-only** — files the task reads for reference but must not edit.
+- **Fixed interfaces** — a shape from the slice's Interface contracts, or an existing
+  signature this task must build to rather than change.
 
-```
-python3 <paths.tools>/cli/wf impact files --symbol <changed-symbol> [--symbol ...] [--file <edited-file> ...]
-```
+Nothing here may be contradicted by the story, a criterion, or a grounding pointer. Never
+waste a line restating that some file is merely unrelated.
 
-Fold the `candidates` entries you expect the build to write into `files_to_touch` — the
-consumer files (source and test) plus the companion fan-out (a migration's `down.sql`
-sibling, config-declared codegen outputs). The tool's consumer/companion output is what
-surfaces cross-task overlaps for ordering edges. A candidate you deliberately exclude
-from the task gets a one-line reason in `out_of_scope`.
+## Grounding
 
-**A whole-tree AC is inventoried by running its own scan, never by sampling.** When an
-acceptance criterion states an invariant over the tree ("no bare citation remains", "every
-package carries a doc comment", "the scan reports none"), the file set that proves it is
-whatever that scan returns *right now* — run the criterion's own grep, linter, or check
-command at cut time and fold every hit into `files_to_touch`. A set assembled from the
-sites you already knew about is a guess: the build discovers the rest mid-task and either
-expands scope on its own or halts.
+Pointers only — never prose that re-explains the source. The build reads the code itself,
+and a paraphrase that drifts ships a defect straight into the contract.
 
-**A signature or field change carries its consumers.** When a task changes a function
-signature, renames or relocates a field, or otherwise alters a shape other code depends
-on, declare the callers and fixtures that must update with it in `files_to_touch` — the
-impact tool enumerates them. The atomic edit set is the origin file plus its dependents,
-whatever component each sits in; declaring the consumers is what turns a cross-task
-overlap into an ordering edge instead of a stage-boundary merge conflict.
+- a `file:line` reference with a few words on what is there
+  (`membership.go:41 — the deletedEntities CTE exclusion`);
+- an ADR id plus the one-clause constraint from its `constraint:` frontmatter line, lifted
+  verbatim, never paraphrased from the body;
+- the name of a pattern to follow and where it lives;
+- `dependency_commits: {T1: <sha>}` — filled at extraction, so the build reads a
+  dependency's merged diff directly. When the pattern to follow lives in a `depends_on`
+  task's not-yet-built work, no `file:line` exists at cut time: name the task **and** the
+  concrete files it will create or edit, never a bare "same pattern as T12".
 
-**Declare each mandated test's file home.** For each AC `tests` entry, the test file it
-lives in belongs in `files_to_touch`, placed per the package's test convention — a Go
-unit test as `<file>_test.go` beside its target, a Go integration test as its own
-`//go:build integration` file, a JS test as `*.test.*` / `*.spec.*` or under
-`__tests__/`. Declare a unit `target`'s file too.
-
-**Widening a seam: add alongside, or change in place.** When the slice's **Interface
-contracts** section fixes the seam's shape, build to that shape. When it does not, you
-decide:
-
-- **Add a new method alongside the existing one** when that keeps the task inside the
-  sizing guidance *and* the old method has consumers outside this slice's scope — those
-  consumers stay untouched and out of `files_to_touch`.
-- **Change the shape in place** when the old shape must die — every consumer then goes into
-  `files_to_touch`, per the impact tool above.
-
-A twin you add that must eventually be removed gets its removal as a task **in this sprint**,
-carrying the old method's consumers in that task's `files_to_touch`.
-
-## Implementation notes are pointers
-
-A note is a pointer, never prose that re-explains the source:
-
-- a `file:line` reference (`the deletedEntitiesCTE exclusion, membership.go:41`),
-- an ADR id plus the one-clause constraint it imposes, lifted verbatim from the
-  ADR's `constraint:` frontmatter line — never opened and paraphrased from the body
-  (`ADR-010: the repository must not import internal/compliance`),
-- the name of a pattern to follow and where it lives.
-
-**A pattern in a sibling task's work needs the task id AND the file(s) that carry it.**
-When the pattern lives in a `depends_on` task's not-yet-built work, no `file:line` exists
-at cut time — so name the dependency task and the concrete file(s) it will create or edit
-(`follow T12's revalidator seam — doors.go SetRevalidator and its stub-revalidator tests`),
-never a bare "same pattern as T12". At extraction the contract gains `dependency_commits`
-(each merged dep's commit hash), so the build reads the pattern straight from that diff;
-your note tells it which files in the diff matter.
-
-Never describe how existing code works or what it will do — the build agent reads
-the source itself, and a paraphrase that drifts from the source ships a defect
-straight into the contract. Name in a note only files that are in `files_to_touch`
-or explicitly read-only reference material — mark a read-only pointer with an attached
-`read-only:` prefix (`read-only:core/requirement.go:227`) so `sprint check`'s C9 does not
-flag it as a missing write target. If a note needs more than one sentence,
-what it holds is either behaviour (an acceptance criterion), a shape (an
-`interface_contract_ref`), or not the contract's to say.
+If a pointer needs more than one sentence, what it holds is behaviour (a criterion), a shape
+(the boundaries section), or not the contract's to say.
 
 ## Ground every claim about existing code
 
-A contract that asserts how the current system behaves — and is wrong — ships a defect
-the build cannot fix in scope. Before a task leaves your hands, resolve every statement
-about existing code in its `acceptance_criteria` check text, `implementation_notes` and
-`out_of_scope` to source:
+A contract that asserts how the current system behaves — and is wrong — ships a defect the
+build cannot fix in scope. Before a task leaves your hands, resolve every claim in its
+story, criteria, boundaries, and grounding to source:
 
 - **a write or read surface** ("changed through the API", "the write path sets X") — open
-  the handler *and* the repository and confirm something writes that field. An AC that
-  requires a surface no code exposes cannot be satisfied; the task halts on it.
-- **a mechanism** ("X aggregates Y", "the evaluator resolves Z from W") — open the
-  function. A note the source contradicts costs the build an investigation before it
-  can write a line.
-- **a fixture reaching a mechanism** ("seed via <file>, following <spec>") — confirm the
-  seeded rows reach the path the AC exercises, not merely a similar one.
-- **a command's environment** — a `verified_by` command that reads a database, a generated
-  file or a config picks up whatever default it is pointed at. State the one the task's
-  worktree provides, or the check reports drift on a correct change.
-- **a command's invocation** — a `verified_by` or `tests` command running a committed script
-  invokes it through its interpreter (`bash <script>`, `python3 <script>`), never a bare or
-  `./` path: a script checked in mode 100644 is not executable, and the check dies "Permission
-  denied" before it runs.
-- **a helper the note says to reuse** ("reuse T23's scan fake, do not add a second") — open
-  both files and confirm the language actually lets the target see it: a Go test file in
-  the internal package cannot call a helper compiled into the external `_test` package,
-  and the same wall exists as module/visibility scope in other languages. A reuse
-  instruction the compiler forbids leaves the build choosing between a duplicate you told
-  it not to write and a halt.
+  the handler *and* the repository and confirm something writes that field. A criterion that
+  requires a surface no code exposes cannot be satisfied.
+- **a mechanism** ("X aggregates Y", "the evaluator resolves Z from W") — open the function.
+- **a fixture reaching a mechanism** ("seed via <file>") — confirm the seeded rows reach the
+  path the criterion exercises, not merely a similar one.
+- **a gate command's environment** — a `verified_by` gate reads whatever default it is
+  pointed at; state the one the task's worktree provides, or it reports drift on a correct
+  change.
+- **a gate command's invocation** — a committed script runs through its interpreter
+  (`bash <script>`, `python3 <script>`), never a bare or `./` path: a script checked in mode
+  100644 dies "Permission denied" before it runs.
+- **a helper the task must reuse** — open both files and confirm the language lets the
+  target see it: a Go test file in the internal package cannot call a helper compiled into
+  the external `_test` package. A reuse instruction the compiler forbids leaves the build
+  choosing between a duplicate and a halt.
+- **retiring or consolidating a helper** — run `wf impact files --symbol <name>` for the
+  helper *and* each of its twins (a build-tag variant, a separately-compiled `_test` copy)
+  and take the union as the floor for what the task changes.
 
-Cite what you verified with a `<path>:<symbol>` pointer on the claim. `sprint check`'s C11
-re-resolves every pointer into a file outside `files_to_touch` and errors when the symbol
-is not there. Dispatch `wf-drill` when confirming a claim needs more than opening the file.
+Cite what you verified with a `<path>:<symbol>` pointer in `grounding`; `wf sprint check`
+re-resolves them and errors when the symbol is not there.
 
-**Retiring or consolidating a helper: enumerate every variant.** Run
-`wf impact files --symbol <name>` for the helper *and* for each of its twins before
-setting `files_to_touch`, and take the union of the hits as the floor. A build-tag split
-puts two same-purpose helpers under different names (an `//go:build integration` variant
-and an untagged one), a separately-compiled `_test` package can hold a third ad hoc copy,
-and each has its own callers. Retiring one name while the others' callers go undeclared
-breaks the build mid-task and forces a scope-widening detour.
+## Sizing
 
-## Out of scope
+Keep a task to roughly **≤ 5 files** and **≤ 250 lines** of change — larger hides gaps and
+costs the build/review cycle its leverage. The exception is a **mechanical sweep** (a
+rename, a deletion, a signature change fanning out to consumers) that must land in one
+atomic commit: keep it whole and say so in `boundaries` (`mechanical: <what makes it one
+commit>`). A task needing judgement in more than 5 files is not that exception — split it.
+A one-line change standing alone usually belongs merged with an adjacent task; per-task
+dispatch overhead is roughly fixed.
 
-An entry earns its place when it forbids something a diligent developer might otherwise
-do: a cross-slice deferral the build might reach for (*"REQ-58 is NOT in this slice"*),
-an adjacent behaviour a developer would 'helpfully' absorb, or an impact-tool candidate
-deliberately excluded (with the reason). `out_of_scope` is binding — the build may not
-touch what it names, and the reviewer rejects a diff that does — so never waste an entry
-restating that a file is merely absent from `files_to_touch`.
+## End-to-end tasks
+
+One per `SYS-TC-<n>` the increment completes. Its `system_tests` names the case id (the
+materializer fills the scenario text), its `acceptance` is empty — the scenario *is* the
+acceptance — and its `depends_on` names the tasks that assemble the path it exercises. It
+imports the components without owning them; the build stamps `[SYS-TC:SYS-TC-<n>]` in the
+test. This is the level that catches a `nil`-wired dependency that compiles and silently
+does nothing; per-component tests, which mock what they wire, never substitute for it.
