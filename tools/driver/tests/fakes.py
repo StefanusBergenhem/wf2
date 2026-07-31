@@ -11,11 +11,17 @@ import cliverbs
 import dispatch as driver_dispatch
 import runtime as driver_runtime
 
+# What ``support.CONFIG_TMPL`` sets ``paths.telemetry`` to. The sink is COMMITTED and
+# every role, Stop hook and driver event appends to it, so a real working tree is
+# dirty there almost all of the time — see ``FakeGit``.
+TELEMETRY_PATH = ".wf/telemetry/sessions.jsonl"
+
 
 class FakeCli:
     """Answers `wf` verbs from a script. ``responses[(noun, verb)]`` is either a list
-    consumed one call at a time (the last entry repeats) or a single value; a value is
-    a dict (rc 0) or an (rc, dict) pair."""
+    consumed one call at a time (the last entry repeats), a callable ``fn(cli, args)``
+    answering from the calls made so far, or a single value; a value is a dict (rc 0)
+    or an (rc, dict) pair."""
 
     def __init__(self, responses=None):
         self.responses = dict(responses or {})
@@ -27,6 +33,8 @@ class FakeCli:
         self.calls.append(list(args))
         key = (args[0], args[1]) if len(args) > 1 else (args[0],)
         spec = self.responses.get(key)
+        if callable(spec):
+            spec = spec(self, list(args))
         if isinstance(spec, list):
             spec = spec[0] if len(spec) == 1 else spec.pop(0)
         if spec is None:
@@ -51,10 +59,20 @@ class FakeCli:
 
 
 class FakeGit:
+    """Git for the phase machine, with the REAL-WORLD default state: a tree whose only
+    dirt is the committed telemetry sink. Every role and Stop hook appends a row to it
+    after the last commit, so `is_clean()` is false almost everywhere the driver looks —
+    a fake that defaults to pristine hides every predicate that gates on cleanliness.
+
+    ``clean=False`` adds a foreign path on top; ``dirty=[...]`` replaces the set outright
+    (``dirty=[]`` is the pristine tree, which a real run essentially never has)."""
+
     def __init__(self, *, clean=True, stack=None, sprint_id="s1", base="main",
-                 dirty=None, fetch_ok=True):
-        self.clean = clean and not dirty
-        self.dirty = list(dirty or ([] if clean else ["src/left-over.go"]))
+                 dirty=None, fetch_ok=True, telemetry=TELEMETRY_PATH):
+        self.telemetry = telemetry
+        if dirty is None:
+            dirty = [telemetry] if clean else [telemetry, "src/left-over.go"]
+        self.dirty = list(dirty)
         self._stack = list(stack or [])
         self._sprint_id = sprint_id
         self.base = base
@@ -74,7 +92,7 @@ class FakeGit:
         self.dry_run = False
 
     def is_clean(self):
-        return self.clean and not self.dirty
+        return not self.dirty
 
     def dirty_paths(self):
         return list(self.dirty)
@@ -120,7 +138,7 @@ class FakeGit:
         if branch in self.conflict_on:
             # a conflicted merge is LEFT in the tree for the repair role
             self.merging = branch
-            self.clean = False
+            self.dirty.append("shared.go")
             return __import__("gitops").MergeResult(ok=False, conflict=True,
                                                     files=["shared.go"])
         self.merged.add(branch)
@@ -129,7 +147,7 @@ class FakeGit:
     def merge_abort(self):
         self.aborted.append(self.merging)
         self.merging = None
-        self.clean = True
+        self.dirty = [p for p in self.dirty if p != "shared.go"]
 
     def merge_in_progress(self):
         return self.merging is not None
@@ -138,14 +156,15 @@ class FakeGit:
         return branch in self.merged
 
     def resolve_merge(self):
-        """What a successful `wf-stage-repair` merge run leaves: the merge committed,
-        the tree clean."""
+        """What a successful `wf-stage-repair` merge run leaves: the merge committed and
+        the conflict gone — but the telemetry sink dirty, because the repair role's own
+        last action is to append its session row to it."""
         self.merged.add(self.merging)
         self.merging = None
-        self.clean = True
+        self.dirty = [p for p in self.dirty if p != "shared.go"]
 
     def commit_paths(self, paths, message):
-        self.commits.append((message, [str(p) for p in paths]))
+        self.commits.append((message, [str(p) for p in paths], self.current_branch()))
         self.dirty = [p for p in self.dirty if p not in {str(x) for x in paths}]
         return "commit1"
 

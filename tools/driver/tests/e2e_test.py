@@ -48,10 +48,12 @@ wf-discover)
   ;;
 wf-designer)
   mkdir -p .wf/transient
-  cat > .wf/transient/design-slice.md <<'MD'
-# Design-slice — the greeting seam
+  cap="$(grep -o 'CAP-[0-9]*' .wf/CAPABILITIES.yaml | head -1)"
+  n=$((10#${cap##*-}))
+  cat > .wf/transient/design-slice.md <<MD
+# Design-slice — the greeting seam $n
 
-**Serves:** CAP-001
+**Serves:** $cap
 
 ## Design narrative
 
@@ -61,7 +63,7 @@ path exists to prove against.
 
 ## Claimed scope
 
-- **CAP-001** — this iteration delivers the greeting for one caller end to end; the
+- **$cap** — this iteration delivers the greeting for one caller end to end; the
   bulk path is knowingly left for a later sprint.
 
 ## Increments
@@ -74,8 +76,8 @@ Checkpoint: after this, greeting a caller demonstrably works.
 
 ## System test cases
 
-- **SYS-TC-1:** a caller is greeted end to end
-  **Covers:** CAP-001
+- **SYS-TC-$n:** a caller is greeted end to end
+  **Covers:** $cap
   - **Given** a running scratch service
   - **When** a caller asks to be greeted
   - **Then** the greeting comes back
@@ -92,18 +94,20 @@ None.
 
 <!-- Ships in the sprint PR body. -->
 
-- **Assumption** — CAP-001 read as one caller at a time, not the bulk path.
+- **Assumption** — $cap read as one caller at a time, not the bulk path.
 MD
   ;;
 wf-tl)
   mkdir -p .wf/transient
-  cat > .wf/transient/sprint.yaml <<'YAML'
-sprint_id: "s1"
+  cap="$(grep -o 'CAP-[0-9]*' .wf/CAPABILITIES.yaml | head -1)"
+  n=$((10#${cap##*-}))
+  cat > .wf/transient/sprint.yaml <<YAML
+sprint_id: "$(field sprint_id)"
 tasks:
   - id: "T1"
     increment: 1
     title: "the greeting module"
-    covers: ["CAP-001"]
+    covers: ["$cap"]
     story: |
       This task builds the greeting module behind the entry point, so a caller can be
       greeted through one seam instead of through ad-hoc strings scattered across the
@@ -121,7 +125,7 @@ tasks:
     increment: 1
     title: "the end-to-end greeting"
     depends_on: ["T1"]
-    covers: ["CAP-001"]
+    covers: ["$cap"]
     story: |
       This task proves the greeting path end to end, from the entry point through the
       greeting module the previous task built, so the increment's checkpoint is observable
@@ -130,13 +134,13 @@ tasks:
       Out of scope: new behaviour. Read-only: README.md.
     grounding:
       - "README.md — the scratch repo's only file"
-    system_tests: ["SYS-TC-1"]
+    system_tests: ["SYS-TC-$n"]
 YAML
   ;;
 wf-build)
   task="$(field task_id)"
   mkdir -p .wf/transient
-  printf 'built by %s\n' "$task" > "$task.txt"
+  printf 'built by %s on %s\n' "$task" "$(git rev-parse --abbrev-ref HEAD)" > "$task.txt"
   git add "$task.txt" >/dev/null
   git commit -q -m "$task: build the change" >/dev/null
   printf 'task_id: "%s"\nstatus: ready_for_review\n' "$task" > .wf/transient/review-ready.yaml
@@ -172,6 +176,13 @@ capabilities:
     status: planned
 """
 
+SECOND_CAP = """\
+  - id: "CAP-002"
+    statement: "A caller can be greeted by name."
+    value: "The scratch repo has a second observable behaviour."
+    status: planned
+"""
+
 
 class EndToEndTest(support.TempProject):
     def setUp(self):
@@ -180,8 +191,10 @@ class EndToEndTest(support.TempProject):
         stub = self.root / "agent-stub.sh"
         stub.write_text(AGENT_STUB)
         stub.chmod(0o755)
-        self.stub_log = self.root / "stub.log"
-        self.gh_log = self.root / "gh.log"
+        # outside the repo: an untracked log in the tree is foreign dirt, and the
+        # clean-tree gate would refuse to cut the next sprint's branch
+        self.stub_log = self.root.parent / "stub.log"
+        self.gh_log = self.root.parent / "gh.log"
         os.environ["WF_STUB_LOG"] = str(self.stub_log)
         os.environ["WF_GH_LOG"] = str(self.gh_log)
         self.stub_bin("gh", GH_STUB)
@@ -199,11 +212,14 @@ class EndToEndTest(support.TempProject):
             path.write_text(f"# {role}\n")
         self.cfg.path("capabilities").write_text(CAPS)
         self.cfg.path("learnings").write_text("version: 1\nlearnings: []\n")
+        # the telemetry sink is TRACKED, exactly as wf-init's scaffold leaves it: rows
+        # appended after a commit dirty the working tree, which the loop must survive
+        self.cfg.path("telemetry").parent.mkdir(parents=True, exist_ok=True)
+        self.cfg.path("telemetry").write_text("")
+        (self.root / ".gitignore").write_text(".wf/transient/\n")
         support.git(self.root, "add", "-A")
         support.git(self.root, "commit", "-q", "-m", "wf: install")
-        (self.root / ".gitignore").write_text(".wf/transient/\n.wf/telemetry/\n")
-        support.git(self.root, "add", ".gitignore")
-        support.git(self.root, "commit", "-q", "-m", "wf: gitignore")
+        support.git(self.root, "push", "-q", "-u", "origin", "main")
 
     def run_driver(self, *args):
         return subprocess.run(
@@ -272,6 +288,71 @@ class EndToEndTest(support.TempProject):
 
         # every task worktree is cleaned up
         self.assertFalse(list(self.cfg.worktree_base.glob("s1-*")))
+
+    def merge_on_the_forge(self, branch):
+        """What a human merging the sprint's PR does: the branch lands in the base on
+        the remote, and the local repo only learns about it on the next fetch."""
+        clone = self.root.parent / f"reviewer-{branch.replace('/', '-')}"
+        origin = self.root.parent / (self.root.name + "-origin.git")
+        support.git(self.root.parent, "clone", "-q", str(origin), str(clone))
+        support.git(clone, "config", "user.email", "reviewer@test")
+        support.git(clone, "config", "user.name", "reviewer")
+        support.git(clone, "config", "commit.gpgsign", "false")
+        support.git(clone, "checkout", "-q", "-B", "main", "origin/main")
+        support.git(clone, "merge", "-q", "--no-ff", "-m", f"merge {branch}",
+                    f"origin/{branch}")
+        support.git(clone, "push", "-q", "origin", "main")
+        support.git(clone, "push", "-q", "origin", "--delete", branch)
+
+    def test_two_sprints_stack_and_drain_across_a_forge_merge(self):
+        # The reality one sprint never shows: the loop starts sprint N+1 with HEAD still
+        # on sprint N's pushed branch and the committed telemetry sink dirty. The rows
+        # must land on the NEW branch — on the old one they un-merge an already-merged
+        # sprint, strand it on the stack, and point s2's PR at a base that is gone.
+        caps = self.cfg.path("capabilities")
+        caps.write_text(caps.read_text() + SECOND_CAP)
+        support.git(self.root, "add", "-A")
+        support.git(self.root, "commit", "-q", "-m", "po: a second capability")
+        support.git(self.root, "push", "-q", "origin", "main")
+
+        first = self.run_driver("--once")
+        self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
+        self.assertEqual(support.git(self.root, "branch", "--show-current"), "sprint/s1")
+        # roles appended to the tracked sink after the close committed it
+        self.assertEqual(support.git(self.root, "status", "--porcelain"),
+                         f"M {self.cfg.rel('telemetry')}")
+
+        self.merge_on_the_forge("sprint/s1")
+
+        second = self.run_driver("--once")
+        self.assertEqual(second.returncode, 0, second.stdout + second.stderr)
+
+        # the carried rows landed on s2 and left the merged s1 untouched
+        s1_log = support.git(self.root, "log", "--oneline", "sprint/s1")
+        s2_log = support.git(self.root, "log", "--oneline", "sprint/s2")
+        self.assertIn("carry rows into sprint s2", s2_log)
+        self.assertNotIn("carry rows into sprint s2", s1_log)
+
+        # s1 left the stack: it is still exactly what the forge merged (its tip is the
+        # merge's second parent) and therefore an ancestor of the fetched base
+        support.git(self.root, "merge-base", "--is-ancestor", "sprint/s1", "origin/main")
+        self.assertEqual(support.git(self.root, "rev-parse", "sprint/s1"),
+                         support.git(self.root, "rev-parse", "origin/main^2"))
+
+        # s2 built its own work and shipped a PR against the base branch, not against
+        # the merged-and-deleted s1
+        self.assertIn("T1: merge", s2_log)
+        self.assertIn("T2: merge", s2_log)
+        prs = [line for line in self.gh_log.read_text().splitlines()
+               if "pr create" in line]
+        self.assertEqual(len(prs), 2)
+        self.assertIn("--base main --head sprint/s2", prs[1])
+        self.assertIn("s2: Design-slice — the greeting seam 2", prs[1])
+
+        # both capabilities drained — the second sprint served the one s1 left behind
+        remaining = self.cfg.path("capabilities").read_text()
+        self.assertNotIn("CAP-001", remaining)
+        self.assertNotIn("CAP-002", remaining)
 
     def test_a_second_invocation_stops_on_work_exhaustion(self):
         self.assertEqual(self.run_driver("--once").returncode, 0)

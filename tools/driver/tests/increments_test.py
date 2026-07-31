@@ -197,7 +197,9 @@ class IncrementTest(support.TempProject):
         self.assertEqual(repair["params"]["task_branch"], "task/s1-T1")
         self.assertIn("shared.go", repair["params"]["conflicting_paths"])
         # the resolved merge completes the task; nothing is aborted and no design
-        # issue is raised for a conflict the repair rung could resolve
+        # issue is raised for a conflict the repair rung could resolve — even though
+        # the repair's own telemetry row leaves the tree dirty
+        self.assertEqual(git.dirty_paths(), [git.telemetry])
         self.assertIn("pipeline complete-task", cli.verbs())
         self.assertEqual(git.aborted, [])
         self.assertNotIn("pipeline record-design-issue", cli.verbs())
@@ -211,7 +213,7 @@ class IncrementTest(support.TempProject):
         rt = self.rt(cli, agents=agents, git=git)
         increments.run_increment(rt, 1)
         self.assertEqual(git.aborted, ["task/s1-T1"])
-        self.assertTrue(git.is_clean())
+        self.assertEqual(git.dirty_paths(), [git.telemetry])   # the conflict is gone
         self.assertNotIn("pipeline complete-task", cli.verbs())
         self.assertIn("pipeline record-design-issue", cli.verbs())
         self.assertIn("shared.go", self.cfg.path("design_issues").read_text())

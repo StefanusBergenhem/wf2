@@ -562,6 +562,12 @@ def _check(rest):
         for msg in _story_findings(tid, t.get("story")):
             err("B8", msg)
 
+        # B11 — the title: the build agent makes it the commit subject, so a task
+        # without one has no way to name what it landed
+        if not str(t.get("title") or "").strip():
+            err("B11", f"{tid}: no title — one line naming what this task delivers, "
+                       f"which the build makes its commit subject")
+
         # B9 — boundaries is ONE section, and the retired fields stay retired
         if not str(t.get("boundaries") or "").strip():
             err("B9", f"{tid}: no boundaries — one merged section declares out-of-scope, "

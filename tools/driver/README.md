@@ -50,17 +50,22 @@ acts, so a restart re-enters it.
 
 | phase | what runs | leaves |
 |---|---|---|
-| `sprint_start` | clean-tree gate; branch `sprint/s<N>` off the stack tip; `sweep-transients` + `reclaim-stale`; `wf-discover` | `designing` |
+| `sprint_start` | clean-tree gate; branch `sprint/s<N>` off the stack tip; carry the telemetry rows onto it; `sweep-transients` + `reclaim-stale`; `wf-discover` | `designing` |
 | `designing` | `wf-designer` (originate) → `wf slice check`; a red gate records a design issue and routes `wf-designer` (repair) | `increment_loop`, or a pause |
 | `increment_loop` | per increment: `wf-tl` → `sprint materialize` + `sprint check` → `compute-stages` → sub-layers → boundary | `closeout` |
 | `closeout` | the `closeout` config steps, each banked on disk as it finishes: `wf-*` roles, `adequacy` (per served capability → drain / residuals / park), `ship` (`complete-sprint`, commit, push, `gh pr create`) | `sprint_start` |
-| `awaiting_ruling` | on restart: `wf-designer` (resume) once `paths.decision_prep` carries a ruling; the brief's `mode:` header says where to pick up — `originate` carries on designing, `repair` returns to the increment loop | `designing` / `increment_loop` |
+| `awaiting_ruling` | on restart: `wf-designer` (resume) once `paths.decision_prep` carries a ruling, then `resolve-design-issue` for the brief's `di_id` (the resume run closes only the host entry; the run-state twin is what parks the task); the brief's `mode:` header says where to pick up — `originate` carries on designing, `repair` returns to the increment loop | `designing` / `increment_loop` |
 
 The clean-tree gate has exactly one carve-out: a tree whose *only* dirt is
 `paths.telemetry`. That file is committed and every role and Stop hook appends to it
-after the sprint's last commit, so its rows are committed into the new sprint
-("telemetry: carry rows into sprint N") instead of halting the loop. Any other path is
-still `dirty_tree`. `ship` stages the sink with the close, so the steady state is clean.
+after the sprint's last commit, so its rows are carried into the new sprint instead of
+halting the loop. Any other path is still `dirty_tree`, and the gate runs *before* the
+branch is cut so a halt leaves no stray `sprint/s<N>` behind to burn the next ordinal.
+The carry-over commit ("telemetry: carry rows into sprint N") runs *after* `checkout -b`,
+which takes the uncommitted sink with it: HEAD is still on the previous sprint's branch
+until then, and a commit there un-merges an already-shipped sprint, strands it on the
+stack, and points the next PR at a base the forge has deleted. `ship` stages the sink
+with the close, so the sprint's own rows go out with its PR.
 
 Each loop that re-runs a role owns its own budget, as a constant in the module that
 runs it: `phases.SLICE_GATE_ATTEMPTS`, `increments.CONTRACT_PREP_ATTEMPTS`,
@@ -132,8 +137,10 @@ defaults of its own; a missing key is a named, fatal error.
 
 - **A merge conflict goes to the rung that can resolve it.** The conflicted merge is
   left in the tree and `wf-stage-repair` is dispatched in `merge` mode against it; the
-  verdict is read from disk (its exit code, no merge in progress, a clean tree, the task
-  branch an ancestor of the sprint branch). Only a repair that could not resolve it
+  verdict is read from disk (its exit code, no merge in progress, and the task branch an
+  ancestor of the sprint branch — those two prove the merge landed; tree cleanliness says
+  nothing about it, and the repair's own telemetry row leaves the tree dirty anyway). Only
+  a repair that could not resolve it
   aborts the merge, records a design issue naming the conflicting paths (which parks the
   task) and hands it to the repair ladder.
 - **The park count is derived, not stored.** Three consecutive `inadequate`

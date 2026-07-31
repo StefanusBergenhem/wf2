@@ -126,9 +126,10 @@ def write_config(root: Path, *, tools=None, agent_cmd='echo "{prompt}"',
 
 
 def commit_wf(root: Path) -> None:
-    """Commit the config and gitignore the transient tree — the shape an installed
-    repo has, and what the driver's clean-tree gate assumes."""
-    (root / ".gitignore").write_text(".wf/transient/\n.wf/telemetry/\n")
+    """Commit the config and gitignore the transient tree — the shape an installed repo
+    has. Only the transient tree is ignored: `wf-init`'s scaffold creates the telemetry
+    sink as a TRACKED, committed file, so rows appended to it dirty the working tree."""
+    (root / ".gitignore").write_text(".wf/transient/\n")
     git(root, "add", ".gitignore", ".wf/config.yaml")
     git(root, "commit", "-q", "-m", "wf: config")
 

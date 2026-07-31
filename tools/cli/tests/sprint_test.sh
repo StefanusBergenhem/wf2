@@ -127,6 +127,7 @@ tasks:
       - "store/zones.go:Patch — the stub this task replaces"
   - id: T2
     increment: 2
+    title: "the zone patch HTTP surface"
     depends_on: [T1]
     covers: [CAP-24]
     story: |
@@ -269,7 +270,13 @@ OUT="$(wf sprint task T2 --format json)"
 [ "$(jget "$OUT" "d['system_tests'][0]['id']")" = "SYS-TC-1" ] \
   && ok "envelope inlines the SYS-TC on an e2e task" || bad "envelope systest" "$OUT"
 echo "$OUT" | grep -q "HTTP surface" && ok "e2e envelope carries increment 2's narrative" || bad "envelope inc2" "$OUT"
-# title is optional: a task that carries none simply has no title field
+[ "$(jget "$OUT" "d['title']")" = "the zone patch HTTP surface" ] \
+  && ok "envelope carries an e2e task's title too" || bad "envelope e2e title" "$OUT"
+# a task with no title still renders (B11 is the gate that refuses it, not the envelope)
+edit_sprint <<'PY'
+del d['tasks'][1]['title']
+PY
+OUT="$(wf sprint task T2 --format json)"
 [ "$(jget "$OUT" "'title' in d")" = "False" ] \
   && ok "envelope omits title when the task declares none" || bad "envelope no-title" "$OUT"
 
@@ -349,6 +356,21 @@ d['tasks'][0]['story'] = 'TODO: describe the change, its flow through the code, 
 PY
 OUT="$(wf sprint check --format json)"
 [ "$(has "$OUT" B8)" = "True" ] && ok "check: B8 flags a placeholder story" || bad "B8-placeholder" "$OUT"
+
+# --- B11: the title, which the build makes its commit subject ---
+write_sprint
+edit_sprint <<'PY'
+del d['tasks'][0]['title']
+PY
+OUT="$(wf sprint check --format json)"
+[ "$(has "$OUT" B11)" = "True" ] && ok "check: B11 flags a task with no title" || bad "B11" "$OUT"
+
+write_sprint
+edit_sprint <<'PY'
+d['tasks'][1]['title'] = '   '
+PY
+OUT="$(wf sprint check --format json)"
+[ "$(has "$OUT" B11)" = "True" ] && ok "check: B11 flags a blank title" || bad "B11-blank" "$OUT"
 
 # --- B9: boundaries is ONE section ---
 write_sprint

@@ -68,6 +68,28 @@ class LoopTest(support.TempProject):
             ("pipeline", "complete-sprint"): {"sprint_id": "s1", "drain": {}},
         })
 
+    def parked_frontier(self):
+        """The frontier while T1 sits parked on a design issue: the sub-layer has work
+        left, but the only task in it is `repairing` and nothing is dispatchable."""
+        return {"increment": 1, "stage": {"index": 1, "total": 1, "tasks": ["T1"]},
+                "dispatch": [], "ready": [], "in_flight": [], "approved": [],
+                "repairing": ["T1"], "escalated": [], "blocked": [],
+                "terminal": {"stage_done": True, "increment_done": False,
+                             "sprint_done": False, "halt": None}}
+
+    def parked_until_the_twin_is_resolved(self):
+        """`pipeline next`, answering the way the real pipeline does: T1 stays parked
+        until the run state's twin of the design issue is resolved, and only then is it
+        dispatchable, approved and merged. Resolving the HOST entry alone changes
+        nothing here — the scheduler reads the run state."""
+        live = iter(self.full_cli().responses[("pipeline", "next")])
+
+        def answer(cli, args):
+            if not any(c[:2] == ["pipeline", "resolve-design-issue"] for c in cli.calls):
+                return self.parked_frontier()
+            return next(live, self.full_cli().responses[("pipeline", "next")][-1])
+        return answer
+
     def rt(self, cli=None, git=None, agents=None, state=None):
         return fakes.runtime(self.cfg, cli=cli or self.full_cli(),
                              git=git or fakes.FakeGit(), agents=agents, state=state,
@@ -227,6 +249,56 @@ class LoopTest(support.TempProject):
         self.assertEqual(agents2.launches[0]["params"]["Mode"], "resume")
         self.assertNotIn("originate", [x["mode"] for x in agents2.launches])
         self.assertIn("wf-tl", agents2.roles())      # back in the increment loop
+
+    def test_a_task_scoped_escalation_resumes_and_the_parked_task_merges(self):
+        # The build raises a design issue: the run-state twin parks T1, the repair run
+        # escalates, the loop pauses. The resume run closes only the HOST entry — unless
+        # the driver closes the twin too, T1 stays parked, the sub-layer never settles,
+        # and the sprint burns its iteration budget.
+        wt = self.root / ".wf/transient/worktrees/s1-T1/.wf/transient"
+        wt.mkdir(parents=True, exist_ok=True)
+        (wt / "design-issues.yaml").write_text(
+            'issues:\n  - id: "DI-1"\n    task_id: "T1"\n    severity: high\n'
+            '    status: open\n    summary: "the contract contradicts the increment"\n')
+
+        agents = self.agents_that_design()
+
+        def escalate(*a):
+            self.cfg.path("decision_prep").write_text(
+                "# Decision prep\nmode: repair\ndi_id: DI-1\n\n"
+                "## Ruling\n<!-- pending -->\n")
+        agents.on("wf-designer", escalate)              # the repair run escalates
+        cli = self.full_cli()
+        cli.responses[("orchestrate", "inspect-build-return")] = {
+            "task_id": "T1", "verdict": "design_issue", "di_id": "DI-1"}
+        cli.responses[("pipeline", "next")] = [
+            self.full_cli().responses[("pipeline", "next")][0], self.parked_frontier()]
+        rt = self.rt(cli=cli, agents=agents)
+        self.assertEqual(loop.run_loop(rt, once=True), 0)
+        self.assertEqual(rt.state.stop_reason, "escalation")
+        self.assertEqual(rt.state.resume_phase, "increment_loop")
+
+        # the human rules; the restart resumes and the run must reach the merge
+        self.cfg.path("decision_prep").write_text(
+            "# Decision prep\nmode: repair\ndi_id: DI-1\n\n"
+            "## Ruling\nDI-1: amend the contract.\n")
+        agents2 = fakes.FakeAgents(self.cfg)
+        resolve = fakes.resolve_issues(self.cfg)
+
+        def consume(*a):
+            self.cfg.path("decision_prep").unlink()
+            resolve(*a)                                 # only the HOST entry
+        agents2.on("wf-designer", consume)
+        cli2 = self.full_cli()
+        cli2.responses[("pipeline", "next")] = self.parked_until_the_twin_is_resolved()
+        cli2.responses[("pipeline", "unresolved-design-issues")] = {
+            "count": 1, "issues": [{"di_id": "DI-1", "task_id": "T1", "status": "open"}]}
+        git = fakes.FakeGit()
+        rt2 = self.rt(cli=cli2, git=git, agents=agents2,
+                      state=driver_state.load(self.cfg))
+        self.assertEqual(loop.run_loop(rt2, once=True), 0)
+        self.assertIn(["pipeline", "resolve-design-issue", "DI-1"], cli2.calls)
+        self.assertEqual(git.merges, ["task/s1-T1"])
 
     # ── the remote ───────────────────────────────────────────────────────────
 

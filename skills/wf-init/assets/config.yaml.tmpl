@@ -112,9 +112,9 @@ driver:
   agent_cmd: '{{AGENT_CMD}}'  # driver: role launch template, rendered for this project's
                               # harness at init; {prompt} is substituted at dispatch.
   # agent_cmd_overrides:      # driver: launch template for ONE role, when it needs a
-  #   wf-designer: 'claude -p --dangerously-skip-permissions --model opus "{prompt}"'
                               # different model or harness flag than the rest. A role
-                              # with no entry uses agent_cmd.
+                              # with no entry uses agent_cmd. For example:
+  #   wf-designer: 'claude -p --dangerously-skip-permissions --model opus "{prompt}"'
   max_parallel: 4             # driver: tasks dispatched concurrently within one sub-layer.
   max_unmerged_sprints: 3     # driver: stack-depth cap — pause when this many shipped
                               # sprint branches are still unmerged into base_branch.

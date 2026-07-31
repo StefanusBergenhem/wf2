@@ -382,7 +382,12 @@ def _merge_batch(rt, approved) -> bool:
 def _repair_merge(rt, task_id, branch, result) -> str:
     """Hand the conflicted merge — still in the tree — to ``wf-stage-repair``'s merge
     mode. Returns the merge commit when the repair finished it, and '' when it did not:
-    the merge is then aborted so the rest of the batch can still land."""
+    the merge is then aborted so the rest of the batch can still land.
+
+    Completion is proven by the merge itself: no MERGE_HEAD left, and the task branch is
+    an ancestor of the sprint branch. Whether the tree is otherwise clean says nothing
+    about the merge — and it is never clean, because the repair role's own last action is
+    a row appended to the committed telemetry sink."""
     launched = rt.agents.launch(
         "wf-stage-repair",
         {"mode": "merge", "sprint_branch": rt.state.sprint_branch,
@@ -391,7 +396,6 @@ def _repair_merge(rt, task_id, branch, result) -> str:
         task_id=task_id, mode="merge")
     resolved = (launched.exit_code == 0
                 and not rt.git.merge_in_progress()
-                and rt.git.is_clean()
                 and rt.git.is_merged_into(branch, rt.state.sprint_branch))
     if resolved:
         return rt.git.head_sha()

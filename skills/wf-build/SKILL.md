@@ -24,7 +24,8 @@ Resolve every path and command from `.wf/config.yaml`:
 
 1. Read `CONTRACT`, opening with the **increment narrative** that rides with it: the story
    of the increment this task belongs to — read it first, it is the frame the task sits in.
-   The task itself carries `covers` and four sections, in this order:
+   The task itself carries its `title` (the commit subject you use at handoff), `covers`,
+   and four sections, in this order:
    - `story` — what this task builds, why, and how the change flows through the code;
    - `acceptance` — each criterion with the `tests` that prove it, or `verified_by`;
    - `boundaries` — out of scope, read-only files, and any fixed interface. It is

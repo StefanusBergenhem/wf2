@@ -198,6 +198,27 @@ class GitopsTest(support.TempProject):
         self.assertTrue(detail)
         self.assertEqual(self.git.stack(), [])   # still answers from local state
 
+    def test_cutting_a_sprint_branch_carries_the_dirty_telemetry_sink_across(self):
+        # the driver commits the carried telemetry rows AFTER cutting the branch, which
+        # only works if `checkout -b` takes the uncommitted sink with it
+        sink = self.root / ".wf/telemetry/sessions.jsonl"
+        sink.parent.mkdir(parents=True, exist_ok=True)
+        sink.write_text('{"event": "ship"}\n')
+        support.git(self.root, "add", "--", ".wf/telemetry/sessions.jsonl")
+        support.git(self.root, "commit", "-q", "-m", "telemetry: sink")
+        self.git.start_branch("sprint/s1", "main")
+        support.git(self.root, "commit", "-q", "--allow-empty", "-m", "s1 work")
+        sink.write_text('{"event": "ship"}\n{"event": "stop"}\n')   # rows after the ship
+
+        self.git.start_branch("sprint/s2", "sprint/s1")
+        self.assertEqual(self.git.current_branch(), "sprint/s2")
+        self.assertEqual(self.git.dirty_paths(), [".wf/telemetry/sessions.jsonl"])
+        self.assertIn("stop", sink.read_text())
+        self.assertTrue(self.git.commit_paths([".wf/telemetry/sessions.jsonl"], "carry"))
+        # the rows landed on s2 and left the already-pushed s1 untouched
+        self.assertIn("carry", support.git(self.root, "log", "--oneline", "sprint/s2"))
+        self.assertNotIn("carry", support.git(self.root, "log", "--oneline", "sprint/s1"))
+
     def test_commit_paths_skips_an_empty_stage(self):
         self.git.start_branch("sprint/s1", "main")
         self.assertIsNone(self.git.commit_paths(["README.md"], "nothing changed"))

@@ -84,6 +84,19 @@ class PhaseTest(support.TempProject):
         self.assertIn("s2", git.commits[0][0])
         self.assertEqual(git.branches, ["sprint/s2"])
 
+    def test_the_telemetry_carry_over_commit_lands_on_the_new_sprint_branch(self):
+        # HEAD is still on the PREVIOUS sprint's branch when the next sprint starts.
+        # Committing the carried rows before cutting the branch puts them on a branch
+        # that is already pushed and merging: it stops registering as merged, the stack
+        # never drains, and the next sprint's PR targets a deleted base.
+        git = fakes.FakeGit(stack=[], sprint_id="s2")
+        git.branches.append("sprint/s1")            # where ship left HEAD
+        rt = self.rt(git=git)
+        self.cfg.path("discover_brief").parent.mkdir(parents=True, exist_ok=True)
+        self.cfg.path("discover_brief").write_text("brief\n")
+        phases.sprint_start(rt)
+        self.assertEqual(git.commits[0][2], "sprint/s2")
+
     def test_any_other_dirt_alongside_the_telemetry_sink_still_halts(self):
         git = fakes.FakeGit(dirty=[self.cfg.rel("telemetry"), "backend/zones.go"])
         rt = self.rt(git=git)
@@ -92,6 +105,8 @@ class PhaseTest(support.TempProject):
         self.assertEqual(caught.exception.reason, "dirty_tree")
         self.assertIn("backend/zones.go", caught.exception.detail)
         self.assertEqual(git.commits, [])
+        # and no branch was cut: a stray sprint/sN burns the ordinal the next run mints
+        self.assertEqual(git.branches, [])
 
     def test_sprint_start_resumes_the_existing_sprint_branch(self):
         git = fakes.FakeGit(sprint_id="s5")

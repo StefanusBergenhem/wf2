@@ -115,7 +115,9 @@ Write `paths.design_slice` from `assets/slice.md.tmpl`. Section by section:
 
 - **`serves:`** — every CAP and L id this sprint serves, **written out in full**. A range
   (`CAP-001..CAP-020`) enumerates nothing, and every id it stands for silently fails to
-  drain at close.
+  drain at close. **Do not list a CAP you ship no system test case for in this sprint** —
+  an enabler sprint that advances a capability without proving any of it serves the L-id
+  or nothing, and the plan carries the intent. Listing it fails the slice gate.
 - **Design narrative** — the change's story in prose: the shape you chose and the force
   that drove it, how each end-to-end behaviour flows through the components **in order,
   wiring included** (composition root, orchestration), and each touched component's role.

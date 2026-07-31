@@ -22,6 +22,7 @@ from runtime import Halt, Pause
 _TC_HEAD_RE = re.compile(r"-\s+\*\*(SYS-TC-\d+):\*\*")
 _COVERS_RE = re.compile(r"\*\*Covers:\*\*(.*)")
 _HALT_MODE_RE = re.compile(r"^\s*mode:\s*([A-Za-z][\w-]*)", re.MULTILINE)
+_BRIEF_DI_RE = re.compile(r"^\s*di_id:\s*([A-Za-z][\w-]*)", re.MULTILINE)
 
 # How many times a red slice is sent back to the design role before the run halts.
 # The build→review budget (`review.max_attempts`) bounds one task's chain, not this.
@@ -41,12 +42,13 @@ def sprint_start(rt, resume: bool = False) -> None:
     else:
         sprint_id = rt.git.next_sprint_id()
         branch = f"{gitops.SPRINT_PREFIX}{sprint_id}"
-    _clean_tree_gate(rt, sprint_id)
+    _clean_tree_gate(rt)
     base = rt.git.stack_tip()
     if not (resume and rt.state.sprint_id):
         rt.state.start_sprint(sprint_id, branch)
     rt.state.save()
     rt.git.start_branch(branch, base)
+    _carry_telemetry(rt, sprint_id)
     rt.tele.event("sprint_start", sprint=sprint_id, branch=branch, base=base)
     rt.log(f"sprint {sprint_id} on {branch} (base {base})")
 
@@ -67,21 +69,32 @@ def sprint_start(rt, resume: bool = False) -> None:
     rt.state.enter("designing")
 
 
-def _clean_tree_gate(rt, sprint_id) -> None:
-    """A sprint branch is cut from a clean tree. The one exception is the telemetry
-    sink: it is committed, and every role and Stop hook appends to it after the sprint's
-    last commit — so rows left there are carried into this sprint's first commit instead
-    of halting the loop. Any other path is still a halt."""
+def _clean_tree_gate(rt) -> None:
+    """A sprint branch is cut from a clean tree. Runs BEFORE the branch is cut, so a
+    tree carrying real work halts without leaving a stray sprint branch behind (a
+    branch that exists burns its ordinal — the next run mints the one after it).
+
+    The one exception is the telemetry sink: it is committed, and every role and Stop
+    hook appends to it after the sprint's last commit, so it is dirty almost always.
+    Those rows are carried onto the NEW branch by ``_carry_telemetry`` once it exists."""
     dirty = rt.git.dirty_paths()
-    if not dirty:
-        return
     telemetry = rt.cfg.rel("telemetry")
-    if telemetry and set(dirty) == {telemetry}:
-        rt.git.commit_paths([telemetry], f"telemetry: carry rows into sprint {sprint_id}")
+    if not dirty or (telemetry and set(dirty) == {telemetry}):
         return
     raise Halt("dirty_tree",
                "the working tree carries uncommitted changes — a sprint branch must "
                f"be cut from a clean tree: {', '.join(sorted(dirty))}")
+
+
+def _carry_telemetry(rt, sprint_id) -> None:
+    """Commit the rows the last sprint's close left in the telemetry sink — AFTER the
+    new branch is cut and checked out, so they land on it. HEAD is still on the previous
+    sprint's branch until ``start_branch`` runs; committing there adds a commit to a
+    branch that is already pushed and merging, which stops it registering as merged,
+    strands it on the stack, and points the next sprint's PR at a base that is gone."""
+    telemetry = rt.cfg.rel("telemetry")
+    if telemetry and telemetry in rt.git.dirty_paths():
+        rt.git.commit_paths([telemetry], f"telemetry: carry rows into sprint {sprint_id}")
 
 
 # ── designing ────────────────────────────────────────────────────────────────
@@ -111,8 +124,10 @@ def resume_ruling(rt) -> dict:
                           detail="the ruling section is still empty")
             raise Pause("escalation", f"{decision_prep} carries no ruling yet")
         halted_in = halt_mode(decision_prep)
+        di_id = brief_di_id(decision_prep)
         rt.agents.launch("wf-designer", {"Mode": "resume"}, mode="resume")
         _escalation_gate(rt)
+        _close_resolved_twins(rt, di_id)
     if halted_in == "repair" or (not halted_in
                                  and rt.state.resume_phase == "increment_loop"):
         rt.state.resume_phase = None
@@ -135,6 +150,30 @@ def halt_mode(path) -> str:
     when it names none."""
     found = _HALT_MODE_RE.search(path.read_text())
     return found.group(1).lower() if found else ""
+
+
+def brief_di_id(path) -> str:
+    """The design issue the brief says the halt interrupted, or '' when it names none
+    (an originate halt carries no issue)."""
+    found = _BRIEF_DI_RE.search(path.read_text())
+    return found.group(1) if found else ""
+
+
+def _close_resolved_twins(rt, di_id: str) -> None:
+    """Close the run-state twin of every design issue the resume run finished. The
+    design role writes only the host file; the twin is what parks the task the issue
+    names, so a twin left open keeps that task parked, the sub-layer never settles and
+    the increment burns its iteration budget. The brief's own issue closes on the ruling;
+    any other twin closes once the host file says it is resolved."""
+    res = rt.cli.read("pipeline", "unresolved-design-issues")
+    for item in (res.data.get("issues") or []):
+        if not isinstance(item, dict) or not item.get("di_id"):
+            continue
+        twin = str(item["di_id"])
+        host = issues.entry(rt, twin)
+        if twin == di_id or (host is not None
+                             and str(host.get("status")) == "resolved"):
+            rt.cli.mutate("pipeline", "resolve-design-issue", twin)
 
 
 def _prose(body: str) -> str:
