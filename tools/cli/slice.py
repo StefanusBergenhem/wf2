@@ -2,7 +2,6 @@
 
 ``slice check`` verifies what a script can verify before any increment is decomposed:
 
-- **A3** — no assumption is still marked UNCONFIRMED.
 - **A4/A5** — every ``ADR-NNN`` the slice cites resolves to exactly one ADR file.
   A legacy repo can carry a second ADR namespace outside ``paths.adrs`` with
   colliding ids, so the index is built from every ADR-shaped file in the tree; a
@@ -28,7 +27,6 @@ from pathlib import Path
 
 import common
 
-_ASSUMPTIONS_HEADER = "Assumptions requiring confirmation"
 _NARRATIVE_HEADER = "Design narrative"
 _CLAIMED_SCOPE_HEADER = "Claimed scope"
 _INCREMENTS_HEADER = "Increments"
@@ -70,6 +68,17 @@ def serves_ids(text):
     return out
 
 
+def increment_key(value):
+    """Sort key over increment labels: an absent label first, then numbers in numeric
+    order, then any non-numeric label alphabetically — so increment 10 follows 9, not 1."""
+    if value is None:
+        return (-1, 0, "")
+    try:
+        return (0, int(value), "")
+    except (TypeError, ValueError):
+        return (1, 0, str(value))
+
+
 def increments(text):
     """[(n, title)] for every `### Increment <n>` block under `## Increments`, in
     file order."""
@@ -88,17 +97,6 @@ def increment_section(text, number):
         nxt = _INCREMENT_HEAD_RE.search(rest, m.end() - m.start())
         return (rest[: nxt.start()] if nxt else rest).strip("\n")
     return ""
-
-
-def unconfirmed_assumptions(text):
-    """The A3 findings for a slice: one message per UNCONFIRMED assumption line."""
-    msgs = []
-    for line in section(text, _ASSUMPTIONS_HEADER).splitlines():
-        if re.search(r"\bUNCONFIRMED\b", line):
-            ident = re.search(r"\b(A-\d+)\b", line)
-            who = ident.group(1) if ident else "an assumption"
-            msgs.append(f"slice: {who} is UNCONFIRMED — resolve it or escalate it before handover")
-    return msgs
 
 
 def missing_narrative(text):
@@ -257,8 +255,7 @@ def _check(rest):
         common.die(f"design-slice not found: {path}")
 
     text = path.read_text()
-    errors = [{"code": "A3", "msg": m} for m in unconfirmed_assumptions(text)]
-    errors += [{"code": "A6", "msg": m} for m in missing_narrative(text)]
+    errors = [{"code": "A6", "msg": m} for m in missing_narrative(text)]
     errors += [{"code": "A7", "msg": m} for m in missing_serves(text)]
     errors += [{"code": "A8", "msg": m} for m in missing_claimed_scope(text)]
     errors += [{"code": "A9", "msg": m}

@@ -31,10 +31,10 @@ harness's agent-definition schema and, where it differs, guard the frontmatter w
 
 ## C9 — Retrospective: telemetry-distil + cross-task run analysis BUILT; MEMORY.yaml store deferred
 
-**Date:** 2026-06-20
+**Date:** 2026-06-20 (re-anchored 2026-07-31 for the continuous-loop redesign)
 **Context:** `wf-retrospective` ships as the **dogfoodable slice**: read the telemetry
-session log, distil `repo_observation` → `paths.learnings` (project learnings wf-sa
-reads as drivers) and `wf_friction` → `paths.wf_learnings` (toolkit friction), dedup by
+session log, distil `repo_observation` → `paths.learnings` (project learnings the design
+role reads as drivers) and `wf_friction` → `paths.wf_learnings` (toolkit friction), dedup by
 the `sources` provenance set, create-only `open` entries. It runs against the telemetry
 PO/SA/TL/drill already write — no orchestration needed.
 
@@ -48,10 +48,10 @@ deferred:** the maintained `MEMORY.yaml` lessons store (dedup, capacity-cap, con
 reinforcement) — wf1's governor-ish overreach, and nothing in wf2 consumes a
 distilled-lessons store.
 
-**The optimistic-close half resolved 2026-07-25:** learnings now drain mechanically at
-sprint close — `wf pipeline complete-sprint` removes a learning only when the last
-design serving it has fully merged (the merge record), so "designed but never landed"
-can no longer close one.
+**The optimistic-close half resolved 2026-07-25:** learnings drain mechanically at sprint
+close — `wf pipeline complete-sprint` removes a learning only when the slice's `serves:`
+header named it *and* every task covering it merged (the merge record), so "designed but
+never landed" can no longer close one.
 
 **Trigger to act:** the orchestration half is done. Build the `MEMORY.yaml` store only if a
 real consumer for a maintained lessons store appears (none today — the open learnings streams
@@ -59,18 +59,16 @@ suffice).
 
 ---
 
-## C10 — Compliance / audit trace (capability → requirement → test walk)
+## C10 — Compliance / audit trace (capability → scenario → test walk)
 
-**Date:** 2026-06-21
+**Date:** 2026-06-21 (re-anchored 2026-07-31 for the continuous-loop redesign)
 **Context:** the **capabilities-as-open-work-set** reframe (2026-06-21 — completed
 capabilities graduate OUT rather than accumulate as a durable catalog) was adopted
 after establishing that nothing reads a *completed* capability. The one honest
 exception identified: a **walked compliance/audit trace** (test → requirement →
 capability → user-need), which regulated industries genuinely require.
 
-**Analysis:** the *requirement-level* trace already survives — every requirement's
-EARS text lives in its `[REQ]` test tag, harvestable on demand, so test → requirement
-is intact without retaining capabilities. What a compliance trace adds on top is the
+**Analysis:** what a compliance trace needs on top of the shipped test tree is the
 **capability → user-need** apex, which the graduation model drops. Retaining it is a
 **project-specific** need (the adopter's regulatory regime), not something the general
 toolkit should hoard by default — baking "keep every capability forever for audit"
@@ -83,21 +81,14 @@ append-only graduation log. Pairs with **C11 (product description)** as its like
 host layer — both are the durable *external/record* tier sitting above the open
 work-set.
 
-**Update 2026-07-09:** the requirement-level readable view now exists —
-`tools/reconcile/register.py` derives a markdown register (REQ/SYS-TC id, statement,
-proving tests) from the tags on demand (and since 2026-07-10 wf-sa consumes it as its
-what's-already-promised input). Still missing for a full compliance trace: the
-capability → user-need apex, which graduation drops.
-
-**Update 2026-07-25 — the REQ layer left the code entirely.** The target-shape redesign
-(`doc/notes/wf-target-shape-20260725.md`) removed `[REQ:]` tags altogether: requirement
-ids and statements are planning-time working state that drains from the merge record at
-sprint close; nothing requirement-shaped persists in the tree. What survives for a
-trace: the SYS-TC lane carries each scenario's user-voice description in the test
-itself, and archived sprint/backlog snapshots in `paths.archive` hold the full
-statements (and now the design narrative) at drain time. If a compliance mandate ever
-fires this trigger, the trace is built from the archive + SYS-TC lane — nothing else
-exists.
+**State 2026-07-31 (post loop-redesign):** nothing requirement-shaped persists in the
+tree — the EARS/REQ layer is gone entirely, and the acceptance criterion in a transient
+task contract is the only requirement-grade statement there ever is. What a trace can be
+built from: the **SYS-TC lane** (each shipped scenario's user-voice description in the
+test itself, readable via `tools/reconcile/register.py`), and `paths.archive`, whose
+snapshots of the slice, sprint contracts, and drained capabilities hold the full
+statements and the design narrative at drain time. If a compliance mandate ever fires
+this trigger, the trace is built from those two — nothing else exists.
 
 **Trigger to act:** when a project with a real audit/traceability mandate adopts wf2
 (the user works in such industries and expects to need it — but no current run does).
@@ -139,57 +130,27 @@ customers"). **C10 (compliance trace)** is its natural second-step extension.
 
 ---
 
-## C13 — `parent_interface`: verbatim interface contract in the task contract
+## C13 — pin a dependency's *existing* interface in the task contract
 
-**Date:** 2026-06-21
-**Context:** Cluster 4's A1 allocates per-component requirements across a delivery path
-(core logic → orchestration → composition-root wiring), coordinated by task `depends_on`.
-A wiring/orchestration task needs the **exact interface** of the component it wires in. wf1
-solved this by quoting the dependency component's exposed interface DbC **verbatim** into
-the dependent task's contract (`parent_interface`), so the developer never guessed the
-integration shape — the contract pinned it.
+**Date:** 2026-06-21 (rewritten 2026-07-31 for the continuous-loop redesign)
+**Context:** the new-seam half shipped and survives the redesign — the slice's
+`## Interface contracts` section shapes a seam whose two sides are built in different
+increments, because source cannot answer it at TL time. The residual is the
+**existing-interface** case: a wiring task consuming a component an earlier increment
+already merged, or one already in the tree. The reworked contract has no
+`interface_contract` field (`sprint check` B9 rejects it); the only vehicles are
+`grounding` pointers — "pointers only, no prose restating code" — and
+`dependency_commits`, which hand the build agent a sha to read rather than the shape
+itself. The mitigation that did land: wf-tl is dispatched JIT per increment, so the
+dependency's real signature exists in the merged tree when the contract is cut.
 
-**Analysis:** relevant precision for A1's wiring tasks, but it depends on an `exposes:`
-interface-with-DbC declaration per component (wf1 carried this in the durable DESIGN —
-which wf2 killed). In wf2 the interface is re-derived (discover) or scouted (wf-drill), so
-the verbatim-quote would be sourced differently. Premature until the task-contract authoring
-(wf-tl → build) is the actual bottleneck and the interface source is settled.
+**Likely shape when acted on:** a cut-time rule that every wiring/integration task's
+`grounding` names the dependency's interface symbol as a resolvable pointer (C11 then
+verifies it) — *not* a verbatim quote: restating code in the contract is exactly the
+multi-representation drift the four-section contract exists to kill.
 
-**Update 2026-07-09:** the **new/widened-seam half shipped** — the design-slice carries
-an `## Interface contracts` section (SA-authored, for components/seams with no source to
-read yet) and the task contract an optional `interface_contract` field copied verbatim from
-it. **Update 2026-07-10:** the *detection* side also tightened — dems T16 wired the wrong
-persistence seam past review, and wf-review now verifies a contract-mandated seam against
-the implementation's wiring, not just a passing assertion. What this entry still covers is
-the **existing-interface** case: quoting a dependency component's *current* interface
-(sourced from discover/drill) into a wiring task, so the builder never guesses it.
-
-**Trigger to act:** when wiring/integration tasks start failing review for guessed
-interface shapes — add a `parent_interface`-style verbatim quote to the task contract,
-sourced from discover/drill rather than a durable DESIGN.
-
----
-
-## C14 — In-flight tracking on the design backlog (concurrency)
-
-**Date:** 2026-06-21
-**Context:** the drain-pipeline model has wf-sa cut a design-slice from the committed design
-backlog; `complete-sprint` trims built ids from it at sprint close (2026-07-25). The
-current model assumes the flow is **human-controlled and strictly sequential across roles**
-(SA → TL → build, one increment at a time), so nothing marks which backlog entries are
-already cut into a live slice/sprint and *building*. wf-sa's "don't re-cut an in-flight
-entry" is enforced only by the operator running one increment at a time.
-
-**Analysis:** under concurrency (parallel increments, or an orchestrator dispatching
-several), wf-sa could re-cut a design that is already mid-build → double-build. The backlog
-would then need explicit per-design **in-flight** state (e.g. `cut` / `building` markers, or
-a derived check against live sprints), and wf-sa would skip in-flight entries when cutting.
-Building it now is machinery for an absent concurrency model (dogfood law) — the sequential
-human-driven flow has no race.
-
-**Trigger to act:** when the flow stops being strictly sequential — a real run with parallel
-increments, or the orchestrator dispatching more than one slice's work at once. Then add
-in-flight tracking to the backlog and an "skip in-flight" rule to wf-sa's cut step.
+**Trigger to act:** a driver sprint where a wiring task is rejected in review, or raises
+a contract defect, for a guessed integration shape.
 
 ---
 
@@ -220,51 +181,52 @@ instead of the host capability.
 
 ---
 
-## C20 — SA decomposition heuristic: factor out shared composition roots (dogfood-1 F-3)
+## C20 — decomposition heuristic: factor out shared composition roots (dogfood-1 F-3)
 
-**Date:** 2026-07-09
-**Context:** dogfood run 1 (dems): the SA folded `cmd/server` route+adapter wiring into
-**each** endpoint task's acceptance criteria. Every handler task edited the same ~600-line
-composition root, so the TL serialized four otherwise-parallel tasks (T13→T14→T15→T16) to
-avoid worktree-merge conflicts — defeating the worktree parallelism the build stage exists
-for. Derived, not directly reported: the surface observation was a `repo_observation`, the
-lever is the SA's decomposition pattern.
+**Date:** 2026-07-09 (rewritten 2026-07-31 for the continuous-loop redesign)
+**Context:** dogfood run 1 (dems): every endpoint task carried the wiring of the same
+~600-line composition root, so four otherwise-parallel tasks were serialized (T13→T14→T15→T16)
+to avoid worktree-merge conflicts — defeating the parallelism the build stage exists for.
+The collision survives one layer down in the new loop: the designer allocates components
+per increment, wf-tl's `depends_on` decides the sub-layers, and a sub-layer's tasks run in
+parallel worktrees and batch-merge — so N tasks all editing one registration file either
+collapse into a serial chain of sub-layers or conflict at the merge.
 
-**Likely shape when built:** an SA design-heuristic (and/or a wf-tl decomposition note):
-when many parallel tasks route through one shared file, factor the shared composition root
-into its own task (or stub the registration seam) so leaf tasks stay independent — the
-`files_to_touch` sets partition.
+**Likely shape when built:** a designer/TL decomposition heuristic — when an increment's
+allocation routes many tasks through one shared file, give the shared root its own task (or
+stub the registration seam) so the leaf tasks' write sets are disjoint. Pilot-then-fleet
+covers the structurally-identical case; this is the shared-sink case.
 
-**Trigger to act:** a second run reproduces the serialization (the dogfood-1 report's own
-threshold — one observation is an inference, not a pattern).
+**Trigger to act:** a driver sprint where an increment's sub-layers collapse to a serial
+chain, or a batch merge conflicts, on one shared composition root.
 
 ---
 
 ## C21 — Mechanical check: every dispatched role left a telemetry row
 
-**Date:** 2026-07-09
+**Date:** 2026-07-09 (rewritten 2026-07-31 for the continuous-loop redesign)
 **Context:** dogfood run 1 lost telemetry two ways — build/review appends resolved the
 relative sink against the worktree cwd and died with the worktree (fixed 2026-07-09:
 `record_session.py` now anchors a relative sink to the main checkout root), and nothing
 noticed the loss until a manual audit two days later. The fix removes the known loss
-vector; what remains unguarded is the *detection* gap — a silently skipped or misrouted
-telemetry write is invisible until someone reads the sink. (Since 2026-07-10 the Claude
-usage hook appends an independent `kind: "usage"` row per session, so a session that ran
-but wrote no skill-row is now visible offline by comparing the two row kinds — a partial,
-maintainer-side mitigation, not an in-run check.)
+vector; the *detection* gap is what remains. The redesign supplies most of what a detector
+needs: the driver appends a `kind: driver_event` row per dispatch/routing/stop, and the
+Claude usage hook appends a `kind: usage` row per session — so "this role was dispatched
+and left no session row" is now an exact join rather than a fuzzy one. Nobody performs
+that join during a run.
 
-**Likely shape when built:** the orchestrator records the sink's line count at
-`wf pipeline dispatch` and the return inspectors warn when it did not grow — a cheap
-baseline-compare in pipeline state, not a new subsystem.
+**Likely shape when built:** after a dispatch returns, the driver compares the sink against
+the dispatch event it just wrote and warns when the role's own row never appeared — a cheap
+read in the driver, not a new subsystem.
 
-**Trigger to act:** a role's telemetry goes missing again *after* the root-anchor fix.
-Building the checker before a second loss mode shows up is machinery without evidence.
+**Trigger to act:** a role's telemetry goes missing in a driver run (surfaced offline when
+the retrospective's dispatch↔session join comes up short).
 
 ---
 
 ## C22 — `wf-qa`: exploratory web-app QA role (system-altitude, on the running app)
 
-**Date:** 2026-07-10
+**Date:** 2026-07-10 (re-anchored 2026-07-31 for the continuous-loop redesign)
 **Context:** dogfood run 1 — hand-browsing the dems web app found bugs the e2e lane
 missed (scripted SYS-TC paths verify the promised flows; nobody *explores*). The gap is a
 verification peer of wf-review (judgement on the diff) and the SYS-TC lane (scripted
@@ -274,11 +236,12 @@ exit structured, not as prose reports. The immediate need is covered without wf 
 `anthropics/skills@webapp-testing` (official, Playwright-driven browse/screenshot/inspect
 loop) is installed in dems (`.agents/skills/webapp-testing`) for ad-hoc sprint-close QA.
 
-**Shape when built:** a `wf-qa` role dispatched at `end_of_sprint` after the stage checks
-run green — loads the webapp-testing skill, exercises the capabilities' user-visible flows
-plus free exploration, and routes every finding as a design issue (`component_defect` for
-defects in merged code — the fix loop now handles that kind end-to-end) or hands the PO a
-capability-voice need. Read-only outside the browser; its report is transient.
+**Shape when built:** a `wf-qa` entry in the `closeout` list, dispatched after the last
+increment boundary's heavy checks are green — loads the webapp-testing skill, exercises the
+served capabilities' user-visible flows plus free exploration, and routes every finding as
+a design issue (`component_defect` for defects in merged code — the repair ladder handles
+that kind end-to-end) or as a capability-voice need for the next PO session. Read-only
+outside the browser; its report is transient.
 
 **Trigger to act:** the first ad-hoc dems QA run with the installed skill proves the shape
 (app start/auth needs, what "browse the flows" resolves to, where findings route) — promote
@@ -324,24 +287,25 @@ babysitting).
 
 ## C25 — Worktree dependency provisioning (the second half of L-004)
 
-**Date:** 2026-07-10
+**Date:** 2026-07-10 (rewritten 2026-07-31 for the continuous-loop redesign)
 **Context:** dogfood run 1 — task worktrees lacked gitignored dependency dirs
 (`node_modules`); preflight never installs them, so the human copied them by hand. The
-stale-base half of the recovery shipped 2026-07-10 in both tracks (`GitOps.add_worktree`
-+ GIT_OPERATIONS.md § Worktree); the LLM track also carries a judgement-level provision
-instruction ("run the project's install command, or copy the dir from the main
-checkout"). The **mechanical** twin was deliberately not built: a blanket
-copy-any-top-level-gitignored-dir rule is dangerous (`cp -al` hardlinks let a worktree
-build corrupt the host copy; a copied Python `.venv` resolves against the host checkout
-via embedded absolute paths; multi-GB cache copies recreate the very stall), and doing
-it honestly needs a per-project declaration of what to provision and how.
+stale-base half of the recovery shipped 2026-07-10 (`GitOps.add_worktree`). The
+judgement-level provision instruction ("run the project's install command, or copy the dir
+from the main checkout") lives only in wf-orchestrate's `GIT_OPERATIONS.md` asset, which
+retires with that skill — the driver creates worktrees with **no** provisioning step, so
+once the loop runs unattended nothing covers this. The **mechanical** twin was deliberately
+not built: a blanket copy-any-top-level-gitignored-dir rule is dangerous (`cp -al`
+hardlinks let a worktree build corrupt the host copy; a copied Python `.venv` resolves
+against the host checkout via embedded absolute paths; multi-GB cache copies recreate the
+very stall), and doing it honestly needs a per-project declaration of what to provision.
 
 **Likely shape when built:** a config-declared provision command (e.g. a
 `commands.provision` the driver runs in each fresh/recreated worktree), captured by
 wf-init from repo evidence like the other commands — not a dir-copy heuristic.
 
-**Trigger to act:** a second run loses time to missing worktree deps, showing which shape
-(install command vs copy) real runs need. Until then the LLM-track instruction covers it.
+**Trigger to act:** the first driver sprint whose task builds fail or stall on missing
+gitignored deps in a fresh worktree.
 
 ---
 
@@ -369,181 +333,92 @@ the task's mandated tier, sourced from the contract or `commands`.
 
 ## C29 — wf-discover: let the human pin subsystem groupings
 
-**Date:** 2026-07-12
-**Context:** dogfood — the human wanted authority over the subsystem partition wf-scout
-reconciles from the three candidate clusterings (folder · depgraph · git-cochange). Today the
-partition is fully machine-chosen; there is no way to say "these components are one subsystem"
-or "split that one" and have discover honor it on the next run.
+**Date:** 2026-07-12 (rewritten 2026-07-31 for the continuous-loop redesign)
+**Context:** dogfood — the human wanted authority over the subsystem partition the
+`wf-discover` agent's scout step reconciles from the three candidate clusterings (folder ·
+depgraph · git-cochange). The partition is fully machine-chosen; there is no way to say
+"these components are one subsystem" or "split that one" and have discover honor it on the
+next run — and the driver now refreshes the brief at **every** sprint start, so a partition
+the human dislikes is re-derived every iteration and feeds every design.
 
 **Observation:** an optional human-supplied grouping input discover reads and treats as
 authoritative (an override the scout reconciles *around*, not against) — e.g. a committed
-`paths.discover_groupings` the scout merges before writing `subsystems.json`, or seeds the
-scout prompt with. Must stay derive-friendly: the override is intent (small, committed,
+`paths.discover_groupings` merged before `paths.discover_subsystems` is written, or seeded
+into the scout prompt. Must stay derive-friendly: the override is intent (small, committed,
 hand-authored), the partition it shapes stays transient and regenerated each run.
 
-**Trigger to act:** a second run where the machine partition actively obstructs planning and a
-manual regroup would have paid for itself. Until then the three-clustering scout output is
-enough.
+**Trigger to act:** a driver sprint where the machine partition demonstrably misleads the
+design role (a slice mis-allocates components along the wrong subsystem seam), or a second
+run where a manual regroup would have paid for itself.
 
 ---
 
-## C31 — driver: autonomously resolve a stage-fix design issue (not just record + escalate)
+## C34 — mechanically gate shipped-SYS-TC supersessions in the slice
 
-**Date:** 2026-07-13
-**Context:** the wf-orchestrate SKILL now resolves a heavy-check (`stage_check`) design issue
-in-line via §2b (dispatch-fix → wf-spec-fix → re-cut the stage-repair). The live driver
-(`_stage_fix_cycle`) only records the DI canonically (host file + state) and then escalates
-the boundary — it does not run dispatch-fix + re-loop. The manual (skill) path is what
-dogfood runs exercise, so the driver's escalate-after-record is currently sufficient.
-
-**Observation:** bring `_stage_fix_cycle` to full parity — on a stage-fix `design_issue`,
-call the existing `_resolve_design_issues` machinery and re-run the heavy check. The snag is
-the synthetic `STAGE-FIX-<sprint>` task is not a DAG node, so the `component_defect` branch
-(which does `compute-stages --force` and expects the parked task to re-enter a later stage)
-has no clean re-entry. Needs a design for how a stage-fix follow-up task re-triggers the
-heavy check after it merges.
-
-**Trigger to act:** the first autonomous (SDK-driver) run that hits a stage-fix design issue
-— until the driver is actually used for a sprint with heavy checks, the skill path covers it.
-
----
-
-## C32 — wf-sa Phase 4: dry-run the decomposition before the human ratifies
-
-**Date:** 2026-07-14
-**Context:** two dems `/wf-orchestrate` runs on 2026-07-14 (111 minutes apart) both halted in
-`preparing` with wf-tl rejecting the slice. The second rejection was on `REQ-141` — a
-requirement wf-sa *minted* during the 92-minute interactive re-design that round 1 triggered.
-Both rounds failed on the same class of defect: requirement ownership vs. the real atomic edit
-set. wf-tl flagged the repeat itself ("same class as the previous cut's B3/B4").
-
-The order of operations is the cause: wf-sa Phase 4 is the interactive core where the human
-ratifies, but decomposition — the only step that empirically tests whether the design is
-buildable — runs in wf-tl on the *next* orchestrate run, after ratification. So the human
-ratifies buildability they cannot assess, and the SA's only real feedback arrives one lap later.
-
-**Observation:** dispatch wf-tl read-only against the draft slice inside Phase 4, before the
-human ratifies — "can every requirement be owned by one component, and is each atomic edit set
-inside it?" A ~6–17 minute autonomous check gating a 92-minute interactive session.
-
-**Why it is deferred rather than done:** the slice-rejection route (`scope: slice` → wf-spec-fix
-re-cut → re-dispatch wf-tl, bounded at `_MAX_REDESIGN_ROUNDS`) now makes each lap autonomous and
-cheap, which was the same note's cheaper mitigation. The human-session cost the dry-run exists to
-protect only materializes on an ADR / unratified-assumption / capability escalation. Part of the
-observed pain also came from the boundaries-are-law vs. atomic-edit-set collision, which is now
-resolved — round 2's `SortOrder` blocker would not be a blocker today, so the residual defect rate
-is unmeasured.
-
-**Trigger to act:** `dispatch-fix`'s round bound actually fires on a real run, or two consecutive
-interactive wf-sa runs produce slices that need a re-cut. Either says the loop is not converging
-and the feedback belongs before the ratification gate, not after.
-
----
-
-## C33 — driver: route a slice rejection, don't just report it
-
-**Date:** 2026-07-14
-**Context:** `wf-orchestrate` §1a now resolves a rejected design slice autonomously —
-`dispatch-fix` routes the `scope: slice` DI to wf-spec-fix, which re-cuts the slice, and
-the orchestrator re-dispatches wf-tl against it, bounded by `_MAX_REDESIGN_ROUNDS`. The live
-driver (`_run`, preparing) only *reports* the rejection: `_no_sprint_reason` reads the open
-slice issue and escalates naming the DI, the blocker count, and `/wf-sa`. It does not run
-dispatch-fix, does not dispatch the fixer, and does not re-loop.
-
-**Observation:** bring the driver to parity — the same dispatch-fix → wf-spec-fix → re-dispatch
-wf-tl loop, reusing the existing `_resolve_design_issues` machinery for the route and
-`dispatch-fix`'s exit 1 for the round bound. Unlike C31's stage-fix case there is no
-awkward re-entry: preparing is a straight loop back to the wf-tl dispatch, with no DAG node
-to place.
-
-**Trigger to act:** the first autonomous (SDK-driver) run that hits a slice rejection. Both
-dems runs that motivated this work used the skill path; until the driver actually drives a
-sprint, its honest escalation costs one human `/wf-sa` invocation — the same thing the skill
-path did before §1a existed. Cf. **C31** (same driver/skill parity class, one phase later).
-
----
-
-## C34 — `wf slice check`: gate unratified supersessions, not just assumptions
-
-**Date:** 2026-07-14 (updated 2026-07-20)
-**Context:** wf-sa Phase 3 requires every **supersession** (a shipped `REQ-<n>` / `SYS-TC-<n>`
-this design invalidates or retires) to be ratified by the human at Phase 4, and
-`assets/design-slice.md.tmpl`'s Supersedes section says as much — "alignment before it may
-appear here". Nothing enforces it. `wf slice check` (`tools/cli/slice.py`) greps for
-`UNCONFIRMED` assumption lines and nothing else, so an unratified supersession reaches wf-tl
-silently. Assumptions have a marker and a gate; supersessions have neither.
-
-**Observation:** give the Supersedes section a ratification marker of its own and fail
-`slice check` on an unratified entry, exactly as it fails an `UNCONFIRMED` assumption — a
-mechanical check instead of a prose promise.
-
-**Why only default mode is at stake now:** the autonomous fixer (wf-spec-fix) supersedes shipped
-behaviour by design — it records each supersession on `paths.spec_decisions`, which `ship` folds
-into the PR body for end-of-run review; the old `slice_defect` supersession *halt* was removed with
-the wf-spec-fix merge (2026-07-20). So the autonomous hole is covered by report-and-review, not a
-gate. The residual is **default mode**: a human is present at Phase 4 and sees supersessions
-presented, so it takes an SA omission to slip through — softer, and the reason this stays deferred.
-
-**Trigger to act:** a supersession reaching a sprint unratified (from either mode), or the
-next time `slice.py` is opened for other work — the marker + check is small, and it retires
-a prose rule in fix-mode.md. **2026-07-25: the trigger fired** — `slice.py` was opened to
-add the A6 design-narrative gate; the supersession marker was not folded in (kept out of
-an already-large redesign). Next `slice.py` touch should carry it, or promote it now.
+**Date:** 2026-07-14 (rewritten 2026-07-31 for the continuous-loop redesign)
+**Context:** in the redesigned loop, superseding a *shipped* SYS-TC scenario is escalation-gate
+criterion 3: wf-designer halts, writes `paths.decision_prep`, the human rules, resume applies it.
+That path is role prose — no mechanism verifies a ruling actually happened. The only mechanical
+piece is `complete-sprint`'s survivor sweep (a superseded id still tagged in the test tree), which
+runs *after* the sprint built against the supersession. A designer that skips the halt and lists a
+shipped id under `## Supersessions` ships unratified, surfacing only in PR review.
+**Observation:** a slice-check rule could cross the Supersessions section against the shipped
+`[SYS-TC:]` tags in the test tree and fail on any shipped id present without a ruling record —
+but `decision_prep` is transient (deleted on resume), so a durable ratification record would be
+new machinery. Dogfood law: wait for a run to prove the escalation gate alone is insufficient.
+**Trigger to act:** a driver sprint ships a shipped-SYS-TC supersession without a halt (visible
+in PR review or the retro's decision log), or PR-review reversals cite an unratified supersession.
 
 ---
 
 ## C35 — wf-po: guard against revising a capability whose work is in flight
 
-**Date:** 2026-07-14
-**Context:** capabilities now drain at **build**, not at design (wf-sa Phase 1). Under the old
-model anything sitting in `$CAPABILITIES` was by definition un-designed, so `wf-po`'s rule —
-"you may revise an un-built capability with the user's assent" — was safe by construction.
-It no longer is: an un-built capability may be designed, in the backlog, cut into a live
-slice, and building right now. wf-po has no `paths.design_backlog` binding, never reads it,
-and is explicitly forbidden from surfacing wf-voice to the user, so neither the agent nor the
-user can tell. wf-sa got exactly this guard in the same change ("grep `$DESIGN_BACKLOG` for
-each id you consider: one a surviving design already serves is in flight"); wf-po did not —
-and wf-po is the role that actually rewrites the text.
+**Date:** 2026-07-14 (rewritten 2026-07-31 for the continuous-loop redesign)
+**Context:** wf-po may "revise an un-built capability with the user's assent". A capability
+drains only on an adequate close-time verdict, so an open capability may be mid-build right
+now — and the continuous loop makes that the *normal* case: the driver runs unattended while
+the human opens a PO session, and several sprints may be stacked unmerged. wf-po reads only
+`paths.capabilities`; there is no backlog left to grep, so neither the agent nor the user can
+tell that a live sprint serves the id being rewritten.
 
-**Observation:** give wf-po a read-only `DESIGN_BACKLOG` binding and gate the revise rule —
-grep the backlog for the id; a hit means the work is underway, so name that to the user and
-get explicit assent to changing work in flight, or add a new capability instead.
+**Observation:** give wf-po a read-only binding to the in-flight signal that does exist — the
+open slice's `serves:` header (`paths.design_slice`), plus the driver state's sprint id — and
+gate the revise rule on it: a hit means the work is underway, so name that to the user and get
+explicit assent to changing work in flight, or add a new capability instead.
 
-**Failure it prevents:** wf-po rewrites CAP-9 while a sprint builds requirements traced to
-CAP-9's old wording. Every `serves: CAP-9` trace then points at intent nobody agreed to, and
-nothing detects it — the requirement still names a live id.
+**Failure it prevents:** wf-po rewrites CAP-9 while an increment builds tasks carrying
+`covers: [CAP-9]`. The close-time adequacy question is then asked against intent nobody agreed
+to, and nothing detects it — the id is still live.
 
-**Trigger to act:** the first wf-po run that revises (not adds) a capability while a sprint is
-in flight. Deliberately parked rather than fixed with the drain change: the hazard needs that
-exact sequence to bite, and no run has done it. Note this was **created** by the drain change,
-not inherited — if it fires, it fires on us.
+**Trigger to act:** the first PO session that revises (not adds) a capability while a driver
+sprint is in flight. Note this hazard was **created** by our own drain model, not inherited —
+if it fires, it fires on us.
 
 ---
 
 ## C36 — `wf sprint check` passes a sprint it never checked against a slice
 
-**Date:** 2026-07-14
-**Context:** `wf-orchestrate` §1 step 1 now gates on `wf sprint check` reporting `verdict: pass`
-rather than on `$SPRINT`'s presence — presence cannot distinguish a good sprint from one that
-failed its own gate. But `sprint.py`'s verdict is `"fail" if errors or (args.strict and warns)`,
-and a **missing design-slice is `warn("A0")`** ("slice not found; ran intra-sprint checks only"),
-not an error. So `sprint check` against no slice returns `verdict: pass`, and §1 step 1 accepts a
-sprint whose entire slice-conformance family (A0/A1) never ran.
+**Date:** 2026-07-14 (rewritten 2026-07-31 for the continuous-loop redesign)
+**Context:** the driver gates every increment's contracts on `wf sprint check`
+(`_contracts_green` in `tools/driver/increments.py`) and re-runs the TL/repair loop while it
+is red. But `sprint.py`'s verdict is `"fail" if errors or (args.strict and warns)`, and a
+**missing design-slice is `warn("A0")`** ("slice not found; ran contract checks only"), not
+an error. So a check that could not run the slice→sprint family — C15 (every task traces to
+a declared increment) and A2 (every slice scenario has an e2e task carrying it) — still
+returns `verdict: pass`, and the driver proceeds into the sub-layer loop.
 
-**Observation:** A0 is the one warning that means "I could not perform the check you asked for",
-which is categorically different from C5's "this is allowed but consider splitting". Either make
-A0 an error, or give the verdict a third state the orchestrator can route on (`pass` /
-`unverified` / `fail`). `--strict` is NOT the fix — it would also promote C5 (>5 files) to an
-error, and an atomic edit set legitimately exceeds 5 files, which is why C5 is a warning.
+**Observation:** A0 is the one warning that means "I could not perform the check you asked
+for". Either make it an error, or give the verdict a third state the driver routes on
+(`pass` / `unverified` / `fail`). `--strict` is NOT the fix — it would also promote A2, which
+is deliberately a warning while the cumulative sprint file is still filling increment by
+increment.
 
-**Why deferred:** unreachable in normal operation — `complete-sprint` drains the slice and the
-sprint together, and a crash between the two self-heals (the phase is still `end_of_sprint`, so
-the next run re-runs closeout). No run has produced a stale-sprint-without-slice state.
+**Why deferred:** hard to reach — the design role writes the slice before any increment is
+decomposed, and `complete-sprint` drains slice and sprint together. No run has produced a
+sprint-without-slice state.
 
-**Trigger to act:** any run where `sprint check` reports A0, or a second consumer starts routing
-on its verdict. Noted because it is the same shape as the bug §1 step 1 was just fixed for — a
-check that cannot tell "verified good" from "not verified" — and that shape has now bitten this
-pipeline three times in one change.
+**Trigger to act:** any run where `sprint check` reports A0, or a second consumer starts
+routing on its verdict.
 
 ---
 
@@ -599,63 +474,36 @@ resolved on the pilot-side ship alone.
 
 ---
 
-## C38 — Cut-time completeness: the source-claim half shipped, two heuristic members remain
+## C38 — Cut-time completeness: two heuristic members with no home
 
-**Date:** 2026-07-20 (narrowed 2026-07-22)
-**Context:** the SA/TL authoring layer that cuts task contracts and the slice's interface
-contracts is the most recurrent wf-toolkit friction family: a contract is cut that is incomplete,
-internally contradictory, or unfaithful to the source, and the build agent recovers it a
-review-reject or build-halt cycle late. The *structural* members of the family have been
-point-fixed one at a time as they recurred — the slice-interface-contradicts-source halt (L-025),
-the boundaries-vs-atomic-edit-set precedence and additive-method escape hatch (L-028), the
-split-owner wiring-defect guidance (L-034), mechanical migration/codegen fan-out computed at
-cut by `wf impact` (L-035), and the sibling-task pattern pointer (a bare "same pattern as T12"
-note banned; `dependency_commits` injected at extraction so the build reads the dep's merge diff
-— from the 2026-07-20 token-cost investigation, where that one note cost a build ~85KB of
-exploration) have all shipped. What has **no** home is the residual class below.
+**Date:** 2026-07-20 (rewritten 2026-07-31 for the continuous-loop redesign)
+**Context:** the contract-authoring layer is the most recurrent wf-toolkit friction family — a
+contract is cut that is incomplete, internally contradictory, or unfaithful to source, and the
+build agent recovers it a review-reject or halt cycle late. The source-claim half shipped
+2026-07-22 and survives: a claim about a write/read surface, a mechanism, a fixture's reach, or
+a command's environment must be resolved to source at cut time and cited as `<path>:<symbol>`,
+and `sprint check` C11 re-resolves every `grounding` pointer and errors when the symbol is not
+there. The redesign also removed two of this family's historical habitats — the four-section
+contract deletes `implementation_notes` and the per-task `interface_contract` (B9 rejects both),
+leaving one home per fact.
 
-**The source-claim half shipped 2026-07-22** (a fourth recurrence, L-058: SYS-TC-35 and
-REQ-205.AC-1 both required a column to change "through the API" when no handler or repository
-writes it — one task worked around it with raw SQL, one halted and needed a `spec_amendment`).
-task-contract.md now carries a cut-time grounding step — a claim about a write/read surface, a
-mechanism, a fixture's reach, or a command's environment must be resolved to source before the
-contract ships, and cited as `<path>:<symbol>`; `sprint check` C11 re-resolves every such pointer
-into a file outside `files_to_touch` and errors when the symbol is not there. wf-sa carries the
-same rule for a SYS-TC scenario step. This covers L-036 and L-044's source-claim shapes.
-
-**The residual — two mechanically-decidable members, both fuzzier than they look:**
-- `implementation_notes` / `interface_contract` *type* claims not reconciled against the landed
-  types (the T19 half of L-008 — the file-path half is the noisy `sprint check` C9 warn, cf.
-  L-037/L-043; **recurred 2026-07-20**: T13's `interface_contract` names `domain.RuleConflict`,
-  which does not exist — the landed type is `domain.ConflictItem`). C11 does not reach it: a
-  bare qualified symbol carries no path to resolve against.
-- a compound AC whose mandated tests prove only one branch of its own `check` (L-050) — the
-  existing "one testable condition per AC" rule given teeth.
+**The residual — two members C11 still cannot reach:**
+- a **bare qualified type claim** carries no path to resolve against, so C11 is blind to it. Its
+  surviving surfaces are the slice's `## Interface contracts` section and a contract's
+  `boundaries` (fixed interfaces). Recurred four times as `interface_contract` type names that
+  exist nowhere (`domain.RuleConflict` 2026-07-20, `domain.AttachmentTarget` 2026-07-27).
+- a **compound acceptance criterion** whose `tests[]` prove only one of its branches (L-050) —
+  now sharper, because the AC *is* the requirement: nothing else states the behaviour, so an
+  unproven branch has no second representation to catch it.
 
 **Analysis:** both need a heuristic over prose (which qualified symbols are type claims; which
-`and` joins two branches rather than one condition), and a cut gate that cries wolf gets ignored —
-which is why neither shipped with the source-claim half. A task legitimately *creates* the type
-or branch it names, so neither check can fire on absence alone; each needs an "is this the task's
-own to write?" test the way C11 got one from `files_to_touch`.
+`and` joins two branches rather than one condition), and a cut gate that cries wolf gets ignored.
+A task legitimately *creates* the type or branch it names, so neither check can fire on absence
+alone; each would need an "is this the task's own to write?" test the way C11 got one from the
+grounding pointer's path.
 
-**Trigger to act:** either member recurs again, or the spec-layer reviewer of **C37** gets built
-(it subsumes both without a heuristic). Cf. **C37** (skill prose — same shape), **C32** (dry-run
-the decomposition before the human ratifies), **C13** (verbatim interface contract in the task
-contract).
-
-**2026-07-27 — THE TRIGGER HAS FIRED; the type-claim member recurred a fourth time.** dems'
-sprint-20260725 batch carried five members of this family at once (L-075, L-079, L-086, plus
-recurrences of L-067 and L-069). Four had a *stateable* rule and were point-fixed this pass —
-whole-tree-invariant inventory computed by running the scan (L-075), `interface_contract_ref` on
-consumer tasks and not only producers (L-079), a reuse instruction checked against the target's
-package boundary (L-086), a wrapped SYS-TC scenario joined before parsing (L-074). The **residual
-type-claim member did not have one**: T2's `interface_contract` referenced `domain.AttachmentTarget`,
-a type that exists nowhere in the codebase and whose file was not in `files_to_touch` — the exact
-shape of the 2026-07-20 `domain.RuleConflict` recurrence, C11 still blind to it for the same reason
-(a bare qualified symbol carries no path to resolve against).
-
-Four point-fixes in one pass is the pattern this entry predicted would stop scaling: each rule is
-correct, each is one more paragraph a cut-time role must hold, and none of them would have caught
-the one member that had no rule. **Recommendation: act on C37's wf2-side half rather than a fifth
-point-fix** — the adversarial spec-layer reviewer subsumes both residual members without needing a
-heuristic that can distinguish "the task creates this type" from "this type does not exist."
+**Trigger fired 2026-07-27, and the recommendation stands:** four point-fixes in one dems pass,
+none of which would have caught the one member that had no stateable rule. **Act on C37's
+wf2-side half rather than a fifth point-fix** — an adversarial spec-layer reviewer subsumes both
+residual members without needing a heuristic that can tell "the task creates this type" from
+"this type does not exist." Cf. **C37**, **C13** (pinning a dependency's existing interface).

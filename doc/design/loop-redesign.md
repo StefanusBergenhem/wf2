@@ -182,8 +182,13 @@ sprint (one loop iteration, one branch, one PR)
 An **increment** is a design milestone: goal, component allocation, end-to-end
 flow (wiring included), and an **observable checkpoint** ("after this, X
 demonstrably works"). The TL is dispatched once per increment when its turn
-comes. Merges to the sprint branch happen per sub-layer (today's batch-merge
-machinery). At the **increment boundary**: heavy checks (`commands.stage_check`),
+comes. **The sprint's contract file is cumulative:** each increment's TL
+*appends* its tasks (every task carries `increment:`) and never rewrites or
+removes earlier increments' entries — merged increments are facts; a slice
+re-cut prunes only the invalidated unmerged increments (`wf sprint prune`).
+The close-time merge record and adequacy candidates therefore see the whole
+sprint, not the last increment. Merges to the sprint branch happen per
+sub-layer (today's batch-merge machinery). At the **increment boundary**: heavy checks (`commands.stage_check`),
 checkpoint verification, and design-issue repair (designer repair mode) — so
 the next increment's TL always plans against a checked, merged tree.
 
@@ -250,7 +255,9 @@ non-trivial; every AC carries tests[] or verified_by; boundaries is a single
 section; grounding pointers resolve (C11 successor); `tests[].target` unique
 per package across the sprint's contracts (L-088); depends_on acyclic within
 the increment; task count within cap; every task traces to the increment's
-allocation.
+allocation; cumulative-file integrity — task ids unique across the whole
+sprint, increment ordering monotone, no task block silently absorbed into a
+neighbour's YAML list (C17).
 
 ### 5.4 Defect classification (the repair ladder)
 

@@ -54,6 +54,17 @@ class PhaseTest(support.TempProject):
         self.assertIn("wf-discover", rt.agents.roles())
         self.assertEqual(rt.state.phase, "designing")
 
+    def test_sprint_start_records_the_sprint_id_in_the_run_state(self):
+        git = fakes.FakeGit(stack=["sprint/s1"], sprint_id="s2")
+        cli = fakes.FakeCli()
+        rt = self.rt(git=git, cli=cli)
+        self.cfg.path("discover_brief").parent.mkdir(parents=True, exist_ok=True)
+        self.cfg.path("discover_brief").write_text("brief\n")
+        phases.sprint_start(rt)
+        transition = next(c for c in cli.calls if c[:2] == ["pipeline", "transition"])
+        self.assertIn("--sprint-id", transition)
+        self.assertEqual(transition[transition.index("--sprint-id") + 1], "s2")
+
     def test_sprint_start_halts_on_a_dirty_tree(self):
         rt = self.rt(git=fakes.FakeGit(clean=False))
         with self.assertRaises(driver_runtime.Halt):

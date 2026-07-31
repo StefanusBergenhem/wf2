@@ -228,6 +228,47 @@ class IncrementTest(support.TempProject):
         increments.run_increment(rt, 1)
         self.assertEqual(agents.roles()[:3], ["wf-tl", "wf-designer", "wf-tl"])
 
+    def write_sprint(self, *numbers):
+        """A cumulative sprint file — one task per increment, as the Tech Leads left it."""
+        path = self.cfg.path("sprint")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("sprint_id: s1\ntasks:\n" + "".join(
+            f"  - id: T{n}\n    increment: {n}\n" for n in numbers))
+        return path
+
+    def test_a_slice_recut_prunes_only_the_increment_the_design_issue_names(self):
+        sprint = self.write_sprint(1, 2)
+        cli = self.happy_cli()
+        agents = fakes.FakeAgents(self.cfg)
+        agents.on("wf-tl", fakes.raise_design_issue(self.cfg, increment=1))
+        agents.on("wf-tl", lambda *a: None)
+        rt = self.rt(cli, agents=agents)
+        increments.prepare_contracts(rt, 1)
+        self.assertEqual([c for c in cli.calls if c[:2] == ["sprint", "prune"]],
+                         [["sprint", "prune", "--increment", "1"]])
+        # the merged increments in the file are facts — the whole file is never dropped
+        self.assertTrue(sprint.exists())
+        self.assertIn("id: T2", sprint.read_text())
+
+    def test_a_slice_recut_naming_no_increment_prunes_every_unmerged_increment(self):
+        self.write_sprint(1, 2, 3)
+        cli = self.happy_cli({
+            ("pipeline", "increments"): {
+                "increments": [{"increment": 1, "tasks": 1, "done": True},
+                               {"increment": 2, "tasks": 1, "done": False},
+                               {"increment": 3, "tasks": 1, "done": False}],
+                "current": 2, "next": 2},
+        })
+        issues_path = self.cfg.path("design_issues")
+        issues_path.parent.mkdir(parents=True, exist_ok=True)
+        issues_path.write_text(
+            'issues:\n  - id: "DI-7"\n    task_id: null\n    scope: slice\n'
+            '    status: open\n    summary: "the remainder is mis-cut"\n')
+        rt = self.rt(cli)
+        increments.prepare_contracts(rt, 2)
+        self.assertEqual([c[-1] for c in cli.calls if c[:2] == ["sprint", "prune"]],
+                         ["2", "3"])
+
     def test_a_red_sprint_check_routes_to_designer_repair(self):
         cli = self.happy_cli({
             ("sprint", "check"): [(1, {"verdict": "fail",

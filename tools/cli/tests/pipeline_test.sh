@@ -295,6 +295,24 @@ wf "$PROJ_M" pipeline transition --to designing --reason kickoff >/dev/null
 CP="$(wf "$PROJ_M" pipeline current-phase --format json)"
 [ "$(jget "$CP" "d['phase']")" = "designing" ] && ok "transition sets current_phase" || bad "transition" "$CP"
 
+# --sprint-id records whose sprint this run state belongs to, so `next` names the
+# driver's sprint instead of falling back to the sprint file's id
+PROJ_SID="$(echo "$DIAMOND" | new_proj)"
+wf "$PROJ_SID" pipeline transition --to preparing --sprint-id s7 >/dev/null
+[ "$(yget "$PROJ_SID/.wf/transient/pipeline-state.yaml" "d['sprint_id']")" = "s7" ] \
+    && ok "transition --sprint-id records the sprint id in the run state" \
+    || bad "transition sprint_id" "$(cat "$PROJ_SID/.wf/transient/pipeline-state.yaml")"
+wf "$PROJ_SID" pipeline compute-stages --increment 1 >/dev/null
+NSID="$(wf "$PROJ_SID" pipeline next --format json)"
+[ "$(jget "$NSID" "d['dispatch'][0]['worktree']")" = ".wf/transient/worktrees/s7-T1" ] \
+    && ok "next: the recorded sprint id names the worktree" || bad "next sprint_id" "$NSID"
+
+# a later transition without the flag keeps the recorded id
+wf "$PROJ_SID" pipeline transition --to running_stage >/dev/null
+[ "$(yget "$PROJ_SID/.wf/transient/pipeline-state.yaml" "d['sprint_id']")" = "s7" ] \
+    && ok "transition without --sprint-id leaves the recorded id alone" \
+    || bad "transition sprint_id kept" "$(cat "$PROJ_SID/.wf/transient/pipeline-state.yaml")"
+
 # current-phase resolves sprint_branch from git when the stored value is null (L-020)
 PROJ_GB="$(echo "$DIAMOND" | new_proj)"
 seed_state "$PROJ_GB" <<'YAML'
@@ -610,6 +628,8 @@ grep -q "batching — keep the — dash" "$LRN" \
     && ok "report: names the sprint" || bad "report sprint_id" "$(cat "$RPT")"
 [ "$(yget "$RPT" "d['reports'][0]['served']")" = "['CAP-3', 'L-2', 'L-5']" ] \
     && ok "report: carries the slice's serves header" || bad "report served" "$(cat "$RPT")"
+[ "$(yget "$RPT" "d['reports'][0]['merged_tasks']")" = "['T1', 'T2', 'T4']" ] \
+    && ok "report: the merge record spans every increment's tasks" || bad "report merged" "$(cat "$RPT")"
 [ "$(yget "$RPT" "d['reports'][0]['learnings_drained']")" = "['L-5']" ] \
     && ok "report: drained learning listed" || bad "report learnings" "$(cat "$RPT")"
 [ "$(yget "$RPT" "d['reports'][0]['learnings_retained'][0]['id']")" = "L-2" ] \
@@ -677,7 +697,7 @@ YAML
 
 P="$(mk_cap_proj)"
 printf '# Adequacy: CAP-3 — adequate\n**Date:** now\n' \
-    > "$P/.wf/transient/drill-cache/adequacy-CAP-3-20260731T090000Z.md"
+    > "$P/.wf/transient/drill-cache/adequacy-CAP-3-full-promise-20260731T090000Z.md"
 DC="$("$PYTHON" "$WF" pipeline drain-capability CAP-3 --config "$P/.wf/config.yaml" --format json)"; RCD=$?
 [ "$RCD" -eq 0 ] && [ "$(jget "$DC" "d['drained']")" = "True" ] \
     && ok "drain-capability: an adequate digest drains the capability" || bad "drain-cap adequate" "rc=$RCD $DC"
@@ -693,7 +713,7 @@ ls "$P/.wf/archive/capabilities/"*__CAPABILITIES.yaml >/dev/null 2>&1 \
 # an inadequate verdict mutates nothing and exits 1
 P="$(mk_cap_proj)"
 printf '# Adequacy: CAP-3 — inadequate\n' \
-    > "$P/.wf/transient/drill-cache/adequacy-CAP-3-20260731T090000Z.md"
+    > "$P/.wf/transient/drill-cache/adequacy-CAP-3-full-promise-20260731T090000Z.md"
 DC="$("$PYTHON" "$WF" pipeline drain-capability CAP-3 --config "$P/.wf/config.yaml" --format json)"; RCD=$?
 [ "$RCD" -eq 1 ] && [ "$(jget "$DC" "d['drained']")" = "False" ] \
     && ok "drain-capability: an inadequate digest exits 1" || bad "drain-cap inadequate" "rc=$RCD $DC"
@@ -702,15 +722,51 @@ DC="$("$PYTHON" "$WF" pipeline drain-capability CAP-3 --config "$P/.wf/config.ya
 
 # the newest digest wins — a stale inadequate one does not veto a later adequate one
 P="$(mk_cap_proj)"
-printf '# Adequacy: CAP-3 — inadequate\n' > "$P/.wf/transient/drill-cache/adequacy-CAP-3-20260701T090000Z.md"
-printf '# Adequacy: CAP-3 — adequate\n'   > "$P/.wf/transient/drill-cache/adequacy-CAP-3-20260731T090000Z.md"
+printf '# Adequacy: CAP-3 — inadequate\n' > "$P/.wf/transient/drill-cache/adequacy-CAP-3-full-promise-20260701T090000Z.md"
+printf '# Adequacy: CAP-3 — adequate\n'   > "$P/.wf/transient/drill-cache/adequacy-CAP-3-full-promise-20260731T090000Z.md"
 DC="$("$PYTHON" "$WF" pipeline drain-capability CAP-3 --config "$P/.wf/config.yaml" --format json)"
 [ "$(jget "$DC" "d['drained']")" = "True" ] \
     && ok "drain-capability: the newest digest is the verdict" || bad "drain-cap newest" "$DC"
 
+# only the FULL-PROMISE question drains: an iteration-claim digest judges one slice's
+# claim, so it can never say the whole promise is covered
+P="$(mk_cap_proj)"
+printf '# Adequacy: CAP-3 — adequate\n**Question:** iteration claim\n' \
+    > "$P/.wf/transient/drill-cache/adequacy-CAP-3-iteration-claim-20260731T090000Z.md"
+if "$PYTHON" "$WF" pipeline drain-capability CAP-3 --config "$P/.wf/config.yaml" >/dev/null 2>&1; then
+    bad "drain-capability: an iteration-claim digest should not drain" "exited 0"
+else
+    ok "drain-capability: an iteration-claim digest alone → non-zero exit"
+fi
+[ "$(yget "$P/.wf/CAPABILITIES.yaml" "[e['id'] for e in d['capabilities']]")" = "['CAP-3', 'CAP-4']" ] \
+    && ok "drain-capability: an iteration-claim digest mutates nothing" || bad "drain-cap iteration mutation" "$(cat "$P/.wf/CAPABILITIES.yaml")"
+
+# a NEWER iteration-claim digest never shadows the full-promise verdict
+P="$(mk_cap_proj)"
+printf '# Adequacy: CAP-3 — adequate\n' \
+    > "$P/.wf/transient/drill-cache/adequacy-CAP-3-full-promise-20260701T090000Z.md"
+printf '# Adequacy: CAP-3 — inadequate\n**Question:** iteration claim\n' \
+    > "$P/.wf/transient/drill-cache/adequacy-CAP-3-iteration-claim-20260731T090000Z.md"
+DC="$("$PYTHON" "$WF" pipeline drain-capability CAP-3 --config "$P/.wf/config.yaml" --format json)"; RCD=$?
+[ "$RCD" -eq 0 ] && [ "$(jget "$DC" "d['drained']")" = "True" ] \
+    && ok "drain-capability: a newer iteration-claim digest does not shadow the full-promise one" \
+    || bad "drain-cap shadow" "rc=$RCD $DC"
+[ "$(jget "$DC" "'full-promise' in d['digest']")" = "True" ] \
+    && ok "drain-capability: the digest read is the full-promise one" || bad "drain-cap shadow digest" "$DC"
+
+# an explicit --verdict pointing at an iteration-claim digest is refused too
+P="$(mk_cap_proj)"
+printf '# Adequacy: CAP-3 — adequate\n**Question:** iteration claim\n' > "$P/claim.md"
+if "$PYTHON" "$WF" pipeline drain-capability CAP-3 --verdict "$P/claim.md" \
+        --config "$P/.wf/config.yaml" >/dev/null 2>&1; then
+    bad "drain-capability: --verdict on an iteration-claim digest should fail" "exited 0"
+else
+    ok "drain-capability: --verdict on an iteration-claim digest → non-zero exit"
+fi
+
 # a digest reviewing a DIFFERENT capability is a mechanical failure
 P="$(mk_cap_proj)"
-printf '# Adequacy: CAP-4 — adequate\n' > "$P/.wf/transient/drill-cache/adequacy-CAP-3-20260731T090000Z.md"
+printf '# Adequacy: CAP-4 — adequate\n' > "$P/.wf/transient/drill-cache/adequacy-CAP-3-full-promise-20260731T090000Z.md"
 if "$PYTHON" "$WF" pipeline drain-capability CAP-3 --config "$P/.wf/config.yaml" >/dev/null 2>&1; then
     bad "drain-capability: mismatched digest should fail" "exited 0"
 else

@@ -631,6 +631,55 @@ PY
 OUT="$(wf sprint check --format json)"
 [ "$(has "$OUT" C15)" = "True" ] && ok "check: C15 flags a task with no increment" || bad "C15-none" "$OUT"
 
+# --- C17: the file is cumulative — earlier increments' entries are never rewritten ---
+# each increment's TL APPENDS; a reused id or a block out of file order is a rewrite
+write_sprint; wf sprint materialize >/dev/null
+OUT="$(wf sprint check --format json)"
+[ "$(has "$OUT" C17)" = "False" ] \
+  && ok "check: C17 passes a cumulative file whose increments are in order" || bad "C17-clean" "$OUT"
+
+write_sprint; wf sprint materialize >/dev/null
+edit_sprint <<'PY'
+dup = dict(d['tasks'][0]); dup['increment'] = 2
+d['tasks'].append(dup)
+PY
+OUT="$(wf sprint check --format json)"; RC=$?
+[ "$(has "$OUT" C17)" = "True" ] && [ "$RC" -eq 1 ] \
+  && ok "check: C17 flags a task id reused across increments" || bad "C17-dup" "rc=$RC $OUT"
+[ "$(jget "$OUT" "any('T1' in f['msg'] for f in d['errors'] if f['code']=='C17')")" = "True" ] \
+  && ok "check: C17 names the reused id" || bad "C17-dup id" "$OUT"
+
+write_sprint; wf sprint materialize >/dev/null
+edit_sprint <<'PY'
+d['tasks'] = [d['tasks'][1], d['tasks'][0]]
+PY
+OUT="$(wf sprint check --format json)"
+[ "$(has "$OUT" C17)" = "True" ] \
+  && ok "check: C17 flags an earlier increment's task positioned after a later one" || bad "C17-order" "$OUT"
+[ "$(jget "$OUT" "any('T1' in f['msg'] for f in d['errors'] if f['code']=='C17')")" = "True" ] \
+  && ok "check: C17 names the out-of-order task" || bad "C17-order id" "$OUT"
+
+# an append one indent level too deep lands the whole task block inside the previous
+# task's grounding list — YAML takes it silently, so the check must not
+write_sprint; wf sprint materialize >/dev/null
+edit_sprint <<'PY'
+d['tasks'][0]['grounding'].append({'id': 'T3', 'increment': 2, 'story': 'swallowed'})
+PY
+OUT="$(wf sprint check --format json)"
+[ "$(has "$OUT" C17)" = "True" ] \
+  && ok "check: C17 flags a task block swallowed into a mis-indented append" || bad "C17-swallow" "$OUT"
+[ "$(jget "$OUT" "any('indent' in f['msg'] for f in d['errors'] if f['code']=='C17')")" = "True" ] \
+  && ok "check: C17 names the indentation as the cause" || bad "C17-swallow msg" "$OUT"
+
+# the one grounding mapping the schema does allow stays legal
+write_sprint; wf sprint materialize >/dev/null
+edit_sprint <<'PY'
+d['tasks'][1]['grounding'].append({'dependency_commits': {'T1': 'abc123'}})
+PY
+OUT="$(wf sprint check --format json)"
+[ "$(has "$OUT" C17)" = "False" ] \
+  && ok "check: C17 leaves a dependency_commits grounding entry alone" || bad "C17-depcommits" "$OUT"
+
 # --- A2: a slice scenario with no e2e task ---
 # while the sprint is only partly decomposed it is a warning; once every declared
 # increment has tasks it is an error.
@@ -653,18 +702,7 @@ OUT="$(wf sprint check --format json)"; RC=$?
 [ "$(has "$OUT" A2)" = "True" ] && [ "$RC" -eq 1 ] \
   && ok "check: A2 errors once every increment is decomposed" || bad "A2-err" "rc=$RC $OUT"
 
-# --- A3/A0: the slice's own findings ---
-write_sprint; wf sprint materialize >/dev/null
-cat >> "$SLICE" <<'MD'
-
-## Assumptions requiring confirmation
-
-- **A-2 · UNCONFIRMED** — "patched" read as partial update only.
-MD
-OUT="$(wf sprint check --format json)"; RC=$?
-[ "$(has "$OUT" A3)" = "True" ] && [ "$RC" -eq 1 ] \
-  && ok "check: A3 surfaces an UNCONFIRMED slice assumption" || bad "A3" "rc=$RC $OUT"
-
+# --- A0: no slice on disk ---
 write_slice; write_sprint; wf sprint materialize >/dev/null; rm -f "$SLICE"
 OUT="$(wf sprint check --format json)"; RC=$?
 [ "$(has "$OUT" A0 warnings)" = "True" ] && ok "check: A0 warns when the slice is absent" || bad "A0" "$OUT"
@@ -673,6 +711,135 @@ OUT="$(wf sprint check --format json)"; RC=$?
 # --strict promotes warnings to failure
 OUT="$(wf sprint check --strict --format json)"; RC=$?
 [ "$RC" -eq 1 ] && ok "check: --strict fails when only warnings are present" || bad "strict exit" "rc=$RC $OUT"
+
+# ---------------------------------------------------------------------------
+# wf sprint prune — drop ONE increment's tasks from the cumulative file
+# ---------------------------------------------------------------------------
+# A slice re-cut invalidates the increment it re-cuts and nothing else: every other
+# increment's entries are the sprint's merge record and survive byte-for-byte.
+
+STATE="$PROJ/.wf/transient/pipeline-state.yaml"
+EXPECT="$PROJ/expected-sprint.yaml"
+write_prune_sprint() { cat > "$SPRINT" <<'YAML'
+# sprint — cumulative across the sprint's increments; each Tech Lead appends.
+sprint_id: sprint-20260731-zones
+tasks:
+  - id: T1
+    increment: 1
+    depends_on: []
+    covers: [CAP-24]
+    story: |
+      Give the zone store a patch path — today Patch() ignores its argument, so nothing
+      downstream can update a stored zone. This task adds the partial-update write.
+    acceptance:
+      - id: AC-1
+        criterion: "When a patch names a field, the store writes only that field."
+        tests:
+          - {level: unit, target: "store/zones_test.go:TestPatchWritesNamedField"}
+    boundaries: |
+      Out of scope: the HTTP handler. Read-only: handlers/zones.go.
+    grounding:
+      - "store/zones.go:Patch — the stub this task replaces"
+
+  - id: T2
+    increment: 2
+    depends_on: [T1]
+    covers: [CAP-24]
+    story: |
+      Mount the patch on the HTTP surface and prove it end to end — the handler package
+      already mounts the read routes, so this adds the PATCH route.
+    boundaries: |
+      Out of scope: bulk patch. Read-only: store/zones.go.
+    grounding:
+      - "handlers/zones.go:Mount — the current mount point"
+    system_tests: [SYS-TC-1]
+YAML
+}
+# the file with increment 2's block cut out — what a prune of increment 2 must leave
+keep_through_t1() { "$PYTHON" - "$SPRINT" "$EXPECT" <<'PY'
+import sys
+src, dest = sys.argv[1], sys.argv[2]
+open(dest, 'w').write(open(src).read().split("  - id: T2")[0])
+PY
+}
+
+write_prune_sprint; rm -f "$STATE"; keep_through_t1
+OUT="$(wf sprint prune --increment 2 --format json)"; RC=$?
+[ "$RC" -eq 0 ] && ok "prune: exits 0" || bad "prune exit" "rc=$RC $OUT"
+[ "$(jget "$OUT" "d['verdict']")" = "pass" ] && ok "prune: verdict pass" || bad "prune verdict" "$OUT"
+[ "$(jget "$OUT" "d['pruned']")" = "['T2']" ] && ok "prune: reports the task ids it removed" || bad "prune ids" "$OUT"
+cmp -s "$SPRINT" "$EXPECT" \
+  && ok "prune: every other increment's entry survives byte-for-byte" || bad "prune bytes" "$(diff "$EXPECT" "$SPRINT")"
+[ "$(yget "$SPRINT" "[t['id'] for t in d['tasks']]")" = "['T1']" ] \
+  && ok "prune: the re-cut increment's task is gone" || bad "prune left" "$(cat "$SPRINT")"
+head -1 "$SPRINT" | grep -q "^# sprint — cumulative" \
+  && ok "prune: the file's comments and unicode survive (L-106)" || bad "prune comments" "$(head -1 "$SPRINT")"
+
+# the pruned tasks' run state goes with them — the state keys by id sprint-wide, so a
+# re-cut id that kept its entry would come back pre-completed
+write_prune_sprint
+cat > "$STATE" <<'YAML'
+task_states:
+  T1: {status: building, attempt_counter: 1}
+  T2: {status: approved, build_commit: bbb1111, attempt_counter: 2}
+YAML
+OUT="$(wf sprint prune --increment 2 --format json)"; RC=$?
+[ "$RC" -eq 0 ] && ok "prune: exits 0 with a live run state" || bad "prune state exit" "rc=$RC $OUT"
+[ "$(yget "$STATE" "sorted(d['task_states'])")" = "['T1']" ] \
+  && ok "prune: the re-cut task's run state is dropped with its contract" || bad "prune state" "$(cat "$STATE")"
+[ "$(yget "$STATE" "d['task_states']['T1']['attempt_counter']")" = "1" ] \
+  && ok "prune: a surviving task's run state is untouched" || bad "prune state keep" "$(cat "$STATE")"
+[ "$(jget "$OUT" "d['task_states_pruned']")" = "['T2']" ] \
+  && ok "prune: reports the run-state entries it dropped" || bad "prune state report" "$OUT"
+
+# a merged increment is a fact: refuse, and mutate nothing
+write_prune_sprint
+cat > "$STATE" <<'YAML'
+task_states:
+  T1: {status: completed, build_commit: abc1234, merge_commit: def5678}
+  T2: {status: building}
+YAML
+BEFORE="$(cat "$SPRINT")"; BEFORE_STATE="$(cat "$STATE")"
+OUT="$(wf sprint prune --increment 1 --format json)"; RC=$?
+[ "$RC" -eq 1 ] && ok "prune: a merged increment → exit 1" || bad "prune merged exit" "rc=$RC $OUT"
+[ "$(jget "$OUT" "d['verdict']")" = "fail" ] && ok "prune: a merged increment verdict fail" || bad "prune merged verdict" "$OUT"
+[ "$(jget "$OUT" "any('T1' in e for e in d['errors'])")" = "True" ] \
+  && ok "prune: the refusal names the merged task" || bad "prune merged msg" "$OUT"
+[ "$BEFORE" = "$(cat "$SPRINT")" ] && ok "prune: a refusal leaves the sprint untouched" || bad "prune merged sprint" "changed"
+[ "$BEFORE_STATE" = "$(cat "$STATE")" ] && ok "prune: a refusal leaves the run state untouched" || bad "prune merged state" "changed"
+
+# completed with no merge commit recorded is the same fact
+write_prune_sprint
+cat > "$STATE" <<'YAML'
+task_states:
+  T2: {status: completed, build_commit: bbb1111}
+YAML
+OUT="$(wf sprint prune --increment 2 --format json)"; RC=$?
+[ "$RC" -eq 1 ] && ok "prune: a completed task refuses the prune too" || bad "prune completed" "rc=$RC $OUT"
+
+# an increment with no tasks: a clean no-op, and no rewrite (L-106)
+write_prune_sprint; rm -f "$STATE"
+BEFORE_MTIME="$(stat -c %Y "$SPRINT")"
+sleep 1
+OUT="$(wf sprint prune --increment 3 --format json)"; RC=$?
+[ "$RC" -eq 0 ] && [ "$(jget "$OUT" "d['pruned']")" = "[]" ] \
+  && ok "prune: an increment with no tasks is a clean no-op" || bad "prune noop" "rc=$RC $OUT"
+[ "$BEFORE_MTIME" = "$(stat -c %Y "$SPRINT")" ] \
+  && ok "prune: a no-op does not rewrite the file (L-106)" || bad "prune noop write" "mtime moved"
+
+# draining every increment leaves an empty-but-valid file, header intact
+write_prune_sprint; rm -f "$STATE"
+wf sprint prune --increment 1 >/dev/null; wf sprint prune --increment 2 >/dev/null
+[ "$(yget "$SPRINT" "d.get('tasks') or []")" = "[]" ] \
+  && ok "prune: draining every task leaves an empty-but-valid sprint file" || bad "prune empty" "$(cat "$SPRINT")"
+[ "$(yget "$SPRINT" "d['sprint_id']")" = "sprint-20260731-zones" ] \
+  && ok "prune: the sprint header survives an emptied task list" || bad "prune header" "$(cat "$SPRINT")"
+
+# no sprint file at all (a re-cut before any Tech Lead wrote contracts) is a no-op
+rm -f "$SPRINT"
+OUT="$(wf sprint prune --increment 1 --format json)"; RC=$?
+[ "$RC" -eq 0 ] && [ "$(jget "$OUT" "d['pruned']")" = "[]" ] \
+  && ok "prune: no sprint file on disk is a clean no-op" || bad "prune nofile" "rc=$RC $OUT"
 
 echo ""
 echo "  sprint: $pass passed, $fail failed"

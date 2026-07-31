@@ -171,9 +171,11 @@ def resolve_issues(cfg, fix_kind="contract_amendment"):
     return effect
 
 
-def raise_design_issue(cfg, di_id="DI-9", task_id=None, summary="cannot be built"):
+def raise_design_issue(cfg, di_id="DI-9", task_id=None, summary="cannot be built",
+                       **fields):
     """The side effect a role that rejects its input leaves: an open entry in the host
-    design-issues file."""
+    design-issues file. ``fields`` carries the rest of the entry (e.g. the ``increment``
+    a Tech Lead's slice rejection names)."""
     import yaml
 
     def effect(agents, role, params, task_id_arg):
@@ -183,7 +185,7 @@ def raise_design_issue(cfg, di_id="DI-9", task_id=None, summary="cannot be built
         doc = doc or {}
         doc.setdefault("issues", []).append(
             {"id": di_id, "task_id": task_id, "severity": "high", "status": "open",
-             "summary": summary})
+             "summary": summary, **fields})
         path.write_text(yaml.safe_dump(doc, sort_keys=False))
     return effect
 

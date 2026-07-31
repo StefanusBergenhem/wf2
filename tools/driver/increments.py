@@ -91,11 +91,7 @@ def prepare_contracts(rt, number) -> None:
         if item:
             slice_scoped = issues.is_slice_scoped(item)
             if slice_scoped:
-                # the contracts were decomposed from a cut the design role is about to
-                # replace; leaving them on disk ships the rejected increment's tasks
-                sprint_path = rt.cfg.path_opt("sprint")
-                if sprint_path and sprint_path.exists():
-                    sprint_path.unlink()
+                _prune_recut(rt, item, number)
             issues.repair(rt, item)
             needs_tl = slice_scoped or not _has_increment(rt, number)
             continue
@@ -109,6 +105,30 @@ def prepare_contracts(rt, number) -> None:
         item = _first_open_issue(rt)
         issues.repair(rt, item)
     raise Halt("contracts_not_ready", f"increment {number} never reached a green gate")
+
+
+def _prune_recut(rt, item, number) -> None:
+    """Drop the contracts a slice re-cut invalidates: the increment the design issue
+    names, or — when it names none — every increment the sprint has not merged. The
+    merged ones stay on disk; their tasks are the merge record the sprint closes on,
+    and `sprint prune` refuses them anyway."""
+    sprint_path = rt.cfg.path_opt("sprint")
+    if not sprint_path or not sprint_path.exists():
+        return
+    named = item.get("increment")
+    targets = [named] if named is not None else _unmerged_increments(rt, number)
+    for target in targets:
+        rt.cli.mutate("sprint", "prune", "--increment", str(target))
+
+
+def _unmerged_increments(rt, number) -> list:
+    """Every increment the sprint declares whose tasks have not all merged. Falls back
+    to the increment in hand when the frontier cannot be read."""
+    res = rt.cli.read("pipeline", "increments")
+    if not res.ok:
+        return [number]
+    return [entry.get("increment") for entry in (res.data.get("increments") or [])
+            if not entry.get("done")] or [number]
 
 
 def _has_increment(rt, number) -> bool:

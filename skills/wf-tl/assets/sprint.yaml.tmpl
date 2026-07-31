@@ -1,9 +1,10 @@
-# SPRINT — one increment's task DAG, executed by the driver. TRANSIENT.
+# SPRINT — the sprint's task DAG, executed by the driver. TRANSIENT.
 #
-# Written by wf-tl when its increment's turn comes; gitignored; consumed directly by the
-# build pipeline. Not hand-maintained, not committed. One inline contract per task; see
+# Written by wf-tl when its increment's turn comes, and APPENDED to by each later
+# increment's run; gitignored; consumed directly by the build pipeline. Not
+# hand-maintained, not committed. One inline contract per task; see
 # references/task-contract.md for the field rules. Author the fields below only —
-# `wf sprint materialize` inlines the increment narrative and the SYS-TC scenario text.
+# `wf sprint materialize` inlines each `system_tests` entry's SYS-TC scenario text.
 
 tasks:
   - id: T1

@@ -70,8 +70,8 @@ paths:
   design_slice: ".wf/transient/design-slice.md"   # The sprint's design: serves header, narrative, claimed scope, ordered increments, SYS-TC cases, supersessions, soundness verdicts, decision log. Read by the TL and by every task envelope; drained at complete-sprint. Transient.
   drain_report: ".wf/transient/drain-report.yaml" # complete-sprint appends what each closed sprint served, drained, and left for the adequacy gate; the ship step folds it into the PR body. Transient.
   decision_prep: ".wf/transient/decision-prep.md" # A decision the design role could not take autonomously (ADR threshold, capability recast, shipped-scenario supersession, charter contradiction). The design role writes the brief, the options, and its recommendation; the driver pauses; a wf-sa session records the ruling in the same file; the design role's resume mode consumes it and deletes the file. Transient.
-  drill_cache: ".wf/transient/drill-cache"        # Shared scout digests — wf-drill and wf-adequacy write here (an adequacy digest is `adequacy-<CAP-id>-<utc>.md`, which `pipeline drain-capability` reads as the drain verdict). Transient dir.
-  sprint: ".wf/transient/sprint.yaml"             # The increment's task contracts (story / acceptance / boundaries / grounding), authored per increment by wf-tl. Transient.
+  drill_cache: ".wf/transient/drill-cache"        # Shared scout digests — wf-drill and wf-adequacy write here (an adequacy digest is `adequacy-<CAP-id>-<full-promise|iteration-claim>-<utc>.md`; `pipeline drain-capability` reads the newest `full-promise` one as the drain verdict). Transient dir.
+  sprint: ".wf/transient/sprint.yaml"             # The sprint's cumulative task contracts (story / acceptance / boundaries / grounding), appended one increment at a time by wf-tl. Transient.
 
   # Maintainer research archive (committed). WRITE-ONLY: the drain sites snapshot each
   # artifact here as it leaves the working set (capabilities on an adequate verdict;

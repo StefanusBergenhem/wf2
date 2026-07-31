@@ -97,20 +97,11 @@ def _sprint_graph(sprint):
     return tasks, ids, deps_of
 
 
-def _increment_key(value):
-    """Sort key over increment labels: numbers first, in numeric order, then any
-    non-numeric label alphabetically — so increment 10 follows 9, not 1."""
-    n = _as_increment(value)
-    if n is None:
-        return (-1, 0, "")
-    return (0, n, "") if isinstance(n, int) else (1, 0, str(n))
-
-
 def _declared_increments(sprint):
     """The increment labels the sprint's tasks declare, in build order."""
     numbers = {t.get("increment") for t in (sprint.get("tasks") or [])
                if isinstance(t, dict) and t.get("increment") is not None}
-    return sorted(numbers, key=_increment_key)
+    return sorted(numbers, key=slice_checks.increment_key)
 
 
 def _layer_stages(ids, deps_of, completed, excluded):
@@ -379,7 +370,7 @@ def _next(rest):
     increment_done = stage_done and cur >= total
     increment = stages.get("increment")
     later = [n for n in _declared_increments(sprint)
-             if _increment_key(n) > _increment_key(increment)]
+             if slice_checks.increment_key(n) > slice_checks.increment_key(increment)]
     sprint_done = increment_done and not later
 
     out = {
@@ -442,6 +433,30 @@ def _write_yaml(path: Path, doc) -> None:
 
 def _save_state(args, doc) -> None:
     _write_yaml(_state_path(args), doc)
+
+
+def merged_task_ids(args, ids) -> list:
+    """The subset of ``ids`` the run state records as merged: ``complete-task`` stamps the
+    merge commit, and the completed status is that same fact. A merged task's contract is
+    the sprint's merge record — nothing may drop it."""
+    states = _load_state(args).get("task_states") or {}
+    return [tid for tid in ids
+            if isinstance(states.get(tid), dict)
+            and (states[tid].get("merge_commit") or states[tid].get("status") in _COMPLETED)]
+
+
+def drop_task_states(args, ids) -> list:
+    """Remove ``ids`` from ``task_states``; returns the ids removed. A task whose contract
+    is pruned loses its state with it — the run state keys by id sprint-wide, so a re-cut
+    id inheriting the old entry would come back pre-completed."""
+    doc = _load_state(args)
+    states = doc.get("task_states") or {}
+    dropped = [tid for tid in ids if tid in states]
+    if dropped:
+        for tid in dropped:
+            del states[tid]
+        _save_state(args, doc)
+    return dropped
 
 
 def _current_phase(rest):
@@ -550,13 +565,22 @@ def _transition(rest):
     """Advance the macro-phase pointer (current_phase) and append it to history. The
     phase is a resume/observability breadcrumb only — `next` never consults it — so this
     is an unguarded write: the controller is the sole writer and stamps the phase it is
-    entering."""
+    entering.
+
+    ``--sprint-id`` stamps whose sprint this run state belongs to (the driver passes it
+    when it opens one). Without it `next` falls back to the sprint file's own id, and a
+    worktree is then named for a sprint the driver is not running. Omitting the flag
+    leaves an already-recorded id alone."""
     p = common.base_parser("pipeline transition")
     p.add_argument("--to", dest="to_phase", required=True)
     p.add_argument("--reason")
+    p.add_argument("--sprint-id", dest="sprint_id",
+                   help="record the sprint this run state belongs to")
     args = p.parse_args(rest)
 
     doc = _load_state(args)
+    if args.sprint_id:
+        doc["sprint_id"] = args.sprint_id
     doc["current_phase"] = args.to_phase
     doc["last_transition"] = {"to": args.to_phase, "timestamp": _now(), "reason": args.reason}
     entry = {"ts": _now(), "event": "transition", "to_phase": args.to_phase}
@@ -981,6 +1005,10 @@ _DRIVER_ID_RE = re.compile(r"\b(?:CAP|L)-\d+\b")
 _LIST_ITEM_RE = re.compile(r"^(\s*)-\s")
 _ENTRY_ID_RE = re.compile(r"^\s*(?:-\s+)?id:\s*[\"']?([\w.-]+)")
 _ADEQUACY_HEAD_RE = re.compile(r"^#\s*Adequacy:\s*(CAP-\d+)\s*[—\-–:]+\s*(\w+)", re.MULTILINE)
+_QUESTION_LINE_RE = re.compile(r"^\*\*Question:\*\*\s*(.*)$", re.MULTILINE)
+# The two questions wf-adequacy stamps into a digest filename.
+_FULL_PROMISE = "full-promise"
+_ITERATION_CLAIM = "iteration-claim"
 
 
 def _covers_of(task):
@@ -1045,8 +1073,8 @@ def _drop_yaml_entries(text, ids):
     return "".join(out), dropped
 
 
-def _drain_entries(path, ids):
-    """Drop ``ids`` from a durable list file in place; returns the ids actually removed.
+def drop_entries(path, ids):
+    """Drop ``ids`` from a YAML list file in place; returns the ids actually removed.
     A no-op leaves the file untouched (L-106)."""
     text = path.read_text()
     new_text, dropped = _drop_yaml_entries(text, set(ids))
@@ -1122,7 +1150,7 @@ def _drain_working_set(args, doc, sprint_doc, paths):
             })
     if drained_learnings and paths.get("learnings"):
         lp = common.resolve_path(args.config, "learnings", None)
-        drained_learnings = _drain_entries(lp, drained_learnings) if lp.exists() else []
+        drained_learnings = drop_entries(lp, drained_learnings) if lp.exists() else []
 
     # Capabilities never drain on the merge record: the close-time adequacy review is
     # the only thing that can. They leave here as candidates, with the scenarios this
@@ -1157,18 +1185,27 @@ def _drain_capability(rest):
     """Drain one capability on a close-time adequacy verdict. The verdict is READ FROM
     THE DIGEST wf-adequacy left on disk — never from an agent's prose — and only
     ``adequate`` drains: the capability is snapshotted into paths.archive and removed
-    from paths.capabilities. Any other verdict mutates nothing and exits 1."""
+    from paths.capabilities. Any other verdict mutates nothing and exits 1.
+
+    Only a FULL-PROMISE digest can drain. An iteration-claim review judges one slice's
+    claim, so it can never answer whether the whole promise is covered; consuming one
+    here would drain a capability on a question nobody asked."""
     p = common.base_parser("pipeline drain-capability")
     p.add_argument("capability")
     p.add_argument("--verdict", help="path to the adequacy digest (default: the newest "
-                                     "adequacy-<cap>-*.md under paths.drill_cache)")
+                                     "adequacy-<cap>-full-promise-*.md under "
+                                     "paths.drill_cache)")
     args = p.parse_args(rest)
 
     path = Path(args.verdict) if args.verdict else _newest_adequacy_digest(args)
     if path is None or not path.is_file():
-        common.die(f"no adequacy digest for {args.capability}"
+        common.die(f"no full-promise adequacy digest for {args.capability}"
                    + (f" at {path}" if path else " under paths.drill_cache"))
-    head = _ADEQUACY_HEAD_RE.search(path.read_text(errors="replace"))
+    text = path.read_text(errors="replace")
+    if _is_iteration_claim(path, text):
+        common.die(f"{path} answers the iteration-claim question — only a full-promise "
+                   f"review can drain {args.capability}")
+    head = _ADEQUACY_HEAD_RE.search(text)
     if not head:
         common.die(f"{path} carries no '# Adequacy: <CAP-id> — <verdict>' heading")
     reviewed, verdict = head.group(1), head.group(2).lower()
@@ -1188,7 +1225,7 @@ def _drain_capability(rest):
     if paths.get("archive"):
         root = common.resolve_path(args.config, "archive", None)
         result["archived"] = str(archive.snapshot(root, "capabilities", cap_path, move=False))
-    dropped = _drain_entries(cap_path, [args.capability])
+    dropped = drop_entries(cap_path, [args.capability])
     if not dropped:
         common.die(f"{args.capability} is not open in {cap_path}")
     result["drained"] = True
@@ -1197,14 +1234,26 @@ def _drain_capability(rest):
 
 
 def _newest_adequacy_digest(args):
-    """The most recent ``adequacy-<cap>-<utc>.md`` under paths.drill_cache — the
-    stamped filename orders them, so the latest review wins."""
+    """The most recent ``adequacy-<cap>-full-promise-<utc>.md`` under paths.drill_cache
+    — the stamped filename orders them, so the latest full-promise review wins. An
+    iteration-claim digest is never a candidate, however recent it is."""
     rel = (common.config_doc(args.config).get("paths") or {}).get("drill_cache")
     if not rel:
         return None
     cache = (common.project_root(args.config) / rel).resolve()
-    hits = sorted(cache.glob(f"adequacy-{args.capability}-*.md")) if cache.is_dir() else []
+    pattern = f"adequacy-{args.capability}-{_FULL_PROMISE}-*.md"
+    hits = sorted(cache.glob(pattern)) if cache.is_dir() else []
     return hits[-1] if hits else None
+
+
+def _is_iteration_claim(path, text):
+    """True when the digest itself says it answers the iteration-claim question —
+    named in the filename wf-adequacy stamps, or on its ``**Question:**`` line. Guards
+    the explicit ``--verdict`` path, which no filename glob filters."""
+    if _ITERATION_CLAIM in path.name:
+        return True
+    line = _QUESTION_LINE_RE.search(text)
+    return bool(line and "iteration" in line.group(1).lower())
 
 
 def _complete_sprint(rest):

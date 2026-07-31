@@ -49,7 +49,7 @@ def sprint_start(rt, resume: bool = False) -> None:
                mutating=True)
     rt.cli.mutate("pipeline", "reclaim-stale")
     rt.cli.mutate("pipeline", "transition", "--to", "preparing",
-                  "--reason", f"driver sprint {sprint_id}")
+                  "--reason", f"driver sprint {sprint_id}", "--sprint-id", sprint_id)
 
     rt.agents.launch("wf-discover", {"mode": "refresh"}, mode="refresh")
     brief = rt.cfg.path_opt("discover_brief")

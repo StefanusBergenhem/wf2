@@ -1,4 +1,10 @@
-"""wf sprint — read-side helpers over the increment's task contracts (sprint.yaml).
+"""wf sprint — read-side helpers over the sprint's task contracts (sprint.yaml).
+
+The file is CUMULATIVE across the sprint: each increment's Tech Lead appends its
+tasks (every task carries its ``increment:``) to what earlier increments left, so
+the merge record at sprint close sees the whole sprint. ``sprint check`` therefore
+validates the whole file; only ``pipeline compute-stages --increment N`` scopes to
+one increment.
 
 ``sprint task`` builds ONE task's build envelope in the worktree: the increment's
 slice section (the stage narrative), then story → acceptance → boundaries →
@@ -9,6 +15,10 @@ field the build agent cannot act on is pure context cost.
 the TL authors bare ids and this fills in the scenario and its covered
 capabilities, so mechanical copying stays out of the LLM's output budget.
 Idempotent; re-run after any sprint edit, before ``sprint check``.
+
+``sprint prune --increment N`` removes ONE increment's tasks (and their run state)
+after a slice re-cut invalidated them. Every other increment's entries stay
+byte-for-byte, and an increment whose tasks already merged is refused.
 
 ``sprint check`` is the contract gate: a mechanical linter over the four-section
 contract schema (story / acceptance / boundaries / grounding) and the task DAG.
@@ -21,6 +31,7 @@ import re
 from pathlib import Path, PurePosixPath
 
 import common
+import pipeline
 import slice as slice_checks
 
 _DRIVER_ID_RE = re.compile(r"\b(?:CAP|L)-\d+\b")
@@ -377,6 +388,52 @@ def _materialize(rest):
 
 
 # ---------------------------------------------------------------------------
+# sprint prune — drop one increment's tasks
+# ---------------------------------------------------------------------------
+
+
+def _prune(rest):
+    """Remove one increment's tasks from the cumulative file, and their entries from
+    the run state. The tasks are edited out as TEXT: every other increment's entry
+    (and the file's comments and unicode) survives byte-for-byte, and a no-op writes
+    nothing (L-106)."""
+    p = common.base_parser("sprint prune")
+    p.add_argument("--increment", required=True,
+                   help="the increment whose tasks a re-cut invalidated")
+    args = p.parse_args(rest)
+
+    sprint_path = common.resolve_path(args.config, "sprint", None)
+    sprint = common.load_yaml(sprint_path, optional=True)
+    tasks = [t for t in (sprint.get("tasks") or []) if isinstance(t, dict) and t.get("id")]
+    key = slice_checks.increment_key(args.increment)
+    victims = [t["id"] for t in tasks
+               if slice_checks.increment_key(t.get("increment")) == key]
+
+    merged = pipeline.merged_task_ids(args, victims)
+    if merged:
+        common.emit({
+            "sprint_id": sprint.get("sprint_id"),
+            "increment": args.increment,
+            "errors": [f"{tid} has already merged — increment {args.increment} is part of "
+                       f"the sprint's merge record and its tasks are never pruned"
+                       for tid in merged],
+            "verdict": "fail",
+        }, args.format)
+        return 1
+
+    pruned = pipeline.drop_entries(sprint_path, victims) if victims else []
+    common.emit({
+        "sprint_id": sprint.get("sprint_id"),
+        "increment": args.increment,
+        "pruned": pruned,
+        "task_states_pruned": pipeline.drop_task_states(args, pruned),
+        "tasks": len(tasks) - len(pruned),
+        "verdict": "pass",
+    }, args.format)
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # sprint check — the contract gate
 # ---------------------------------------------------------------------------
 
@@ -405,6 +462,42 @@ def _target_key(target):
     if not sep:
         return ("", token)
     return (str(PurePosixPath(path_part).parent) if "/" in path_part else "", name)
+
+
+def _cumulative_findings(tasks):
+    """C17: the sprint file accumulates every increment's tasks in build order — each
+    increment's Tech Lead appends. A reused task id (pipeline_state keys task state by
+    id sprint-wide, so the second one returns pre-completed), an increment block
+    positioned after a later increment's, or a task block absorbed into the previous
+    task's grounding list is a broken append over already-merged work."""
+    out, seen, highest = [], set(), None
+    for t in tasks:
+        tid = t.get("id")
+        for item in (t.get("grounding") or []):
+            if not isinstance(item, dict):
+                continue
+            stray = sorted(k for k in item if k != "dependency_commits")
+            if stray:
+                out.append(f"{tid}: grounding carries a mapping with {stray} — a task "
+                           f"block absorbed into this task's list; append at the same "
+                           f"indentation the file already uses")
+        if tid is not None:
+            if tid in seen:
+                out.append(f"task id '{tid}' is used more than once — the sprint file "
+                           f"carries every increment's tasks and the run state keys them "
+                           f"by id, so a reused id returns pre-completed; give the task a "
+                           f"fresh id")
+            seen.add(tid)
+        number = t.get("increment")
+        if number is None:
+            continue
+        key = slice_checks.increment_key(number)
+        if highest is not None and key < highest:
+            out.append(f"{tid}: increment {number} is positioned after a later increment's "
+                       f"tasks — append your increment's tasks at the end and leave earlier "
+                       f"increments' entries exactly where they are")
+        highest = max(key, highest) if highest is not None else key
+    return out
 
 
 def _known_driver_ids(config):
@@ -584,6 +677,10 @@ def _check(rest):
             err("C13", f"tasks {distinct} all target '{name}' {where} — give each contract "
                        f"its own test name")
 
+    # C17 — the file is cumulative: appended to per increment, never rewritten
+    for msg in _cumulative_findings(tasks):
+        err("C17", msg)
+
     # C14 — the sizing backstop: an over-cap increment is a slice defect, not a big TL run
     for number, ids in sorted(by_increment.items(), key=lambda kv: str(kv[0])):
         if len(ids) > task_cap:
@@ -611,8 +708,6 @@ def _check(rest):
         for tc in sorted(slice_tcs - systc_ids):
             msg = f"slice {tc} has no e2e task carrying it"
             (err if decomposed else warn)("A2", msg)
-        for msg in slice_checks.unconfirmed_assumptions(text):
-            err("A3", msg)
     else:
         warn("A0", "slice not found; ran contract checks only")
 
@@ -660,5 +755,6 @@ def _has_cycle(tasks):
 COMMANDS = {
     ("sprint", "task"): _task,
     ("sprint", "materialize"): _materialize,
+    ("sprint", "prune"): _prune,
     ("sprint", "check"): _check,
 }

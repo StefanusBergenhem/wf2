@@ -261,33 +261,16 @@ OUT="$(wf slice check --format json)"
 [ "$(has "$OUT" A10)" = "True" ] && ok "A10 flags a Covers line naming no CAP" || bad "A10-bare" "$OUT"
 
 # ---------------------------------------------------------------------------
-# Assumptions (A3)
+# --slice override wins over config
 # ---------------------------------------------------------------------------
 
-write_slice
-cat >> "$SLICE" <<'MD'
-
-## Assumptions requiring confirmation
-
-- **A-1 · CONFIRMED** — CAP-24 read as zone-per-site, not zone-per-tenant.
-MD
-OUT="$(wf slice check --format json)"; RC=$?
-[ "$RC" -eq 0 ] && ok "confirmed-only assumptions exit 0" || bad "confirmed exit" "rc=$RC $OUT"
-
-cat >> "$SLICE" <<'MD'
-- **A-2 · UNCONFIRMED** — "patched" read as partial update only.
-MD
-OUT="$(wf slice check --format json)"; RC=$?
-[ "$RC" -eq 1 ] && ok "unconfirmed exits 1" || bad "unconfirmed exit" "rc=$RC $OUT"
-[ "$(has "$OUT" A3)" = "True" ] && ok "finding code A3" || bad "A3 code" "$OUT"
-[ "$(jget "$OUT" "any('A-2' in f['msg'] for f in d['errors'])")" = "True" ] && ok "names the assumption id" || bad "A3 id" "$OUT"
-
-# --slice override wins over config
 ALT="$PROJ/alt-slice.md"
-printf '## Assumptions requiring confirmation\n\n- **A-9 · UNCONFIRMED** — x.\n' > "$ALT"
+printf '# alt slice\n\nNothing a check needs.\n' > "$ALT"
 write_slice
 OUT="$(wf slice check --slice "$ALT" --format json)"; RC=$?
 [ "$RC" -eq 1 ] && ok "--slice override is checked" || bad "--slice override" "rc=$RC $OUT"
+[ "$(has "$OUT" A6)" = "True" ] \
+  && ok "--slice override: the findings come from the named file" || bad "--slice findings" "$OUT"
 
 # ---------------------------------------------------------------------------
 # ADR citations (A4/A5) — resolved against every ADR set in the tree

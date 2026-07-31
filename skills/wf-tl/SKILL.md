@@ -81,13 +81,18 @@ parallel worktrees and merge together, so:
 
 ## Phase 4 — Write and gate
 
-1. Write `paths.sprint` from `assets/sprint.yaml.tmpl`, holding **only this increment's
-   tasks**, each with `increment:` set to your increment number. Earlier increments' tasks
-   are merged facts — never carry them forward, never renumber them. The file is transient
-   and gitignored; there is nothing to commit.
-2. **Run `python3 <paths.tools>/cli/wf sprint materialize`** — it inlines the increment's
-   narrative into every task envelope and each `system_tests` entry's scenario text. Re-run
-   it after **every** later edit to the file.
+1. **Gate: `paths.sprint` accumulates the whole sprint. When the file already exists,
+   APPEND your tasks at the end of its `tasks:` list — at the indentation that file
+   already uses — and leave every entry above them byte-for-byte as it is.** Those entries
+   are earlier increments' merge record: rewriting, reordering, renumbering or dropping one
+   erases what it shipped from the close-time drain, and one indent level too deep folds
+   your whole task into the previous task's list. Write the file from
+   `assets/sprint.yaml.tmpl` only when it is absent. Give every task you add `increment:`
+   set to your increment number and an id no earlier increment already used. The file is
+   transient and gitignored; there is nothing to commit.
+2. **Run `python3 <paths.tools>/cli/wf sprint materialize`** — it inlines each
+   `system_tests` entry's scenario text from the slice. Re-run it after **every** later
+   edit to the file.
 3. **Gate: run `python3 <paths.tools>/cli/wf sprint check`. Do not return until it reports
    `verdict: pass` (exit 0).** On an error finding, fix the decomposition, re-run
    materialize, and re-run the check. Read its warnings too. A finding you cannot resolve

@@ -60,9 +60,9 @@ file, run:
 python3 <paths.tools>/cli/wf sprint materialize
 ```
 
-It inlines the increment's narrative into each task envelope and each `system_tests`
-entry's scenario text. Never write those by hand and never paraphrase a scenario — hand
-copies drift, and `wf sprint check` fails a sprint the materializer has not filled.
+It inlines each `system_tests` entry's scenario text. Never write one by hand and never
+paraphrase a scenario — hand copies drift, and `wf sprint check` fails a sprint the
+materializer has not filled.
 
 ## Story
 
