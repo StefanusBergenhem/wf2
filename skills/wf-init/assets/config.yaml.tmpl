@@ -122,6 +122,19 @@ driver:
                               # Set to 1 during bring-up: one sprint per invocation.
   stop_file: ".wf/transient/STOP"  # driver: manual stop — when this file appears, finish
                                    # the current sprint cleanly, ship it, and exit.
+  state_file: ".wf/transient/driver-state.yaml"  # driver: its own position across
+                              # sprints (phase, sprint id/branch, increment, stop
+                              # reason) — what a restarted driver resumes from.
+                              # Transient: the pipeline state and git hold the rest.
+  review_state_cmd: "gh pr view {branch} --json reviewDecision --jq .reviewDecision"
+                              # driver: read a stacked sprint PR's review state at each
+                              # increment boundary; {branch} is substituted. Output
+                              # containing CHANGES_REQUESTED stops the loop after the
+                              # sprint in flight ships. Empty skips the check.
+  agent_timeout_s: 7200       # driver: hard bound on ONE role dispatch. Never a harness
+                              # default — an unbounded wait strands the whole loop (L-090).
+  command_timeout_s: 3600     # driver: hard bound on a project command it shells out to
+                              # (commands.stage_check, driver.review_state_cmd).
 
 limits:
   increments_per_sprint: 4    # `slice check` errors above this — a sprint that big is not one iteration.

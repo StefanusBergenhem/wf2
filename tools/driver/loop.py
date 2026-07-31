@@ -1,0 +1,99 @@
+"""The continuous loop — one invocation, sprint after sprint.
+
+Between sprints the stop rules decide whether another one starts. Inside a sprint
+the phase machine runs to ship. Every position is on disk, so an interrupted run
+resumes exactly where it stopped instead of starting over.
+"""
+from __future__ import annotations
+
+import cliverbs
+import config as driver_config
+import dispatch
+import events
+import gitops
+import increments
+import phases
+import state as driver_state
+import stoprules
+from runtime import Halt, Pause, Runtime
+
+
+def build_runtime(config_path: str, dry_run: bool = False) -> Runtime:
+    cfg = driver_config.load(config_path)
+    tele = events.Telemetry(cfg, dry_run=dry_run)
+    return Runtime(
+        cfg=cfg,
+        state=driver_state.load(cfg),
+        tele=tele,
+        cli=cliverbs.Cli(cfg, dry_run=dry_run),
+        git=gitops.Git(cfg, dry_run=dry_run),
+        agents=dispatch.Dispatcher(cfg, tele, dry_run=dry_run),
+        dry_run=dry_run,
+    )
+
+
+def run(config_path: str, *, once: bool = False, dry_run: bool = False,
+        max_sprints=None) -> int:
+    return run_loop(build_runtime(config_path, dry_run=dry_run), once=once,
+                    max_sprints=max_sprints)
+
+
+def run_loop(rt, *, once: bool = False, max_sprints=None) -> int:
+    """Returns a process exit code: 0 for a clean stop, 1 for a halt."""
+    shipped = 0
+    while True:
+        if rt.state.sprint_id is None:
+            stop = stoprules.pre_sprint(rt.cfg, rt.git)
+            if stop:
+                return _stop(rt, stop.reason, stop.detail)
+        try:
+            run_sprint(rt)
+        except Pause as pause:
+            return _stop(rt, pause.reason, pause.detail)
+        except Halt as halt:
+            rt.state.stop_reason = halt.reason
+            rt.state.save()
+            rt.tele.event("halt", reason=halt.reason, detail=halt.detail,
+                          sprint_id=rt.state.sprint_id)
+            rt.log(f"HALT {halt.reason}: {halt.detail}")
+            return 1
+
+        shipped += 1
+        if rt.state.stop_pending:
+            reason = rt.state.stop_pending
+            rt.state.stop_pending = None
+            return _stop(rt, reason, "the sprint in flight was finished and shipped")
+        if once or (max_sprints and shipped >= max_sprints):
+            return _stop(rt, "sprint_limit", f"{shipped} sprint(s) this invocation")
+
+
+def run_sprint(rt) -> None:
+    """One iteration of the loop, entered at whatever phase the state names."""
+    if rt.state.phase == "awaiting_ruling":
+        phases.resume_ruling(rt)
+    if rt.state.phase in ("sprint_start", "stopped"):
+        phases.sprint_start(rt, resume=rt.state.sprint_id is not None)
+    if rt.state.phase == "designing":
+        phases.designing(rt)
+    if rt.state.phase == "increment_loop":
+        numbers = _increment_numbers(rt)
+        increments.run_increment_loop(rt, numbers)
+        rt.state.enter("closeout")
+    if rt.state.phase == "closeout":
+        phases.closeout(rt)
+
+
+def _increment_numbers(rt) -> list:
+    check = rt.cli.read("slice", "check")
+    if not check.ok:
+        raise Halt("slice_check_red",
+                   "the slice on disk no longer passes its gate — it cannot be built")
+    return [int(item["n"]) for item in (check.data.get("increments") or [])]
+
+
+def _stop(rt, reason: str, detail: str) -> int:
+    rt.state.stop_reason = reason
+    rt.state.save()
+    rt.tele.event("stop", reason=reason, detail=detail, sprint_id=rt.state.sprint_id)
+    rt.log(f"stop ({reason}): {detail}")
+    return 0
