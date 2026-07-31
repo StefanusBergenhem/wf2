@@ -23,8 +23,7 @@ Passing is the merge gate's job; whether the test is worth anything is the revie
 quality gate's job.
 
 Importers: register.py (the derived scenario register), retired.py (the
-superseded-id sweep), design_view/render_design.py (shipped-scenario context), and
-the wf CLI's complete-sprint superseded sweep.
+superseded-id sweep), and the wf CLI's complete-sprint superseded sweep.
 """
 import fnmatch
 import os

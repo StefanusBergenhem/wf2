@@ -4,14 +4,13 @@
 tree for `[SYS-TC:<id>]` tags — the durable proof-of-capability lane. What it reports
 is **derived from the tests, never stored** — there is no `done` flag to drift out of
 sync with the code. Its importers: `register.py` (the derived scenario register),
-`retired.py` (the superseded sweep), `design_view/render_design.py` (shipped context),
-and `wf pipeline complete-sprint` (the close-time superseded sweep).
+`retired.py` (the superseded sweep), and `wf pipeline complete-sprint` (the
+close-time superseded sweep).
 
-**Component requirements have no tag.** REQ ids are planning-time working state whose
-statements live in the transient chain (backlog → slice → contract) and die with it;
-"built" is derived from the **merge record** — `wf pipeline complete-sprint` trims each
-id from the design backlog when its covering task merged through the gate. A legacy
-`[REQ:...]` token in an older tree is inert; the harvester ignores it.
+**Component-level spec has no tag.** Acceptance criteria are planning-time working
+state that live in the transient chain (slice → task contract) and die with it;
+"built" is derived from the **merge record** at sprint close. A legacy `[REQ:...]`
+token in an older tree is inert; the harvester ignores it.
 
 ## The tag contract — what the build writer must satisfy
 

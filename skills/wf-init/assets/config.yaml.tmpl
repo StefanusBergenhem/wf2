@@ -4,7 +4,8 @@
 # or script — nothing speculative. The config grows one field at a time, as a new
 # skill needs it; it never carries a knob no code honors (the governor).
 #
-# Placeholder values (PROJECT_NAME, TARGET) are substituted by scaffold.sh at init time.
+# Placeholder values (PROJECT_NAME, TARGET, AGENT_CMD) are substituted by scaffold.sh at
+# init time.
 
 version: 1
 
@@ -49,7 +50,7 @@ paths:
   plan: ".wf/plan.md"                         # Rolling milestone plan — the one durable file the design role writes, revised at every sprint start and trimmed as milestones ship. Rides in every sprint PR. Committed.
 
   # Test-tree roots — every root the tag scanners sweep for [SYS-TC:] tags
-  # (register.py, retired.py, render_design.py, complete-sprint's superseded sweep). A
+  # (register.py, retired.py, complete-sprint's superseded sweep). A
   # LIST, because the "test tree" is not one dir in a polyglot repo: Go's tests sit beside
   # their source (so the root is the source root), while a TS app's live under its src, and
   # e2e in its own tree. Coverage is the union across the roots. wf-init captures the real
@@ -67,11 +68,8 @@ paths:
   # transient — cut fresh each sprint, consumed by the next role, drained at close.
   adrs: ".wf/adrs"                             # Durable architecture decision records. Committed dir, one .md per ADR.
   design_slice: ".wf/transient/design-slice.md"   # The sprint's design: serves header, narrative, claimed scope, ordered increments, SYS-TC cases, supersessions, soundness verdicts, decision log. Read by the TL and by every task envelope; drained at complete-sprint. Transient.
-  design_view: ".wf/transient/design-view.html"   # Interactive design diagram (render_design.py). Transient.
-  design_graph: ".wf/transient/design-graph.json" # The authored change-graph (the renderer's input); wf-tl reads it to plan against the change's shape. Transient.
-  domain_view: ".wf/transient/domain-view.html"   # Entity/domain-model diagram (render_design.py entity mode). Transient.
   drain_report: ".wf/transient/drain-report.yaml" # complete-sprint appends what each closed sprint served, drained, and left for the adequacy gate; the ship step folds it into the PR body. Transient.
-  decision_prep: ".wf/transient/decision-prep.md" # A decision the design role could not take autonomously (ADR threshold, capability recast, shipped-scenario supersession, charter contradiction): the brief, the options, the recommendation. The driver pauses; a wf-sa session rules; the design role resumes from the ruling. Transient.
+  decision_prep: ".wf/transient/decision-prep.md" # A decision the design role could not take autonomously (ADR threshold, capability recast, shipped-scenario supersession, charter contradiction). The design role writes the brief, the options, and its recommendation; the driver pauses; a wf-sa session records the ruling in the same file; the design role's resume mode consumes it and deletes the file. Transient.
   drill_cache: ".wf/transient/drill-cache"        # Shared scout digests — wf-drill and wf-adequacy write here (an adequacy digest is `adequacy-<CAP-id>-<utc>.md`, which `pipeline drain-capability` reads as the drain verdict). Transient dir.
   sprint: ".wf/transient/sprint.yaml"             # The increment's task contracts (story / acceptance / boundaries / grounding), authored per increment by wf-tl. Transient.
 
@@ -116,9 +114,8 @@ parallel:
 driver:
   # The loop program: it launches every role headlessly and routes on exit codes plus
   # artifacts on disk — never on an agent's prose.
-  agent_cmd: 'claude -p --dangerously-skip-permissions "{prompt}"'
-                              # driver: role launch template; {prompt} is substituted.
-                              # Per harness — opencode: `opencode run "{prompt}"`.
+  agent_cmd: '{{AGENT_CMD}}'  # driver: role launch template, rendered for this project's
+                              # harness at init; {prompt} is substituted at dispatch.
   max_parallel: 4             # driver: tasks dispatched concurrently within one sub-layer.
   max_unmerged_sprints: 3     # driver: stack-depth cap — pause when this many shipped
                               # sprint branches are still unmerged into base_branch.

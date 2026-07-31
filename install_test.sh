@@ -83,6 +83,19 @@ check "field absent → detected pi"   "[ -d '$P6/.pi/skills/wf-init' ]"
 echo "== rendered skills carry no tests =="
 check "no *_test.* shipped"          "! find '$P1/.claude/skills' -name '*_test.*' | grep -q ."
 
+echo "== toolkit machinery ships whole — every tool dir but the install-time render lib =="
+# Keyed on what the source tree holds, so a new tool dir (the driver) ships the moment it
+# exists, and ships the same way every other one does: code in, tests out.
+for tool_src in "$HERE"/tools/*/; do
+    tool_name="$(basename "$tool_src")"
+    [ "$tool_name" = "render" ] && continue
+    check "tools/$tool_name shipped"  "[ -d '$P1/.wf/tools/$tool_name' ]"
+done
+check "render lib NOT shipped"       "! [ -e '$P1/.wf/tools/render' ]"
+check "no tests/ dir in .wf/tools"   "! find '$P1/.wf/tools' -type d -name tests | grep -q ."
+check "no *_test.* in .wf/tools"     "! find '$P1/.wf/tools' -name '*_test.*' | grep -q ."
+check "cli entrypoint shipped"       "[ -f '$P1/.wf/tools/cli/wf' ]"
+
 echo "== claude install registers the telemetry usage hook =="
 SETTINGS="$P1/.claude/settings.json"
 check "hook script shipped into .wf/tools" "[ -f '$P1/.wf/tools/telemetry/claude_usage_hook.py' ]"

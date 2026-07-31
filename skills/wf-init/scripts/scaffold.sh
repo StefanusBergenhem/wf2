@@ -45,6 +45,15 @@ GITIGNORE="$DIR/.gitignore"
 
 mkdir -p "$WF_DIR"
 
+# The headless launch command the driver runs for every role, per harness. `{prompt}` is
+# the DRIVER's substitution — it must reach the config verbatim.
+case "$TARGET" in
+    claude)   AGENT_CMD='claude -p --dangerously-skip-permissions "{prompt}"' ;;
+    opencode) AGENT_CMD='opencode run "{prompt}"' ;;
+    # TODO: pi's headless invocation is unverified — confirm it before the first driver run.
+    pi)       AGENT_CMD='pi run "{prompt}"' ;;
+esac
+
 # Config: write once from the template. An existing config is the user's — never
 # overwrite it.
 if [ -f "$CONFIG" ]; then
@@ -52,6 +61,7 @@ if [ -f "$CONFIG" ]; then
 else
     sed -e "s|{{PROJECT_NAME}}|$NAME|g" \
         -e "s|{{TARGET}}|$TARGET|g" \
+        -e "s|{{AGENT_CMD}}|$AGENT_CMD|g" \
         "$TEMPLATE" > "$CONFIG"
     echo "  wrote $CONFIG"
 fi
@@ -92,9 +102,9 @@ fi
 
 # Durable homes the planning roles read/write. init is the setup wizard: it creates
 # every committed home here so no role faces a missing file. Each home is instantiated
-# from its OWNING skill's template (the single source of its shape) — a sibling-skill
-# reach stable in both the source and the rendered install layout. A home whose config
-# key is absent (a trimmed custom config) is simply skipped.
+# from the template that defines its shape — a sibling-skill reach stable in both the
+# source and the rendered install layout. A home whose config key is absent (a trimmed
+# custom config) is simply skipped.
 ADRS_REL="$(cfg_path adrs)"
 if [ -n "$ADRS_REL" ]; then
     if [ -d "$DIR/$ADRS_REL" ]; then
@@ -122,7 +132,8 @@ scaffold_home() {
     fi
 }
 scaffold_home capabilities    "../../wf-po/assets/capabilities.yaml.tmpl"            "capabilities home"
-scaffold_home design_backlog  "../../wf-sa/assets/design-backlog.md.tmpl"            "design-backlog home"
+scaffold_home charter         "../../wf-sa/assets/charter.md.tmpl"                            "charter home"
+scaffold_home plan            "../../wf-designer/assets/plan.md.tmpl"                               "plan home"
 scaffold_home learnings       "../../wf-retrospective/assets/learnings.yaml.tmpl"    "learnings home"
 scaffold_home wf_learnings    "../../wf-retrospective/assets/wf-learnings.yaml.tmpl" "wf-learnings home"
 

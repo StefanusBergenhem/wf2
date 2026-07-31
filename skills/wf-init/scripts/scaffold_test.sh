@@ -2,10 +2,11 @@
 #
 # scaffold_test.sh — TDD spec for scaffold.sh.
 #
-# Verifies: config written from template with tokens resolved; the transient dir,
-# telemetry sink, ADR dir, and capabilities/learnings homes created; gitignore updated;
-# full idempotency (re-run clobbers no edited config nor existing home, and does not
-# duplicate the gitignore line); and homes skipped when their config key is absent.
+# Verifies: config written from template with tokens resolved (including the per-target
+# driver.agent_cmd); the transient dir, telemetry sink, ADR dir, and the
+# capabilities/charter/plan/learnings homes created; gitignore updated; full idempotency
+# (re-run clobbers no edited config nor existing home, and does not duplicate the gitignore
+# line); and homes skipped when their config key is absent.
 # wf2-source-only — never rendered into an install target.
 #
 # Run:  bash skills/wf-init/scripts/scaffold_test.sh   (exit 0 = all green)
@@ -40,10 +41,29 @@ check "adrs dir created"           "[ -d '$PROJ/.wf/adrs' ]"
 check "adrs gitkeep created"       "[ -f '$PROJ/.wf/adrs/.gitkeep' ]"
 check "capabilities home created"  "[ -f '$PROJ/.wf/CAPABILITIES.yaml' ]"
 check "capabilities has structure" "grep -q 'capabilities:' '$PROJ/.wf/CAPABILITIES.yaml'"
-check "design-backlog home created" "[ -f '$PROJ/.wf/design-backlog.md' ]"
+check "charter home created"       "[ -f '$PROJ/.wf/charter.md' ]"
+check "charter has direction sections" "grep -q '## Target shape' '$PROJ/.wf/charter.md' && grep -q '## No-go zones' '$PROJ/.wf/charter.md'"
+check "plan home created"          "[ -f '$PROJ/.wf/plan.md' ]"
+check "plan has milestone sections" "grep -q '## Next' '$PROJ/.wf/plan.md'"
 check "learnings home created"     "[ -f '$PROJ/.wf/LEARNINGS.yaml' ]"
 check "learnings has structure"    "grep -q 'learnings:' '$PROJ/.wf/LEARNINGS.yaml'"
 check "wf-learnings home created"  "[ -f '$PROJ/.wf/wf-learnings.yaml' ]"
+
+echo "== driver.agent_cmd renders per target =="
+# The driver launches every role through this template; each harness spells it
+# differently, so init bakes the right one in — no runtime branching.
+check "claude agent_cmd rendered" "grep -q 'agent_cmd:.*claude -p' '$PROJ/.wf/config.yaml'"
+for T in opencode pi; do
+    TP="$WORK/t-$T"
+    bash "$SCAFFOLD" --dir "$TP" --target "$T" --name "t$T" > "$WORK/run-$T.log" 2>&1 \
+        || fail "scaffold --target $T exited non-zero (see $WORK/run-$T.log)"
+    check "$T: no unresolved {{ tokens" "! grep -q '{{' '$TP/.wf/config.yaml'"
+    check "$T: agent_cmd is not the claude one" \
+        "! grep -q 'agent_cmd:.*claude -p' '$TP/.wf/config.yaml'"
+    check "$T: agent_cmd passes {prompt}" \
+        "grep -q 'agent_cmd:.*{prompt}' '$TP/.wf/config.yaml'"
+done
+check "opencode agent_cmd is opencode run" "grep -q 'agent_cmd:.*opencode run' '$WORK/t-opencode/.wf/config.yaml'"
 
 echo "== idempotency =="
 # Mark the config as user-edited and append content to durable homes, then re-run.
@@ -51,6 +71,8 @@ echo "# user edit" >> "$PROJ/.wf/config.yaml"
 echo '{"agent":"prior"}' >> "$PROJ/.wf/telemetry/sessions.jsonl"
 echo "  - id: CAP-001" >> "$PROJ/.wf/CAPABILITIES.yaml"
 echo "  - id: L-001" >> "$PROJ/.wf/LEARNINGS.yaml"
+echo "- edited by hand" >> "$PROJ/.wf/charter.md"
+echo "- edited by hand" >> "$PROJ/.wf/plan.md"
 bash "$SCAFFOLD" --dir "$PROJ" --target claude --name demo > "$WORK/run2.log" 2>&1 \
     || fail "second scaffold exited non-zero (see $WORK/run2.log)"
 
@@ -58,6 +80,8 @@ check "existing config not clobbered" "grep -q '# user edit' '$PROJ/.wf/config.y
 check "telemetry sink not clobbered" "grep -q 'prior' '$PROJ/.wf/telemetry/sessions.jsonl'"
 check "capabilities home not clobbered" "grep -q 'CAP-001' '$PROJ/.wf/CAPABILITIES.yaml'"
 check "learnings home not clobbered" "grep -q 'L-001' '$PROJ/.wf/LEARNINGS.yaml'"
+check "charter home not clobbered"  "grep -q 'edited by hand' '$PROJ/.wf/charter.md'"
+check "plan home not clobbered"     "grep -q 'edited by hand' '$PROJ/.wf/plan.md'"
 gi_count="$(grep -cF '.wf/transient/' "$PROJ/.gitignore")"
 check "gitignore line not duplicated" "[ '$gi_count' -eq 1 ]"
 
@@ -81,6 +105,8 @@ check "custom transient dir honored"  "[ -d '$CUSTOM/.wf/t2' ]"
 check "custom transient gitignored"   "grep -qxF '.wf/t2/' '$CUSTOM/.gitignore'"
 check "default sink NOT created"      "! [ -f '$CUSTOM/.wf/telemetry/sessions.jsonl' ]"
 check "no home when key absent"       "! [ -f '$CUSTOM/.wf/CAPABILITIES.yaml' ]"
+check "no charter when key absent"    "! [ -f '$CUSTOM/.wf/charter.md' ]"
+check "no plan when key absent"       "! [ -f '$CUSTOM/.wf/plan.md' ]"
 
 echo "== bad target rejected =="
 if bash "$SCAFFOLD" --dir "$WORK/proj2" --target frobnicate --name x > /dev/null 2>&1; then
