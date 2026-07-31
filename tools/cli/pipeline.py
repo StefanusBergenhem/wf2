@@ -1006,6 +1006,12 @@ _LIST_ITEM_RE = re.compile(r"^(\s*)-\s")
 _ENTRY_ID_RE = re.compile(r"^\s*(?:-\s+)?id:\s*[\"']?([\w.-]+)")
 _ADEQUACY_HEAD_RE = re.compile(r"^#\s*Adequacy:\s*(CAP-\d+)\s*[—\-–:]+\s*(\w+)", re.MULTILINE)
 _QUESTION_LINE_RE = re.compile(r"^\*\*Question:\*\*\s*(.*)$", re.MULTILINE)
+# An adequacy digest's residual lines, its stamp, and the notes field they append to.
+_RESIDUAL_LINE_RE = re.compile(r"^\s*[-*]\s+(.*\bRESIDUAL\b.*)$", re.MULTILINE)
+_DIGEST_STAMP_RE = re.compile(r"-(\d{8}T\d{6}Z)\.md$")
+_DIGEST_DATE_RE = re.compile(r"^\*\*Date:\*\*\s*([^\s*]+)", re.MULTILINE)
+_NOTES_RE = re.compile(r"^(\s*)notes:(.*)$")
+_QUOTES = "\"'"
 # The two questions wf-adequacy stamps into a digest filename.
 _FULL_PROMISE = "full-promise"
 _ITERATION_CLAIM = "iteration-claim"
@@ -1233,6 +1239,154 @@ def _drain_capability(rest):
     return 0
 
 
+def _append_residuals(rest):
+    """Carry one inadequate adequacy review's residuals onto the capability's ``notes:``
+    — the §7 branch that feeds the next design. Each residual is a path inside the
+    promise that no scenario reaches; parked on the capability, it is what the next plan
+    revision reads.
+
+    The edit is TEXT, like every other write to a durable file: comments, ordering and
+    unicode survive (L-106). It is idempotent per digest — the appended block is stamped
+    with the digest's own timestamp, and a digest already carried over appends nothing."""
+    p = common.base_parser("pipeline append-residuals")
+    p.add_argument("capability")
+    p.add_argument("--digest", help="path to the adequacy digest (default: the newest "
+                                    "adequacy-<cap>-full-promise-*.md under "
+                                    "paths.drill_cache)")
+    args = p.parse_args(rest)
+
+    path = Path(args.digest) if args.digest else _newest_adequacy_digest(args)
+    if path is None or not path.is_file():
+        common.die(f"no adequacy digest for {args.capability}"
+                   + (f" at {path}" if path else " under paths.drill_cache"))
+    text = path.read_text(errors="replace")
+    head = _ADEQUACY_HEAD_RE.search(text)
+    if not head:
+        common.die(f"{path} carries no '# Adequacy: <CAP-id> — <verdict>' heading")
+    if head.group(1) != args.capability:
+        common.die(f"{path} reviews {head.group(1)}, not {args.capability}")
+
+    cap_path = common.resolve_path(args.config, "capabilities", None)
+    if not cap_path.exists():
+        common.die(f"capabilities file not found: {cap_path}")
+    residuals = _digest_residuals(text)
+    result = {"capability": args.capability, "digest": str(path),
+              "verdict": head.group(2).lower(), "residuals": len(residuals)}
+    if not residuals:
+        result["appended"] = False
+        common.emit(result, args.format)
+        return 0
+
+    stamp = _digest_stamp(path, text)
+    block = [f"[adequacy {stamp}] residuals from the {head.group(2).lower()} review:"]
+    block += [f"- {line}" for line in residuals]
+    original = cap_path.read_text()
+    new_text = _append_notes(original, args.capability, block, marker=f"[adequacy {stamp}]")
+    if new_text is None:
+        common.die(f"{args.capability} is not open in {cap_path}")
+    if new_text == original:
+        result["appended"] = False
+        common.emit(result, args.format)
+        return 0
+    import yaml as _yaml
+    try:
+        _yaml.safe_load(new_text)
+    except _yaml.YAMLError as exc:
+        common.die(f"appending to {args.capability} would not parse: {exc}")
+    cap_path.write_text(new_text)
+    result["appended"] = True
+    common.emit(result, args.format)
+    return 0
+
+
+def _digest_residuals(text) -> list:
+    """The residual lines a digest reports: its own ``## Residuals`` section when it has
+    one, else every bullet on the falsifying-paths list flagged RESIDUAL."""
+    body = slice_checks.section(text, "Residuals")
+    lines = [ln.strip().lstrip("-*").strip()
+             for ln in body.splitlines() if ln.strip().startswith(("-", "*"))]
+    if lines:
+        return lines
+    return [m.group(1).strip() for m in _RESIDUAL_LINE_RE.finditer(text)]
+
+
+def _digest_stamp(path, text) -> str:
+    """The digest's own timestamp — from the filename wf-adequacy stamps, else its
+    ``**Date:**`` line. It keys the idempotency check, so it must not be "now"."""
+    m = _DIGEST_STAMP_RE.search(path.name)
+    if m:
+        return m.group(1)
+    m = _DIGEST_DATE_RE.search(text)
+    return m.group(1).strip() if m else _now()
+
+
+def _entry_blocks(lines):
+    """[(start, end, indent)] for every list entry in a YAML list file."""
+    out, i = [], 0
+    while i < len(lines):
+        m = _LIST_ITEM_RE.match(lines[i])
+        if not m:
+            i += 1
+            continue
+        indent, j = len(m.group(1)), i + 1
+        while j < len(lines):
+            nxt = lines[j]
+            if nxt.strip() and len(nxt) - len(nxt.lstrip()) <= indent:
+                break
+            j += 1
+        out.append((i, j, indent))
+        i = j
+    return out
+
+
+def _append_notes(text, entry_id, block, marker):
+    """Append ``block`` to one entry's ``notes:`` as TEXT. Returns the new text, the
+    text unchanged when ``marker`` is already in the entry, or None when no such entry
+    exists. A missing or empty ``notes:`` becomes a literal block; an existing one is
+    extended in place."""
+    lines = text.splitlines(keepends=True)
+    for start, end, indent in _entry_blocks(lines):
+        ident = next((m.group(1) for m in
+                      (_ENTRY_ID_RE.match(b) for b in lines[start:end]) if m), None)
+        if ident != entry_id:
+            continue
+        if any(marker in ln for ln in lines[start:end]):
+            return text
+        field_indent = " " * (indent + 2)
+        note_at = next((i for i in range(start, end)
+                        if _NOTES_RE.match(lines[i])), None)
+        if note_at is None:
+            body = [f"{field_indent}notes: |\n"]
+            body += [f"{field_indent}  {ln}\n" for ln in block]
+            return "".join(lines[:start + 1] + body + lines[start + 1:])
+
+        head = _NOTES_RE.match(lines[note_at])
+        value = head.group(2).strip()
+        # an existing block sets the body indent; a new one is two past the key
+        first_body = next((ln for ln in lines[note_at + 1:end]
+                           if ln.strip() and ln.startswith(head.group(1) + " ")), None)
+        body_indent = (first_body[:len(first_body) - len(first_body.lstrip())]
+                       if value and first_body else f"{head.group(1)}  ")
+        tail = note_at + 1
+        while tail < end and (not lines[tail].strip()
+                              or lines[tail].startswith(body_indent)):
+            tail += 1
+        while tail > note_at + 1 and not lines[tail - 1].strip():
+            tail -= 1                      # keep trailing blank lines below the block
+        prefix = list(lines[:note_at])
+        if value in ("", "|", "|-", "|+", ">", ">-"):
+            kept = lines[note_at + 1:tail] if value else []
+            prefix += [f"{head.group(1)}notes: |\n"] + list(kept)
+        else:
+            # a one-line scalar: keep its text as the block's first line
+            kept_value = value.strip(_QUOTES)
+            prefix += [f"{head.group(1)}notes: |\n",
+                       f"{body_indent}{kept_value}\n"]
+        body = [f"{body_indent}{ln}\n" for ln in block]
+        return "".join(prefix + body + lines[tail:])
+    return None
+
+
 def _newest_adequacy_digest(args):
     """The most recent ``adequacy-<cap>-full-promise-<utc>.md`` under paths.drill_cache
     — the stamped filename orders them, so the latest full-promise review wins. An
@@ -1268,8 +1422,9 @@ def _complete_sprint(rest):
 
     When paths.archive is set, snapshot the working set into paths.archive/<sprint_id>/:
     learnings + capabilities + the final run state are copied (learnings pre-drain), and
-    the sprint, design-slice, design-issues, and decision-report files are moved out
-    (drained). The archive is a write-only maintainer sink; no role reads it. Then reset
+    the sprint, design-slice and design-issues files are moved out (drained). The slice
+    carries the sprint's decision log, which the ship step reads into the PR body before
+    this runs. The archive is a write-only maintainer sink; no role reads it. Then reset
     pipeline_state to a bare ``idle``. When paths.archive is unset the working-set slots
     are simply cleared — the drain itself runs either way.
 
@@ -1301,8 +1456,8 @@ def _complete_sprint(rest):
         # the final run state is a snapshot.
         if sprint_path.exists():
             archived["sprint"] = str(archive.snapshot(root, sprint_id, sprint_path, move=True))
-        for key, label in (("design_slice", "slice"), ("design_issues", "design_issues"),
-                           ("spec_decisions", "spec_decisions")):
+        for key, label in (("design_slice", "slice"),
+                           ("design_issues", "design_issues")):
             if paths.get(key):
                 p = common.resolve_path(args.config, key, None)
                 if p.exists():
@@ -1313,7 +1468,7 @@ def _complete_sprint(rest):
         # no archive configured — clear the active working-set slots
         if sprint_path.exists():
             sprint_path.unlink()
-        for key in ("design_slice", "design_issues", "spec_decisions"):
+        for key in ("design_slice", "design_issues"):
             if paths.get(key):
                 p = common.resolve_path(args.config, key, None)
                 if p.exists():
@@ -1362,4 +1517,5 @@ COMMANDS = {
     ("pipeline", "archive-history"): _archive_history,
     ("pipeline", "complete-sprint"): _complete_sprint,
     ("pipeline", "drain-capability"): _drain_capability,
+    ("pipeline", "append-residuals"): _append_residuals,
 }

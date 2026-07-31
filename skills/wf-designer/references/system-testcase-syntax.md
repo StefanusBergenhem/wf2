@@ -2,7 +2,7 @@
 
 Contents:
 - The Gherkin-light form
-- Covering capabilities (`Covers:`)
+- Covering capabilities (`**Covers:**`)
 - Cover what the iteration claims
 - The end-to-end rule
 - Verifiable assertions
@@ -20,26 +20,46 @@ missing keeps the capability open.
 ## The Gherkin-light form
 
 Write each case as a behaviour scenario from the perspective of an external actor or
-interface — not conversational prose.
+interface — not conversational prose. Write it into the slice's `## System test cases`
+section in exactly this markdown shape:
 
-```gherkin
-SYS-TC-<n>: <clear, unique title of the end-to-end behaviour>
-Covers: CAP-<n>[, CAP-<m>]
-
-Given <the initial system state / preconditions>
-When  <the external trigger or action>
-Then  <the observable, verifiable end state or output>
+```markdown
+- **SYS-TC-<n>:** <clear, unique title of the end-to-end behaviour>
+  **Covers:** CAP-<n>[, CAP-<m>]
+  - **Given** <the initial system state / preconditions>
+  - **When** <the external trigger or action>
+  - **Then** <the observable, verifiable end state or output>
 ```
 
-- **Given** — the starting state (e.g. *Given an operator has a valid session*).
-- **When** — the single external event that drives the behaviour (e.g. *When the operator
-  requests yesterday's export*).
-- **Then** — the observable assertion (e.g. *Then the system returns a signed download URL
-  within 500 ms*).
+Filled in:
 
-## Covering capabilities (`Covers:`)
+```markdown
+- **SYS-TC-7:** Operator downloads yesterday's export
+  **Covers:** CAP-12
+  - **Given** an operator has a valid session and yesterday's export completed
+  - **When** the operator requests yesterday's export
+  - **Then** the response carries a signed download URL that resolves to the export file
+```
 
-Every case declares the capabilities it proves on a `Covers:` line.
+Every marker is load-bearing — `wf slice check` and `wf sprint materialize` read these
+cases with literal patterns, and a case they cannot match is silently absent from the
+slice rather than reported:
+
+- the case line opens with `- ` and carries the id in bold with the **colon inside the
+  bold**: `- **SYS-TC-7:**`, never `- **SYS-TC-7**:` and never a bare `SYS-TC-7:`;
+- `**Covers:**` is bold with the colon inside, indented under the case line;
+- each step is its own `- ` bullet and names `**Given**` / `**When**` / `**Then**` in bold
+  with **no colon** after the keyword;
+- a step too long for one line wraps freely — a continuation line under a marker is joined
+  back onto it — but never start a continuation line with `- `, which opens a new step.
+
+The title and its three steps are joined into the one-line description the build stamps
+onto the `[SYS-TC:]` tag, so end every step on a complete clause: a step trailing off on a
+comma or a word like *the*, *and*, *with* fails materialization.
+
+## Covering capabilities (`**Covers:**`)
+
+Every case declares the capabilities it proves on a `**Covers:**` line.
 
 - A case covers **at least one `CAP-<n>`**. One capability may need several cases (distinct
   end-to-end behaviours); one case may cover several capabilities.
@@ -88,7 +108,7 @@ Run each case through these gates before putting it in the slice:
   calls, or state left by another test.
 - **Single pathway.** One core behaviour per case. Smell: multiple `When`s or unrelated
   actions grouped under one scenario — split them.
-- **Traceable.** Every id in `Covers:` is actually exercised by the steps.
+- **Traceable.** Every id on the `**Covers:**` line is actually exercised by the steps.
 - **Complete preconditions.** The `Given` accounts for everything the `When` needs to
   succeed.
 - **Grounded in a surface that exists.** A `When`/`Then` naming a surface — "changed through

@@ -99,6 +99,15 @@ class Config:
     def agent_cmd(self) -> str:
         return str(self.driver("agent_cmd"))
 
+    def agent_cmd_for(self, role: str) -> str:
+        """The launch template for one role: its ``driver.agent_cmd_overrides`` entry
+        when the config pins one (a per-role model or harness flag), else the shared
+        ``driver.agent_cmd``."""
+        overrides = self.driver_opt("agent_cmd_overrides") or {}
+        if isinstance(overrides, dict) and overrides.get(role):
+            return str(overrides[role])
+        return self.agent_cmd
+
     @property
     def stop_file(self) -> Path:
         return (self.root / str(self.driver("stop_file"))).resolve()

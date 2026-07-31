@@ -7,9 +7,9 @@ validates the whole file; only ``pipeline compute-stages --increment N`` scopes 
 one increment.
 
 ``sprint task`` builds ONE task's build envelope in the worktree: the increment's
-slice section (the stage narrative), then story → acceptance → boundaries →
-grounding, plus the inlined SYS-TC text on an e2e task. Nothing else travels — a
-field the build agent cannot act on is pure context cost.
+slice section (the stage narrative), then covers → story → acceptance → boundaries
+→ grounding, plus the task's title and the inlined SYS-TC text on an e2e task.
+Nothing else travels — a field the build agent cannot act on is pure context cost.
 
 ``sprint materialize`` inlines the slice's verbatim SYS-TC text into the sprint:
 the TL authors bare ids and this fills in the scenario and its covered
@@ -149,15 +149,17 @@ def _slice_path(args):
 # sprint task — the build envelope
 # ---------------------------------------------------------------------------
 
-# The order the build agent reads: where this increment is going, then what this task
-# builds, what proves it, what it may not touch, and what it can look at.
-_ENVELOPE_ORDER = ["id", "increment", "increment_narrative", "story", "acceptance",
-                   "boundaries", "grounding", "system_tests"]
+# The order the build agent reads: where this increment is going, which driver the task
+# serves, then what it builds, what proves it, what it may not touch, and what it can
+# look at.
+_ENVELOPE_ORDER = ["id", "increment", "title", "increment_narrative", "covers", "story",
+                   "acceptance", "boundaries", "grounding", "system_tests"]
 
 
 def _envelope(args, entry, slice_text):
-    """The build envelope for one task: the increment's stage narrative plus the four
-    contract sections. Planning metadata (covers, depends_on, title) stays behind."""
+    """The build envelope for one task: the increment's stage narrative, the driver the
+    task serves, the four contract sections, and the task's one-line title. Ordering
+    metadata (depends_on) stays behind."""
     out = {"id": entry.get("id")}
     number = entry.get("increment")
     if number is not None:
@@ -167,6 +169,11 @@ def _envelope(args, entry, slice_text):
             common.die(f"{entry.get('id')}: the slice declares no '### Increment {number}' "
                        f"block — the build envelope carries the stage narrative")
         out["increment_narrative"] = narrative
+    if entry.get("title") is not None:
+        out["title"] = entry["title"]
+    covers = _covers_of(entry)
+    if covers:
+        out["covers"] = covers
     for key in ("story", "acceptance", "boundaries"):
         if entry.get(key) is not None:
             out[key] = entry[key]
@@ -311,7 +318,7 @@ def _slice_system_testcases(text):
     }
 
 
-_TASK_FIELD_ORDER = ["id", "increment", "title", "depends_on", "fixes_origin", "covers",
+_TASK_FIELD_ORDER = ["id", "increment", "title", "depends_on", "covers",
                      "story", "acceptance", "boundaries", "grounding", "system_tests"]
 
 

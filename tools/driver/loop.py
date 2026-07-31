@@ -42,6 +42,7 @@ def run_loop(rt, *, once: bool = False, max_sprints=None) -> int:
     """Returns a process exit code: 0 for a clean stop, 1 for a halt."""
     shipped = 0
     while True:
+        refresh_base(rt)
         if rt.state.sprint_id is None:
             stop = stoprules.pre_sprint(rt.cfg, rt.git)
             if stop:
@@ -54,7 +55,7 @@ def run_loop(rt, *, once: bool = False, max_sprints=None) -> int:
             rt.state.stop_reason = halt.reason
             rt.state.save()
             rt.tele.event("halt", reason=halt.reason, detail=halt.detail,
-                          sprint_id=rt.state.sprint_id)
+                          sprint=rt.state.sprint_id)
             rt.log(f"HALT {halt.reason}: {halt.detail}")
             return 1
 
@@ -91,9 +92,22 @@ def _increment_numbers(rt) -> list:
     return [int(item["n"]) for item in (check.data.get("increments") or [])]
 
 
+def refresh_base(rt) -> None:
+    """Teach git what merged on the forge before anything derives the stack from it.
+    An unreachable origin is a warning, not a stop: the loop then works from local
+    state, which is stale but never wrong about what it does know."""
+    ok, detail = rt.git.fetch_base()
+    if ok:
+        return
+    rt.tele.event("warn", reason="fetch_failed", detail=detail,
+                  sprint=rt.state.sprint_id)
+    rt.log(f"warning: could not fetch {rt.cfg.base_branch} from origin — the stack is "
+           f"derived from local state ({detail})")
+
+
 def _stop(rt, reason: str, detail: str) -> int:
     rt.state.stop_reason = reason
     rt.state.save()
-    rt.tele.event("stop", reason=reason, detail=detail, sprint_id=rt.state.sprint_id)
+    rt.tele.event("stop", reason=reason, detail=detail, sprint=rt.state.sprint_id)
     rt.log(f"stop ({reason}): {detail}")
     return 0

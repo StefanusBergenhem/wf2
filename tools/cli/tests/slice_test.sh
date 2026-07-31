@@ -250,7 +250,7 @@ OUT="$(wf slice check --format json)"; RC=$?
 [ "$(jget "$OUT" "any('SYS-TC-1' in f['msg'] for f in d['errors'] if f['code']=='A10')")" = "True" ] \
   && ok "A10 names the uncovered case" || bad "A10 id" "$OUT"
 
-# a Covers line naming no CAP is as absent as a missing one
+# a Covers line naming no driver id at all is as absent as a missing one
 write_slice
 "$PYTHON" - "$SLICE" <<'PY'
 import sys
@@ -258,7 +258,79 @@ p=sys.argv[1]; t=open(p).read()
 open(p,'w').write(t.replace("**Covers:** CAP-24", "**Covers:** the zone work"))
 PY
 OUT="$(wf slice check --format json)"
-[ "$(has "$OUT" A10)" = "True" ] && ok "A10 flags a Covers line naming no CAP" || bad "A10-bare" "$OUT"
+[ "$(has "$OUT" A10)" = "True" ] && ok "A10 flags a Covers line naming no CAP/L id" || bad "A10-bare" "$OUT"
+
+# a learning-driven scenario covers an L id and nothing else — a valid driver
+write_slice
+"$PYTHON" - "$SLICE" <<'PY'
+import sys
+p=sys.argv[1]; t=open(p).read()
+t=t.replace("**Serves:** CAP-24, L-88", "**Serves:** L-88")
+open(p,'w').write(t.replace("**Covers:** CAP-24", "**Covers:** L-88"))
+PY
+OUT="$(wf slice check --format json)"; RC=$?
+[ "$RC" -eq 0 ] && [ "$(has "$OUT" A10)" = "False" ] \
+  && ok "A10 accepts an L-only Covers line (a learning-driven scenario)" || bad "A10-L" "rc=$RC $OUT"
+
+# an L-covered scenario is not CAP coverage: a served CAP still needs one of its own
+write_slice
+"$PYTHON" - "$SLICE" <<'PY'
+import sys
+p=sys.argv[1]; t=open(p).read()
+open(p,'w').write(t.replace("**Covers:** CAP-24", "**Covers:** L-88"))
+PY
+OUT="$(wf slice check --format json)"
+[ "$(has "$OUT" A10)" = "False" ] && [ "$(has "$OUT" A11)" = "True" ] \
+  && ok "an L-only case satisfies A10 but not the A11 CAP floor" || bad "A10-L vs A11" "$OUT"
+
+# ---------------------------------------------------------------------------
+# A11 — every served CAP is covered by a case the parser actually read
+# ---------------------------------------------------------------------------
+
+# the canonical slice serves CAP-24 (covered) and L-88 (no scenario) and passes:
+# a learning needs no scenario
+write_slice
+OUT="$(wf slice check --format json)"; RC=$?
+[ "$RC" -eq 0 ] && [ "$(has "$OUT" A11)" = "False" ] \
+  && ok "A11 exempts an L-id in Serves (a learning needs no scenario)" || bad "A11-L" "rc=$RC $OUT"
+
+# case-head syntax drift: the Covers line is still there, but no case parses, so the
+# slice yields ZERO scenarios and A10 has nothing to flag — A11 is what catches it
+write_slice
+"$PYTHON" - "$SLICE" <<'PY'
+import sys
+p=sys.argv[1]; t=open(p).read()
+open(p,'w').write(t.replace("- **SYS-TC-1:** end-to-end zone patch",
+                            "**SYS-TC-1** — end-to-end zone patch"))
+PY
+OUT="$(wf slice check --format json)"; RC=$?
+[ "$RC" -eq 1 ] && ok "a slice yielding zero parsed SYS-TCs exits 1" || bad "A11 exit" "rc=$RC $OUT"
+[ "$(has "$OUT" A11)" = "True" ] && ok "A11 flags a served CAP no parsed case covers" || bad "A11" "$OUT"
+[ "$(jget "$OUT" "any('CAP-24' in f['msg'] for f in d['errors'] if f['code']=='A11')")" = "True" ] \
+  && ok "A11 names the uncovered capability" || bad "A11 id" "$OUT"
+[ "$(has "$OUT" A10)" = "False" ] \
+  && ok "A10 is silent on a drifted case head — A11 is the backstop" || bad "A11 vs A10" "$OUT"
+
+# no System test cases section at all → same finding
+write_slice
+"$PYTHON" - "$SLICE" <<'PY'
+import sys
+p=sys.argv[1]; t=open(p).read()
+open(p,'w').write(t.replace("## System test cases", "## Scenarios"))
+PY
+OUT="$(wf slice check --format json)"
+[ "$(has "$OUT" A11)" = "True" ] && ok "A11 flags a slice with no scenario section" || bad "A11-nosection" "$OUT"
+
+# a second served CAP with no case of its own is named, while the covered one is not
+write_slice
+"$PYTHON" - "$SLICE" <<'PY'
+import sys
+p=sys.argv[1]; t=open(p).read()
+open(p,'w').write(t.replace("**Serves:** CAP-24, L-88", "**Serves:** CAP-24, CAP-25, L-88"))
+PY
+OUT="$(wf slice check --format json)"
+[ "$(jget "$OUT" "[f['msg'].split()[1] for f in d['errors'] if f['code']=='A11']")" = "['CAP-25']" ] \
+  && ok "A11 names only the uncovered CAP" || bad "A11-partial" "$OUT"
 
 # ---------------------------------------------------------------------------
 # --slice override wins over config

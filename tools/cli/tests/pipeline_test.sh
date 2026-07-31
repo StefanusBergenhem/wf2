@@ -795,6 +795,117 @@ else
     ok "drain-capability: a capability already drained → non-zero exit"
 fi
 
+# ── append-residuals: an inadequate verdict feeds the next design ─────────────
+
+mk_digest() {  # <project> <cap> <verdict> <stamp> [extra body]
+    local p="$1" cap="$2" verdict="$3" stamp="$4"
+    local f="$p/.wf/transient/drill-cache/adequacy-$cap-full-promise-$stamp.md"
+    cat > "$f" <<MD
+# Adequacy: $cap — $verdict
+**Question:** full-promise
+
+## Falsifying paths → coverage
+
+- backend/zones.go:88 → SYS-TC-1 — covered
+- backend/bulk.go:12 → RESIDUAL: bulk rejection never observed · a scenario patching two zones
+- backend/import.go:4 → RESIDUAL: imported rows skip the rule · a scenario importing a bad row
+
+## Prune-worthy scenarios
+- none.
+MD
+    echo "$f"
+}
+
+P="$(mk_cap_proj)"
+DG="$(mk_digest "$P" CAP-3 inadequate 20260731T090000Z)"
+AR="$("$PYTHON" "$WF" pipeline append-residuals CAP-3 --digest "$DG" --config "$P/.wf/config.yaml" --format json)"; RCA=$?
+[ "$RCA" -eq 0 ] && [ "$(jget "$AR" "d['appended']")" = "True" ] \
+    && ok "append-residuals: an inadequate digest appends to the capability" || bad "append-residuals" "rc=$RCA $AR"
+[ "$(jget "$AR" "d['residuals']")" = "2" ] \
+    && ok "append-residuals: counts the residual lines it carried over" || bad "append-residuals count" "$AR"
+grep -q "\[adequacy 20260731T090000Z\]" "$P/.wf/CAPABILITIES.yaml" \
+    && ok "append-residuals: the appended block is stamped with the digest" || bad "append-residuals stamp" "$(cat "$P/.wf/CAPABILITIES.yaml")"
+grep -q "bulk rejection never observed" "$P/.wf/CAPABILITIES.yaml" \
+    && ok "append-residuals: the residual text lands in the capability" || bad "append-residuals text" "$(cat "$P/.wf/CAPABILITIES.yaml")"
+[ "$(yget "$P/.wf/CAPABILITIES.yaml" "'import.go' in d['capabilities'][0]['notes']")" = "True" ] \
+    && ok "append-residuals: the notes field still parses as YAML" || bad "append-residuals yaml" "$(cat "$P/.wf/CAPABILITIES.yaml")"
+grep -q "This comment must survive" "$P/.wf/CAPABILITIES.yaml" \
+    && ok "append-residuals: the file's comments survive (L-106)" || bad "append-residuals comments" "$(cat "$P/.wf/CAPABILITIES.yaml")"
+[ "$(yget "$P/.wf/CAPABILITIES.yaml" "'notes' in d['capabilities'][1]")" = "False" ] \
+    && ok "append-residuals: no other capability is touched" || bad "append-residuals blast radius" "$(cat "$P/.wf/CAPABILITIES.yaml")"
+
+# idempotent per digest: the same review never lands twice
+BEFORE="$(cat "$P/.wf/CAPABILITIES.yaml")"
+AR2="$("$PYTHON" "$WF" pipeline append-residuals CAP-3 --digest "$DG" --config "$P/.wf/config.yaml" --format json)"
+[ "$(jget "$AR2" "d['appended']")" = "False" ] \
+    && ok "append-residuals: re-running the same digest appends nothing" || bad "append-residuals idempotent" "$AR2"
+[ "$BEFORE" = "$(cat "$P/.wf/CAPABILITIES.yaml")" ] \
+    && ok "append-residuals: an idempotent re-run does not rewrite the file (L-106)" || bad "append-residuals rewrite" "$(cat "$P/.wf/CAPABILITIES.yaml")"
+
+# a second, later review appends alongside the first
+DG2="$(mk_digest "$P" CAP-3 inadequate 20260801T090000Z)"
+"$PYTHON" "$WF" pipeline append-residuals CAP-3 --digest "$DG2" --config "$P/.wf/config.yaml" >/dev/null
+[ "$(grep -c "\[adequacy " "$P/.wf/CAPABILITIES.yaml")" = "2" ] \
+    && ok "append-residuals: a later review appends alongside the earlier one" || bad "append-residuals second" "$(cat "$P/.wf/CAPABILITIES.yaml")"
+
+# a capability with no notes: field at all gets one
+P="$(mk_cap_proj)"
+DG="$(mk_digest "$P" CAP-4 inadequate 20260731T090000Z)"
+"$PYTHON" "$WF" pipeline append-residuals CAP-4 --digest "$DG" --config "$P/.wf/config.yaml" >/dev/null
+[ "$(yget "$P/.wf/CAPABILITIES.yaml" "'bulk.go' in d['capabilities'][1]['notes']")" = "True" ] \
+    && ok "append-residuals: a capability with no notes field gets one" || bad "append-residuals new notes" "$(cat "$P/.wf/CAPABILITIES.yaml")"
+
+# an existing notes block keeps its own indentation and its sibling fields
+P="$(mk_cap_proj)"
+cat > "$P/.wf/CAPABILITIES.yaml" <<'YAML'
+version: 1
+capabilities:
+- id: CAP-3
+  notes: |
+      an existing block, indented its own way
+  statement: "Operators can reject bad X."
+- id: CAP-4
+  statement: "Operators can list zones."
+YAML
+DG="$(mk_digest "$P" CAP-3 inadequate 20260731T090000Z)"
+"$PYTHON" "$WF" pipeline append-residuals CAP-3 --digest "$DG" --config "$P/.wf/config.yaml" >/dev/null
+[ "$(yget "$P/.wf/CAPABILITIES.yaml" "d['capabilities'][0]['statement']")" = "Operators can reject bad X." ] \
+    && ok "append-residuals: a field below the notes block survives" || bad "append-residuals sibling" "$(cat "$P/.wf/CAPABILITIES.yaml")"
+[ "$(yget "$P/.wf/CAPABILITIES.yaml" "d['capabilities'][0]['notes'].splitlines()[0]")" = "an existing block, indented its own way" ] \
+    && ok "append-residuals: the existing note text is unchanged" || bad "append-residuals existing note" "$(cat "$P/.wf/CAPABILITIES.yaml")"
+
+# an adequate digest carries no residuals — nothing is appended
+P="$(mk_cap_proj)"
+printf '# Adequacy: CAP-3 — adequate\n**Question:** full-promise\n\n## Falsifying paths → coverage\n\n- backend/zones.go:88 → SYS-TC-1 — covered\n' \
+    > "$P/.wf/transient/drill-cache/adequacy-CAP-3-full-promise-20260731T090000Z.md"
+AR="$("$PYTHON" "$WF" pipeline append-residuals CAP-3 --digest "$P/.wf/transient/drill-cache/adequacy-CAP-3-full-promise-20260731T090000Z.md" --config "$P/.wf/config.yaml" --format json)"
+[ "$(jget "$AR" "d['appended']")" = "False" ] \
+    && ok "append-residuals: a digest with no residuals appends nothing" || bad "append-residuals adequate" "$AR"
+
+# the digest must review the capability it is being appended to
+P="$(mk_cap_proj)"
+DG="$(mk_digest "$P" CAP-3 inadequate 20260731T090000Z)"
+if "$PYTHON" "$WF" pipeline append-residuals CAP-4 --digest "$DG" --config "$P/.wf/config.yaml" >/dev/null 2>&1; then
+    bad "append-residuals: a mismatched digest should fail" "exited 0"
+else
+    ok "append-residuals: a digest reviewing another capability → non-zero exit"
+fi
+
+# a capability that is not open cannot take residuals
+if "$PYTHON" "$WF" pipeline append-residuals CAP-9 --digest "$DG" --config "$P/.wf/config.yaml" >/dev/null 2>&1; then
+    bad "append-residuals: an unknown capability should fail" "exited 0"
+else
+    ok "append-residuals: a capability not in the file → non-zero exit"
+fi
+
+# with no --digest it reads the newest full-promise digest, like drain-capability
+P="$(mk_cap_proj)"
+mk_digest "$P" CAP-3 inadequate 20260701T090000Z >/dev/null
+mk_digest "$P" CAP-3 inadequate 20260731T090000Z >/dev/null
+AR="$("$PYTHON" "$WF" pipeline append-residuals CAP-3 --config "$P/.wf/config.yaml" --format json)"
+[ "$(jget "$AR" "'20260731T090000Z' in d['digest']")" = "True" ] \
+    && ok "append-residuals: falls back to the newest full-promise digest" || bad "append-residuals newest" "$AR"
+
 # ── summary ──
 echo ""
 echo "  pipeline brain: $pass passed, $fail failed"

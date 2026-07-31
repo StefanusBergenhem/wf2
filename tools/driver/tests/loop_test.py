@@ -14,6 +14,7 @@ import support  # noqa: F401
 import config as driver_config
 import fakes
 import loop
+import state as driver_state
 
 CAPS = 'version: 1\ncapabilities:\n  - id: "CAP-001"\n    statement: "s"\n'
 SLICE_OK = {"verdict": "pass", "serves": [], "increments": [{"n": 1, "title": "one"}],
@@ -67,10 +68,15 @@ class LoopTest(support.TempProject):
             ("pipeline", "complete-sprint"): {"sprint_id": "s1", "drain": {}},
         })
 
-    def rt(self, cli=None, git=None, agents=None):
+    def rt(self, cli=None, git=None, agents=None, state=None):
         return fakes.runtime(self.cfg, cli=cli or self.full_cli(),
-                             git=git or fakes.FakeGit(), agents=agents,
+                             git=git or fakes.FakeGit(), agents=agents, state=state,
                              telemetry=__import__("events").Telemetry(self.cfg))
+
+    def rows(self):
+        path = self.cfg.path("telemetry")
+        return [json.loads(x) for x in path.read_text().splitlines() if x.strip()] \
+            if path.exists() else []
 
     def write_slice(self, *a):
         self.cfg.path("design_slice").write_text(
@@ -186,6 +192,58 @@ class LoopTest(support.TempProject):
         self.assertEqual(agents.launches[0]["role"], "wf-designer")
         self.assertEqual(agents.launches[0]["mode"], "resume")
         self.assertIn("wf-tl", agents.roles())
+
+    def test_an_escalation_from_repair_resumes_into_the_increment_loop(self):
+        agents = fakes.FakeAgents(self.cfg)
+        agents.on("wf-designer", lambda *a: self.write_slice())      # originate
+        agents.on("wf-tl", fakes.raise_design_issue(self.cfg))
+
+        def escalate(*a):
+            self.cfg.path("decision_prep").write_text(
+                "# Decision prep\nmode: repair\n\n## Ruling\n<!-- pending -->\n")
+        agents.on("wf-designer", escalate)                            # repair → halt
+        rt = self.rt(agents=agents)
+        self.assertEqual(loop.run_loop(rt, once=True), 0)
+        self.assertEqual(rt.state.stop_reason, "escalation")
+        self.assertEqual(rt.state.phase, "awaiting_ruling")
+        self.assertEqual(rt.state.resume_phase, "increment_loop")
+        # the brief is the human's inbox — nothing may consume it before the ruling
+        self.assertTrue(self.cfg.path("decision_prep").exists())
+
+        # the human rules; the restart resumes rather than re-designing
+        self.cfg.path("decision_prep").write_text(
+            "# Decision prep\nmode: repair\n\n## Ruling\nDI-9: amend the contract.\n")
+        agents2 = fakes.FakeAgents(self.cfg)
+        resolve = fakes.resolve_issues(self.cfg)
+
+        def consume(*a):
+            self.cfg.path("decision_prep").unlink()
+            resolve(*a)
+        agents2.on("wf-designer", consume)
+        rt2 = self.rt(agents=agents2, state=driver_state.load(self.cfg))
+        self.assertEqual(loop.run_loop(rt2, once=True), 0)
+        self.assertEqual(agents2.launches[0]["role"], "wf-designer")
+        self.assertEqual(agents2.launches[0]["mode"], "resume")
+        self.assertEqual(agents2.launches[0]["params"]["Mode"], "resume")
+        self.assertNotIn("originate", [x["mode"] for x in agents2.launches])
+        self.assertIn("wf-tl", agents2.roles())      # back in the increment loop
+
+    # ── the remote ───────────────────────────────────────────────────────────
+
+    def test_the_base_is_fetched_before_the_stack_is_derived(self):
+        git = fakes.FakeGit()
+        rt = self.rt(git=git, agents=self.agents_that_design())
+        loop.run_loop(rt, once=True)
+        self.assertEqual(git.fetched, ["main"])
+
+    def test_an_unreachable_origin_warns_and_the_loop_carries_on(self):
+        git = fakes.FakeGit(fetch_ok=False)
+        agents = self.agents_that_design()
+        rt = self.rt(git=git, agents=agents)
+        self.assertEqual(loop.run_loop(rt, once=True), 0)
+        self.assertIn("wf-designer", agents.roles())
+        warn = [r for r in self.rows() if r["event"] == "warn"]
+        self.assertEqual(warn[0]["reason"], "fetch_failed")
 
     # ── dry run ──────────────────────────────────────────────────────────────
 

@@ -19,11 +19,14 @@ Contents:
 ## The four sections
 
 Each fact lives in exactly one section. A fact repeated in two of them is a contradiction
-waiting to happen.
+waiting to happen. `title` is one line — a noun phrase naming the deliverable, no trailing
+period; the build commits with it, so keep it under ~60 characters and never let it carry a
+fact the four sections need.
 
 ```yaml
 - id: T3
   increment: 2
+  title: <one line naming what this task delivers — the build's commit subject>
   depends_on: [T1]           # task ids that must land first
   covers: [CAP-024]          # and/or L-ids — the driver this task serves
   story: |

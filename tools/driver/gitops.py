@@ -61,6 +61,21 @@ class Git:
         done = self._run("status", "--porcelain")
         return done.rc == 0 and not done.stdout.strip()
 
+    def dirty_paths(self) -> list:
+        """Every path `git status` reports as changed or untracked, repo-relative —
+        what the clean-tree gate names when it refuses to cut a branch."""
+        done = self._run("status", "--porcelain")
+        if done.rc != 0:
+            return []
+        out = []
+        for line in done.stdout.splitlines():
+            path = line[3:].strip().strip('"')
+            if " -> " in path:                       # a rename reports old -> new
+                path = path.split(" -> ", 1)[1].strip().strip('"')
+            if path:
+                out.append(path)
+        return out
+
     def head_sha(self, ref="HEAD", cwd=None) -> str:
         return self._out("rev-parse", "--short", ref, cwd=cwd)
 
@@ -87,16 +102,50 @@ class Git:
     def is_merged_into(self, branch: str, base: str) -> bool:
         return self._run("merge-base", "--is-ancestor", branch, base).rc == 0
 
+    def ref_exists(self, ref: str) -> bool:
+        return self._run("rev-parse", "--verify", "--quiet", ref).rc == 0
+
+    def fetch_base(self):
+        """Refresh the base branch from origin and prune dead remote branches. PRs
+        merge on the forge, so without this the local base never learns and every
+        shipped sprint branch looks unmerged forever. Returns (ok, detail); a repo with
+        no reachable origin is not an error — the caller warns and works locally."""
+        done = self._write("fetch", "--prune", "origin", self.cfg.base_branch,
+                           timeout=procs.NETWORK_TIMEOUT_S)
+        if done.rc == 0:
+            return True, ""
+        return False, (done.stderr or done.stdout).strip()[:400]
+
+    def _base_refs(self) -> list:
+        """The refs that count as "the base": the local branch and, when the fetch left
+        one, its remote-tracking twin."""
+        refs = [self.cfg.base_branch]
+        remote = f"origin/{self.cfg.base_branch}"
+        if self.ref_exists(remote):
+            refs.append(remote)
+        return refs
+
+    def base_ref(self) -> str:
+        """What to branch from when the stack is empty: the fetched remote base when it
+        carries commits the local one does not (PRs merged on the forge), else local."""
+        remote = f"origin/{self.cfg.base_branch}"
+        if self.ref_exists(remote) and not self.is_merged_into(remote,
+                                                              self.cfg.base_branch):
+            return remote
+        return self.cfg.base_branch
+
     def stack(self) -> list:
         """The shipped sprint branches not yet merged into the base branch, bottom
-        first — the stack whose depth bounds the loop."""
-        base = self.cfg.base_branch
-        return [b for b in self.sprint_branches() if not self.is_merged_into(b, base)]
+        first — the stack whose depth bounds the loop. A branch merged into the base on
+        the forge counts as merged as soon as the fetch has seen it."""
+        refs = self._base_refs()
+        return [b for b in self.sprint_branches()
+                if not any(self.is_merged_into(b, ref) for ref in refs)]
 
     def stack_tip(self) -> str:
         """What the next sprint branches from: the top of the stack, else the base."""
         stack = self.stack()
-        return stack[-1] if stack else self.cfg.base_branch
+        return stack[-1] if stack else self.base_ref()
 
     def pr_base(self, branch: str) -> str:
         """A sprint PR targets the unmerged sprint branch below it; once that merges,
@@ -144,25 +193,37 @@ class Git:
     # ── merges ───────────────────────────────────────────────────────────────
 
     def merge(self, branch: str, message: str) -> MergeResult:
-        """Merge one approved task branch into the branch checked out here. On a
-        conflict the merge is aborted and the conflicting paths are reported: the
-        driver records a design issue and routes the repair, never auto-resolves."""
+        """Merge one approved task branch into the branch checked out here. A conflict
+        is reported with its paths and **left in the tree**: the repair role resolves it
+        in place, and only a failed repair aborts (``merge_abort``)."""
         done = self._write("merge", "--no-ff", branch, "-m", message)
         if done.rc == 0:
             return MergeResult(ok=True, sha=self.head_sha())
         conflicted = [line.strip() for line in
                       self._out("diff", "--name-only", "--diff-filter=U").splitlines()
                       if line.strip()]
-        self._write("merge", "--abort")
         return MergeResult(ok=False, conflict=bool(conflicted), files=conflicted,
                            detail=(done.stderr or done.stdout).strip()[:2000])
 
+    def merge_in_progress(self) -> bool:
+        return self.ref_exists("MERGE_HEAD")
+
+    def merge_abort(self):
+        """Undo a conflicted merge so the rest of the batch can still land."""
+        return self._write("merge", "--abort")
+
     # ── ship ─────────────────────────────────────────────────────────────────
+
+    def is_ignored(self, path) -> bool:
+        return self._run("check-ignore", "-q", "--", str(path)).rc == 0
 
     def commit_paths(self, paths, message: str):
         """Stage the named paths and commit them. Returns the commit sha, or None
-        when nothing was staged (an empty close leaves no empty commit behind)."""
-        existing = [str(p) for p in paths if p and (self.root / str(p)).exists()]
+        when nothing was staged (an empty close leaves no empty commit behind). A path
+        the repo gitignores is skipped: naming one makes `git add` refuse the whole
+        batch, and a project that ignores an artifact means it."""
+        existing = [str(p) for p in paths
+                    if p and (self.root / str(p)).exists() and not self.is_ignored(p)]
         if not existing:
             return None
         self._write("add", "--", *existing)

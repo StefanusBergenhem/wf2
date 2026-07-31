@@ -18,9 +18,10 @@ re-running resumes it.
 
 ## The process contract
 
-A role is launched by the config template `driver.agent_cmd`, with `{prompt}`
-substituted (escaped for whatever quoting the template puts around it). The prompt
-names the role's installed file and its envelope fields:
+A role is launched by the config template `driver.agent_cmd` — or by its own entry in
+`driver.agent_cmd_overrides`, which is how one role gets a different model — with
+`{prompt}` substituted (escaped for whatever quoting the template puts around it). The
+prompt names the role's installed file and its envelope fields:
 
 ```
 Read /repo/.claude/agents/wf-build.md and follow it.
@@ -36,6 +37,12 @@ verb's JSON (`pipeline next`, `slice check`, `sprint check`,
 `orchestrate inspect-*`) or from an artifact (`paths.design_issues`, an adequacy
 digest, `paths.decision_prep`). Nothing routes on prose.
 
+Each dispatch, routing decision and stop appends one row to `paths.telemetry`:
+`{kind: driver_event, agent, role, event, mode, sprint, increment, task, rc,
+duration_s, started_at, ended_at, ts}`. `agent` mirrors `role` because that is the
+field the telemetry reader classifies on, and every row carries an ISO-8601 UTC span
+(zero-length for an instantaneous event) so the usage-row join is exact, not fuzzy.
+
 ## Phases
 
 State lives in `driver.state_file`; each phase is entered (and written) before it
@@ -46,8 +53,19 @@ acts, so a restart re-enters it.
 | `sprint_start` | clean-tree gate; branch `sprint/s<N>` off the stack tip; `sweep-transients` + `reclaim-stale`; `wf-discover` | `designing` |
 | `designing` | `wf-designer` (originate) → `wf slice check`; a red gate records a design issue and routes `wf-designer` (repair) | `increment_loop`, or a pause |
 | `increment_loop` | per increment: `wf-tl` → `sprint materialize` + `sprint check` → `compute-stages` → sub-layers → boundary | `closeout` |
-| `closeout` | the `closeout` config steps; before `ship`: close-time `wf-adequacy` per served capability → drain/park; then `complete-sprint`, commit, push, `gh pr create` | `sprint_start` |
-| `awaiting_ruling` | on restart: `wf-designer` (resume) once `paths.decision_prep` carries a ruling | `increment_loop` |
+| `closeout` | the `closeout` config steps, each banked on disk as it finishes: `wf-*` roles, `adequacy` (per served capability → drain / residuals / park), `ship` (`complete-sprint`, commit, push, `gh pr create`) | `sprint_start` |
+| `awaiting_ruling` | on restart: `wf-designer` (resume) once `paths.decision_prep` carries a ruling; the brief's `mode:` header says where to pick up — `originate` carries on designing, `repair` returns to the increment loop | `designing` / `increment_loop` |
+
+The clean-tree gate has exactly one carve-out: a tree whose *only* dirt is
+`paths.telemetry`. That file is committed and every role and Stop hook appends to it
+after the sprint's last commit, so its rows are committed into the new sprint
+("telemetry: carry rows into sprint N") instead of halting the loop. Any other path is
+still `dirty_tree`. `ship` stages the sink with the close, so the steady state is clean.
+
+Each loop that re-runs a role owns its own budget, as a constant in the module that
+runs it: `phases.SLICE_GATE_ATTEMPTS`, `increments.CONTRACT_PREP_ATTEMPTS`,
+`increments.STAGE_REPAIR_ATTEMPTS`. `review.max_attempts` bounds one task's
+build→review chain and nothing else.
 
 Inside an increment, one sub-layer at a time: `pipeline next` gives the frontier,
 each task gets a worktree + its envelope (`sprint task --write`) + `wf-build`, then
@@ -57,14 +75,20 @@ envelope carries the increment's observable checkpoint) and clears design issues
 
 Sprint ids and stack depth are **derived from git**, never stored: the next id is one
 past the highest `sprint/s<N>` branch, and the stack is the sprint branches not yet
-merged into `project.base_branch`. A sprint PR targets the branch below it in the
-stack, else the base branch.
+merged into `project.base_branch` *or its fetched remote twin*. A sprint PR targets the
+branch below it in the stack, else the base branch.
+
+Every loop iteration begins with `git fetch --prune origin <base>` — PRs merge on the
+forge, so without it the local base never learns, the stack never drains and the depth
+cap pauses forever. An unreachable origin is a `warn` row, not a stop: the loop then
+derives from local state. When the stack is empty the next sprint branches from
+`origin/<base>` if the fetch left it ahead of the local branch.
 
 ## Stop rules
 
 | rule | trigger | effect |
 |---|---|---|
-| escalation | `paths.decision_prep` exists | pause in `awaiting_ruling`; a recorded ruling resumes |
+| escalation | `paths.decision_prep` exists — written by the design role in any mode | pause in `awaiting_ruling`, with the phase it interrupted recorded; a ruling resumes into that phase, and nothing consumes the brief before then |
 | work exhaustion | no capability or learning entry left that is not `status: parked` | clean exit |
 | manual stop | `driver.stop_file` exists | seen at an increment boundary: finish the sprint, ship, exit |
 | stack depth | unmerged sprint branches ≥ `driver.max_unmerged_sprints` | pause until PRs merge |
@@ -77,6 +101,8 @@ defaults of its own; a missing key is a named, fatal error.
 
 - `driver.agent_cmd`, `driver.max_parallel`, `driver.max_unmerged_sprints`,
   `driver.stop_file` — as before.
+- `driver.agent_cmd_overrides` — optional map, role → launch template, for a role that
+  needs a different model or harness flag; a role with no entry uses `agent_cmd`.
 - `driver.state_file` — the driver's own position (new).
 - `driver.review_state_cmd` — `gh` template, `{branch}` substituted (new).
 - `driver.agent_timeout_s`, `driver.command_timeout_s` — hard bounds on a role
@@ -104,20 +130,30 @@ defaults of its own; a missing key is a named, fatal error.
 
 ## Decisions worth knowing
 
-- **Merge conflicts are never auto-resolved.** A conflicted batch merge is aborted so
-  the rest of the batch can proceed, a design issue naming the conflicting paths is
-  recorded (which parks the task), and the repair ladder decides — mechanical
-  detection replacing the old write-set overlap check. `wf-stage-repair`'s `merge`
-  mode is therefore unused by the driver.
+- **A merge conflict goes to the rung that can resolve it.** The conflicted merge is
+  left in the tree and `wf-stage-repair` is dispatched in `merge` mode against it; the
+  verdict is read from disk (its exit code, no merge in progress, a clean tree, the task
+  branch an ancestor of the sprint branch). Only a repair that could not resolve it
+  aborts the merge, records a design issue naming the conflicting paths (which parks the
+  task) and hands it to the repair ladder.
 - **The park count is derived, not stored.** Three consecutive `inadequate`
   full-promise digests under `paths.drill_cache` park the capability
   (`status: parked`, written as a text-surgical edit that preserves comments and
   unicode, L-106). Only full-promise digests count; an iteration-claim review judges
   one slice's claim. If the drill cache is ever cleared, the count restarts — the
   park is simply delayed, never wrong.
-- **Close-time adequacy runs inside closeout, immediately before `ship`.** It is not
-  a `closeout` config entry: the drain must happen before `complete-sprint` archives
-  the slice, and both are part of shipping.
+- **An inadequate verdict is not a dead end.** Before the park count is consulted,
+  `wf pipeline append-residuals` carries the digest's residual paths onto the
+  capability's `notes:` — stamped with the digest's own timestamp, so re-running a
+  review never doubles them. That is what the next plan revision reads.
+- **`adequacy` is a named `closeout` step, not an implicit one.** It must appear before
+  `ship`, which archives the slice and drains the working set it reviews; a list that
+  ships without it, or after it, is a `closeout_order` halt, and a step the driver
+  cannot run is `unknown_closeout_step`. Finished steps are banked in the driver state,
+  so a restart inside closeout does not re-dispatch a review (a second one would shift
+  the park counter).
+- **The PR body's decision report comes from the slice's `## Decision log`,** read
+  before `complete-sprint` archives the slice. There is no separate decisions file.
 - **`--dry-run` stops after the design dispatch.** It prints the dispatches, git
   writes and CLI mutations it would make; with no slice on disk there is nothing
   further to plan. It is the smoke-test surface: config, path resolution, role

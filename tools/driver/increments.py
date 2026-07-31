@@ -19,15 +19,25 @@ import issues
 import procs
 import slice as slice_reader  # the CLI's slice parser — one reader, not a copy
 import stoprules
+import yaml
 from runtime import Halt
 
 # Bounds on the loops that are driven by external state. A well-behaved run never
 # reaches them; hitting one means the pipeline is not converging and a human must look.
 MAX_SUBLAYER_ITERATIONS = 400
 MAX_INCREMENT_ROUNDS = 5
+# How many times the Tech Lead's output is re-cut before the increment gives up, and
+# how many stage-repair rounds an increment boundary gets. Each loop owns its own
+# budget: `review.max_attempts` bounds one task's build→review chain and nothing else.
+CONTRACT_PREP_ATTEMPTS = 3
+STAGE_REPAIR_ATTEMPTS = 3
 
-_CHECKPOINT_RE = re.compile(r"^\s*[-*]?\s*\**\s*Checkpoint\s*\**\s*:?\s*(.+)$",
-                            re.IGNORECASE | re.MULTILINE)
+# The slice template writes `- **Checkpoint:** <what>`; a plain `Checkpoint: <what>` is
+# accepted too. The bold markers close AFTER the colon, so they are consumed on both
+# sides of it — capturing them leaves the envelope's checkpoint starting with `**`.
+_CHECKPOINT_RE = re.compile(
+    r"^\s*[-*]?\s*\*{0,2}\s*Checkpoint\s*\*{0,2}\s*[:—–]\s*\*{0,2}\s*(.+?)\s*\*{0,2}\s*$",
+    re.IGNORECASE | re.MULTILINE)
 
 
 # ── the increment ────────────────────────────────────────────────────────────
@@ -40,8 +50,7 @@ def run_increment_loop(rt, numbers) -> None:
             continue
         rt.state.increment = number
         rt.state.save()
-        rt.tele.event("increment_start", sprint_id=rt.state.sprint_id,
-                      increment=number)
+        rt.tele.event("increment_start", sprint=rt.state.sprint_id, increment=number)
         run_increment(rt, number)
     rt.state.increment = 1
     rt.state.save()
@@ -66,7 +75,7 @@ def run_increment(rt, number) -> None:
                        f"may have reused a task id an earlier increment merged.")
         sublayer_loop(rt, number)
         if boundary(rt, number) == "done":
-            rt.tele.event("increment_done", sprint_id=rt.state.sprint_id,
+            rt.tele.event("increment_done", sprint=rt.state.sprint_id,
                           increment=number)
             return
         force = True
@@ -77,11 +86,12 @@ def prepare_contracts(rt, number) -> None:
     """Get a green ``sprint check`` for this increment: dispatch the Tech Lead, and
     route every rejection through the design role's repair mode."""
     needs_tl = not _has_increment(rt, number)
-    for _ in range(rt.cfg.max_attempts + 1):
+    for _ in range(CONTRACT_PREP_ATTEMPTS + 1):
         if needs_tl:
             # The run state keys task states by id across the whole sprint, so an id an
-            # earlier increment already merged would come back pre-completed. Name them.
-            used = ", ".join(sorted(rt.worktrees)) or "none yet"
+            # earlier increment already merged would come back pre-completed. Name them
+            # from the sprint file — the durable record, so a restart names them too.
+            used = ", ".join(_task_ids_so_far(rt)) or "none yet"
             rt.agents.launch("wf-tl",
                              {"Increment": number, "sprint_id": rt.state.sprint_id,
                               "task ids already used this sprint": used},
@@ -105,6 +115,20 @@ def prepare_contracts(rt, number) -> None:
         item = _first_open_issue(rt)
         issues.repair(rt, item)
     raise Halt("contracts_not_ready", f"increment {number} never reached a green gate")
+
+
+def _task_ids_so_far(rt) -> list:
+    """Every task id the sprint's cumulative contract file already carries, in file
+    order — what the next Tech Lead must not reuse."""
+    path = rt.cfg.path_opt("sprint")
+    if not path or not path.exists():
+        return []
+    try:
+        doc = yaml.safe_load(path.read_text()) or {}
+    except yaml.YAMLError:
+        return []
+    tasks = (doc.get("tasks") or []) if isinstance(doc, dict) else []
+    return [str(t["id"]) for t in tasks if isinstance(t, dict) and t.get("id")]
 
 
 def _prune_recut(rt, item, number) -> None:
@@ -322,9 +346,9 @@ def _task_branch(rt, task_id) -> str:
 
 def _merge_batch(rt, approved) -> bool:
     """Merge the approved set into the sprint branch. Returns True when a conflict
-    parked a task — the driver never resolves one: it records a design issue and lets
-    the repair ladder decide, which is the mechanical successor to the old write-set
-    overlap check."""
+    parked a task: a conflicted merge is handed to ``wf-stage-repair``'s merge mode
+    while it is still in the tree, and only a repair that cannot resolve it aborts the
+    merge and records a design issue for the repair ladder."""
     if not approved:
         return False
     rt.git.checkout(rt.state.sprint_branch)
@@ -333,22 +357,46 @@ def _merge_batch(rt, approved) -> bool:
         branch = _task_branch(rt, task_id)
         build_sha = rt.cli.read("pipeline", "task-state", task_id).data.get("build_commit")
         result = rt.git.merge(branch, f"{task_id}: merge")
-        if result.ok:
+        merge_sha = result.sha if result.ok else _repair_merge(rt, task_id, branch,
+                                                              result)
+        if merge_sha:
             rt.cli.mutate("pipeline", "complete-task", task_id,
-                          "--commit", str(build_sha), "--merge", result.sha)
+                          "--commit", str(build_sha), "--merge", merge_sha)
             rt.git.worktree_remove(_worktree_of(rt, task_id), branch)
-            rt.tele.event("merge", task_id=task_id, sprint_id=rt.state.sprint_id,
-                          merge_commit=result.sha)
+            rt.tele.event("merge", task=task_id, sprint=rt.state.sprint_id,
+                          merge_commit=merge_sha,
+                          conflict_repaired=(not result.ok) or None)
             continue
         conflicted = True
         files = ", ".join(result.files) or "unknown paths"
         issues.record(rt, f"merging {branch} into {rt.state.sprint_branch} conflicted "
-                          f"in {files} — two parallel tasks changed the same lines; "
-                          f"the merge was left unapplied",
+                          f"in {files} — two parallel tasks changed the same lines and "
+                          f"the merge repair could not resolve them; the merge was "
+                          f"left unapplied",
                       task_id=task_id, severity="high")
-        rt.tele.event("merge_conflict", task_id=task_id, sprint_id=rt.state.sprint_id,
+        rt.tele.event("merge_conflict", task=task_id, sprint=rt.state.sprint_id,
                       files=files)
     return conflicted
+
+
+def _repair_merge(rt, task_id, branch, result) -> str:
+    """Hand the conflicted merge — still in the tree — to ``wf-stage-repair``'s merge
+    mode. Returns the merge commit when the repair finished it, and '' when it did not:
+    the merge is then aborted so the rest of the batch can still land."""
+    launched = rt.agents.launch(
+        "wf-stage-repair",
+        {"mode": "merge", "sprint_branch": rt.state.sprint_branch,
+         "task_id": task_id, "task_branch": branch,
+         "conflicting_paths": ", ".join(result.files) or "unknown paths"},
+        task_id=task_id, mode="merge")
+    resolved = (launched.exit_code == 0
+                and not rt.git.merge_in_progress()
+                and rt.git.is_clean()
+                and rt.git.is_merged_into(branch, rt.state.sprint_branch))
+    if resolved:
+        return rt.git.head_sha()
+    rt.git.merge_abort()
+    return ""
 
 
 def _worktree_of(rt, task_id) -> Path:
@@ -367,16 +415,16 @@ def boundary(rt, number) -> str:
                              cwd=rt.cfg.root, shell=True,
                              stdout_path=rt.cfg.path("transient") /
                              f"stage-check-{rt.state.sprint_id}-{number}.log")
-            rt.tele.event("stage_check", increment=number, exit_code=done.rc,
-                          duration_s=done.duration_s,
-                          sprint_id=rt.state.sprint_id)
+            rt.tele.event("stage_check", increment=number, rc=done.rc,
+                          duration_s=done.duration_s, started_at=done.started_at,
+                          ended_at=done.ended_at, sprint=rt.state.sprint_id)
             if done.rc == 0:
                 break
             attempts += 1
-            if attempts > rt.cfg.max_attempts:
+            if attempts > STAGE_REPAIR_ATTEMPTS:
                 raise Halt("stage_check_red",
                            f"increment {number}'s heavy checks stayed red after "
-                           f"{rt.cfg.max_attempts} repair rounds")
+                           f"{STAGE_REPAIR_ATTEMPTS} repair rounds")
             rt.agents.launch("wf-stage-repair",
                              {"mode": "repair",
                               "sprint_branch": rt.state.sprint_branch,
@@ -395,7 +443,7 @@ def boundary(rt, number) -> str:
         rt.state.stop_pending = stop.reason
         rt.state.save()
         rt.tele.event("stop_pending", reason=stop.reason, detail=stop.detail,
-                      sprint_id=rt.state.sprint_id)
+                      sprint=rt.state.sprint_id)
     return "done"
 
 

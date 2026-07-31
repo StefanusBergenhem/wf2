@@ -51,13 +51,20 @@ class FakeCli:
 
 
 class FakeGit:
-    def __init__(self, *, clean=True, stack=None, sprint_id="s1", base="main"):
-        self.clean = clean
+    def __init__(self, *, clean=True, stack=None, sprint_id="s1", base="main",
+                 dirty=None, fetch_ok=True):
+        self.clean = clean and not dirty
+        self.dirty = list(dirty or ([] if clean else ["src/left-over.go"]))
         self._stack = list(stack or [])
         self._sprint_id = sprint_id
         self.base = base
+        self.fetch_ok = fetch_ok
+        self.fetched = []
         self.branches = []
         self.merges = []
+        self.merged = set()
+        self.merging = None
+        self.aborted = []
         self.conflict_on = set()
         self.worktrees = []
         self.removed = []
@@ -67,7 +74,14 @@ class FakeGit:
         self.dry_run = False
 
     def is_clean(self):
-        return self.clean
+        return self.clean and not self.dirty
+
+    def dirty_paths(self):
+        return list(self.dirty)
+
+    def fetch_base(self):
+        self.fetched.append(self.base)
+        return (True, "") if self.fetch_ok else (False, "could not reach origin")
 
     def current_branch(self):
         return self.branches[-1] if self.branches else self.base
@@ -104,12 +118,35 @@ class FakeGit:
     def merge(self, branch, message):
         self.merges.append(branch)
         if branch in self.conflict_on:
+            # a conflicted merge is LEFT in the tree for the repair role
+            self.merging = branch
+            self.clean = False
             return __import__("gitops").MergeResult(ok=False, conflict=True,
                                                     files=["shared.go"])
+        self.merged.add(branch)
         return __import__("gitops").MergeResult(ok=True, sha=f"merge-{branch}")
 
+    def merge_abort(self):
+        self.aborted.append(self.merging)
+        self.merging = None
+        self.clean = True
+
+    def merge_in_progress(self):
+        return self.merging is not None
+
+    def is_merged_into(self, branch, base):
+        return branch in self.merged
+
+    def resolve_merge(self):
+        """What a successful `wf-stage-repair` merge run leaves: the merge committed,
+        the tree clean."""
+        self.merged.add(self.merging)
+        self.merging = None
+        self.clean = True
+
     def commit_paths(self, paths, message):
-        self.commits.append(message)
+        self.commits.append((message, [str(p) for p in paths]))
+        self.dirty = [p for p in self.dirty if p not in {str(x) for x in paths}]
         return "commit1"
 
     def push(self, branch):

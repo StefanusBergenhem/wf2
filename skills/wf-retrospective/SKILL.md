@@ -5,8 +5,8 @@ description: Distils a run into actionable learnings — session telemetry feedb
 
 # wf-retrospective
 
-**Read `wf-basics` first** for the `.wf/` layout and the telemetry handshake.
-Record the session start stamp now per `wf-basics` §2. Resolve every path below from `.wf/config.yaml`:
+**Read `{{WF_SKILLS_DIR}}/wf-basics/SKILL.md` now** for the `.wf/` layout and the telemetry
+handshake. Record the session start stamp now per its §2. Resolve every path below from `.wf/config.yaml`:
 
 - `TELEMETRY`      = `paths.telemetry`       (append-only session log — read)
 - `PIPELINE_STATE` = `paths.pipeline_state`  (the finished run's state — read if present)

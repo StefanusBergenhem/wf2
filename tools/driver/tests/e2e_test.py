@@ -87,6 +87,12 @@ None.
 ## Soundness
 
 - Cohesion: the seam sits in one module. Pass.
+
+## Decision log
+
+<!-- Ships in the sprint PR body. -->
+
+- **Assumption** — CAP-001 read as one caller at a time, not the bulk path.
 MD
   ;;
 wf-tl)
@@ -143,7 +149,7 @@ wf-adequacy)
   cap="$(field Capability)"
   mkdir -p .wf/transient/drill-cache
   stamp="$(date -u +%Y%m%dT%H%M%SZ)"
-  printf '# Adequacy: %s — adequate\n**Question:** full promise\n' "$cap" \
+  printf '# Adequacy: %s — adequate\n**Question:** full-promise\n' "$cap" \
     > ".wf/transient/drill-cache/adequacy-$cap-full-promise-$stamp.md"
   ;;
 esac
@@ -236,6 +242,12 @@ class EndToEndTest(support.TempProject):
         self.assertIn("--head sprint/s1", gh_args)
         self.assertIn("s1: Design-slice — the greeting seam", gh_args)
 
+        # the PR body carries the slice's decision log, read before the close archived it
+        body = (self.cfg.path("transient") / "pr-body-s1.md").read_text()
+        self.assertIn("## Decision log", body)
+        self.assertIn("CAP-001 read as one caller at a time", body)
+        self.assertNotIn("Ships in the sprint PR body", body)
+
         # the run state is reset and the driver is ready for the next sprint
         state = self.cfg.state_file.read_text()
         self.assertIn("phase: sprint_start", state)
@@ -252,7 +264,11 @@ class EndToEndTest(support.TempProject):
         self.assertIn("merge", events)
         self.assertIn("ship", events)
         dispatches = [r for r in rows if r["event"] == "dispatch"]
-        self.assertTrue(all("duration_s" in r and "exit_code" in r for r in dispatches))
+        self.assertTrue(dispatches)
+        self.assertTrue(all(r["agent"] == r["role"] and "duration_s" in r
+                            and "rc" in r and r["started_at"] <= r["ended_at"]
+                            for r in dispatches))
+        self.assertEqual({r["sprint"] for r in rows if "sprint" in r}, {"s1"})
 
         # every task worktree is cleaned up
         self.assertFalse(list(self.cfg.worktree_base.glob("s1-*")))

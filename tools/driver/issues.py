@@ -125,11 +125,16 @@ def repair(rt, item: dict) -> str:
     if item.get("task_id"):
         params["task_id"] = str(item["task_id"])
     rt.tele.event("repair", role="wf-designer", mode="repair", di_id=di_id,
-                  task_id=item.get("task_id"))
+                  task=item.get("task_id"), sprint=rt.state.sprint_id)
     rt.agents.launch("wf-designer", params, mode="repair", task_id=item.get("task_id"))
 
     decision_prep = rt.cfg.path_opt("decision_prep")
     if decision_prep and decision_prep.exists():
+        # The phase must be parked on disk before the run ends, or the restart re-runs
+        # this phase and the repair dispatch deletes the unread brief.
+        rt.state.suspend("awaiting_ruling")
+        rt.tele.event("stop", reason="escalation", sprint=rt.state.sprint_id,
+                      detail=str(decision_prep), di_id=di_id)
         raise Pause("escalation", f"the design role escalated {di_id} to a ruling")
 
     after = entry(rt, di_id)

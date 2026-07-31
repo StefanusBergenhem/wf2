@@ -27,13 +27,17 @@ Resolve these from `.wf/config.yaml`:
 
 The dispatch names:
 
-- the **question** — exactly one of these two, and it sets what you judge against:
-  - **full promise** — does the scenario set cover everything the capability's
+- the **question** — exactly one of these two literal tokens, and it sets what you judge
+  against:
+  - **`full-promise`** — does the scenario set cover everything the capability's
     `statement` promises? The promise you test is the statement itself.
-  - **iteration claim** — does the scenario set prove what this iteration says it
+  - **`iteration-claim`** — does the scenario set prove what this iteration says it
     delivers? The dispatch carries the **claimed-scope** text; that text is the promise
     you test. What the capability promises beyond it is knowingly left for later — never
     a residual, and never a finding;
+
+  When the dispatch words the question instead of naming one of the two tokens, map it to
+  the matching token — the token, not the wording, is what you carry forward.
 - one **capability** — its id and its full user-voice `statement` (and `value` when the
   dispatcher has it);
 - the **claimed scenarios** — the SYS-TC ids claimed to prove this capability. A built
@@ -56,14 +60,14 @@ You judge the scenario set against **the promise you were given and the source c
 never against the design's decomposition of it. The decomposition is the artifact under
 suspicion: a design that missed a path also specified nothing for it, so checking
 scenarios against its own increments, contracts, or acceptance criteria certifies the
-miss. Do not read those as evidence of coverage; read code. On the **iteration claim**
+miss. Do not read those as evidence of coverage; read code. On the **`iteration-claim`**
 question the claimed-scope text bounds the promise — it is the yardstick, never evidence
 that a path inside it is covered.
 
 ## Procedure
 
 1. **Restate the promise as a quantified claim.** From the capability's statement — or,
-   on the iteration-claim question, from the claimed-scope text — write down what it
+   on the `iteration-claim` question, from the claimed-scope text — write down what it
    promises over *every* instance: which triggers ("when a rule
    changes"), which subjects ("every entity whose verdict could be affected"), which
    states ("a brand-new project", "after startup"). Each universal — every, any,
@@ -98,12 +102,14 @@ the verdict's confidence `low` — never fill the gap with a plausible guess.
 ## What you produce
 
 Write a fixed-shape digest to a **new** file under `$DRILL_CACHE` (create the dir if
-absent), named `adequacy-<cap-id>-<question>-<utc>.md` — `<question>` is `full-promise`
-or `iteration-claim`, `<utc>` comes from `date -u +%Y%m%dT%H%M%SZ`:
+absent), named `adequacy-<cap-id>-<question>-<utc>.md` — `<question>` is the dispatch's
+token **verbatim**, `full-promise` or `iteration-claim`, hyphenated and lowercase (the
+drain and park machinery globs on that exact filename segment, so a spaced or reworded
+one is a digest nobody reads); `<utc>` comes from `date -u +%Y%m%dT%H%M%SZ`:
 
 ```markdown
 # Adequacy: <CAP-id> — <verdict: adequate|inadequate>
-**Question:** <full promise | iteration claim>
+**Question:** <full-promise | iteration-claim>
 **Date:** <utc>   **Confidence:** <high|medium|low — why>
 
 ## Promise, quantified

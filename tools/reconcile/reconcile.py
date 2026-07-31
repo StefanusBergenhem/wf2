@@ -13,8 +13,8 @@ describes the test, so it cannot rot apart from it). <id> is repo-unique
 mark, never reused). After a scenario retires, a lingering tag is a historical
 breadcrumb, never an error.
 
-Component requirements (REQ-<n>) are NOT tagged in code: they are planning-time ids
-whose statements live in the transient backlog → slice → contract chain, drained from
+Component requirements are NOT tagged in code: an acceptance criterion IS the
+requirement, and it lives in the transient slice → task contract chain, drained from
 the merge record at sprint close (`wf pipeline complete-sprint`). This harvester
 ignores any legacy `[REQ:...]` token.
 

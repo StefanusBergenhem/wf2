@@ -75,6 +75,29 @@ def _iou(ua, ub, sa, sb):
     return inter / union if union > 0 else 0.0
 
 
+def _driver_role(row):
+    """The role a `kind: driver_event` row names — the driver writes the role name under
+    both `agent` and `role`. A row naming neither is a phase event (sprint_start, stop,
+    ship), not a dispatch, and joins nothing."""
+    return row.get("agent") or row.get("role")
+
+
+def _contains(cand, ua, ub):
+    """True when the candidate's window brackets the whole usage window."""
+    return bool(cand["_a"] and cand["_b"] and cand["_a"] <= ua and cand["_b"] >= ub)
+
+
+def _exact_pick(ua, ub, cands, used):
+    """The index of the tightest candidate window CONTAINING [ua, ub] — the exact join.
+    The driver brackets every dispatch it launches, so a transcript that falls inside a
+    dispatch belongs to that role; tightest wins when parallel dispatches overlap."""
+    if not (ua and ub):
+        return None
+    fits = [(c["_b"] - c["_a"], i) for i, c in enumerate(cands)
+            if i not in used and _contains(c, ua, ub)]
+    return min(fits)[1] if fits else None
+
+
 def _stats(vals):
     return {"avg": round(sum(vals) / len(vals)), "max": max(vals)} if vals else {"avg": 0, "max": 0}
 
@@ -82,13 +105,16 @@ def _stats(vals):
 def _roles(rest):
     """Per-role context-footprint report, derived on demand from the telemetry rows —
     nothing is stored. Each `SubagentStop` usage row is one wf-role subagent's own
-    transcript; it is window-joined to the skill row (`agent` + window) it overlaps
-    most. Two load metrics, deliberately separate: `context_max` is the largest
-    single-request context — the honest "how much did this role hold at once" peak —
-    while `footprint = input + cache_creation` sums every cache write, so it inflates
-    whenever a slow turn expires the prompt-cache TTL and the context is re-written
-    (churn, not load). Diagnose "loaded too much" on context_max, "cache churned" on
-    a footprint far above it. Pre-upgrade rows carry no context_max and read as 0.
+    transcript, joined to the row that names the role that ran it: a driver dispatch row
+    (`kind: driver_event`) or a session record. A dispatch brackets the run, so a
+    transcript falling inside one joins it exactly; only a window nothing contains falls
+    back to the best time-overlap match. Two load metrics, deliberately separate:
+    `context_max` is the largest single-request context — the honest "how much did this
+    role hold at once" peak — while `footprint = input + cache_creation` sums every
+    cache write, so it inflates whenever a slow turn expires the prompt-cache TTL and
+    the context is re-written (churn, not load). Diagnose "loaded too much" on
+    context_max, "cache churned" on a footprint far above it. Pre-upgrade rows carry
+    no context_max and read as 0.
     The main loop (`wf-orchestrate`) is not a subagent — its `Stop` rows are
     cumulative snapshots of the whole session transcript, so its final total per
     session is reported separately under `main_loop`."""
@@ -98,7 +124,7 @@ def _roles(rest):
     args = p.parse_args(rest)
     sink = Path(args.sink) if args.sink else common.resolve_path(args.config, "telemetry", None)
 
-    skill, sub, stop = [], [], []
+    skill, driver, sub, stop = [], [], [], []
     if sink.exists():
         for line in sink.read_text(encoding="utf-8").splitlines():
             line = line.strip()
@@ -110,20 +136,32 @@ def _roles(rest):
                 continue
             if r.get("kind") == "usage":
                 (sub if r.get("hook_event") == "SubagentStop" else stop).append(r)
+            elif r.get("kind") == "driver_event":
+                if _driver_role(r):
+                    driver.append(r)
             elif "agent" in r:
                 skill.append(r)
 
-    # Subagent candidates: skill rows for non-orchestrate roles that overlap some usage
-    # row (the hook-era rows). Each carries a parsed window.
-    cands = [dict(s, _a=_parse(s.get("started_at")), _b=_parse(s.get("ended_at")))
-             for s in skill if s.get("agent") != "wf-orchestrate"]
+    # Join candidates: every row naming the role that ran a subagent — the driver's
+    # dispatch rows and the roles' own session records. Each carries a parsed window.
+    def _candidate(row, role):
+        return dict(row, agent=role,
+                    _a=_parse(row.get("started_at")), _b=_parse(row.get("ended_at")))
+
+    # A main-loop session row spans the whole run, so it would contain (and swallow)
+    # every subagent's window; it is reported under main_loop from its `Stop` rows.
+    cands = [_candidate(s, s.get("agent")) for s in skill
+             if s.get("agent") != "wf-orchestrate"]
+    cands += [_candidate(d, _driver_role(d)) for d in driver]
 
     used, joined = set(), []
     for u in sub:
         ua, ub = _parse(u.get("started_at")), _parse(u.get("ended_at"))
-        scored = sorted(((_iou(ua, ub, c["_a"], c["_b"]), i) for i, c in enumerate(cands)),
-                        reverse=True)
-        pick = next((i for sc, i in scored if i not in used and sc > 0), None)
+        pick = _exact_pick(ua, ub, cands, used)
+        if pick is None:
+            scored = sorted(((_iou(ua, ub, c["_a"], c["_b"]), i)
+                             for i, c in enumerate(cands)), reverse=True)
+            pick = next((i for sc, i in scored if i not in used and sc > 0), None)
         if pick is None:
             continue
         used.add(pick)

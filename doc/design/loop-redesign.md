@@ -247,8 +247,9 @@ system_tests: [SYS-TC-44]  # e2e tasks only; text inlined by materialize
 
 `implementation_notes` is dead. REQ ids and `id_counters.req` are dead. The
 increment's slice section (the stage narrative) rides in every task envelope,
-so a build agent reads: increment narrative → story → acceptance → boundaries →
-grounding, and nothing else.
+so a build agent reads: increment narrative → covers → story → acceptance →
+boundaries → grounding (plus the task's title), and nothing else — `covers`
+rides along because build and review judge scope against it.
 
 **Contract checks (sprint-check successor, re-anchored):** story present and
 non-trivial; every AC carries tests[] or verified_by; boundaries is a single

@@ -175,8 +175,9 @@ For each capability in `serves:`, dispatch the **`wf-adequacy`** agent. State in
 dispatch, verbatim:
 
 - the capability's id and full statement;
-- **the verdict question: does the scenario set prove what THIS iteration claims** — judge
-  against the claimed scope below, not the capability's whole promise;
+- **the question, as the literal token `iteration-claim`** — pass it verbatim, hyphenated:
+  it selects what the review judges against (the claimed scope below, not the capability's
+  whole promise) and is stamped into the digest filename the close-time machinery globs on;
 - the **claimed scope** for that capability, copied from the slice;
 - the **claimed scenarios** — this slice's SYS-TC ids covering it, each with its
   Given/When/Then inline (they are not built yet; the agent cannot grep them);

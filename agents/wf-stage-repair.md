@@ -67,16 +67,16 @@ list if absent; never drop an existing entry):
 ```yaml
   - id: "DI-STAGE-<sprint-id>-<utc>"     # <utc> = date -u +%H%M%S
     detected_by: stage-repair
-    fix_kind: "<component_defect | spec_amendment>"
     severity: "<low | medium | high>"
     status: open
     summary: "<what is wrong in the design, and why the boundary cannot be honestly made green — 1-3 lines>"
 ```
 
-Pick `fix_kind` by where the wrong decision lives: `component_defect` (already-merged code
-violates a correct contract and needs a follow-up task — the usual case), `spec_amendment`
-(a contract, the slice, or an ADR is itself wrong). Write no `task_id` — an
-increment-boundary defect owns no single task.
+Make the `summary` precise enough to classify the fix from: name the merged behaviour or
+the contract clause the boundary cannot honestly satisfy, and the increment whose
+allocation it belongs to. Do not classify the fix and do not set a `fix_kind` — the design
+role does that when it repairs the entry. Write no `task_id` — an increment-boundary defect
+owns no single task.
 
 ## What you return
 

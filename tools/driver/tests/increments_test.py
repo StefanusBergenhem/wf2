@@ -176,16 +176,42 @@ class IncrementTest(support.TempProject):
 
     # ── merges ───────────────────────────────────────────────────────────────
 
-    def test_a_merge_conflict_records_a_design_issue_and_does_not_complete(self):
-        cli = self.happy_cli({
+    def conflict_cli(self):
+        return self.happy_cli({
             ("pipeline", "next"): [frontier(dispatch=["T1"]),
                                    frontier(approved=["T1"], stage_done=True),
                                    frontier(stage_done=True, increment_done=True)],
         })
+
+    def test_a_merge_conflict_is_repaired_in_place_by_stage_repair(self):
+        cli = self.conflict_cli()
         git = fakes.FakeGit()
         git.conflict_on.add("task/s1-T1")
-        rt = self.rt(cli, git=git)
+        agents = fakes.FakeAgents(self.cfg)
+        agents.on("wf-stage-repair", lambda *a: git.resolve_merge())
+        rt = self.rt(cli, agents=agents, git=git)
         increments.run_increment(rt, 1)
+        repair = next(x for x in agents.launches if x["role"] == "wf-stage-repair")
+        self.assertEqual(repair["mode"], "merge")
+        self.assertEqual(repair["params"]["task_id"], "T1")
+        self.assertEqual(repair["params"]["task_branch"], "task/s1-T1")
+        self.assertIn("shared.go", repair["params"]["conflicting_paths"])
+        # the resolved merge completes the task; nothing is aborted and no design
+        # issue is raised for a conflict the repair rung could resolve
+        self.assertIn("pipeline complete-task", cli.verbs())
+        self.assertEqual(git.aborted, [])
+        self.assertNotIn("pipeline record-design-issue", cli.verbs())
+
+    def test_a_failed_merge_repair_aborts_and_records_a_design_issue(self):
+        cli = self.conflict_cli()
+        git = fakes.FakeGit()
+        git.conflict_on.add("task/s1-T1")
+        agents = fakes.FakeAgents(self.cfg)
+        agents.exit_codes["wf-stage-repair"] = 1  # the repair could not resolve it
+        rt = self.rt(cli, agents=agents, git=git)
+        increments.run_increment(rt, 1)
+        self.assertEqual(git.aborted, ["task/s1-T1"])
+        self.assertTrue(git.is_clean())
         self.assertNotIn("pipeline complete-task", cli.verbs())
         self.assertIn("pipeline record-design-issue", cli.verbs())
         self.assertIn("shared.go", self.cfg.path("design_issues").read_text())
@@ -193,9 +219,11 @@ class IncrementTest(support.TempProject):
     # ── the boundary ─────────────────────────────────────────────────────────
 
     def test_a_red_stage_check_dispatches_stage_repair_with_the_checkpoint(self):
-        cfg = driver_config.load(str(support.write_config(
-            self.root, stage_check="bash -c 'exit 1'")))
-        self.cfg = cfg
+        # the stage-check repair budget is the boundary loop's own, not the
+        # build→review budget: halving review.max_attempts must not move it
+        path = support.write_config(self.root, stage_check="bash -c 'exit 1'")
+        path.write_text(path.read_text().replace("max_attempts: 3", "max_attempts: 1"))
+        self.cfg = driver_config.load(str(path))
         cli = self.happy_cli()
         agents = fakes.FakeAgents(self.cfg)
         rt = self.rt(cli, agents=agents)
@@ -205,7 +233,19 @@ class IncrementTest(support.TempProject):
         self.assertTrue(repairs)
         self.assertIn("patch round-trips", repairs[0]["params"]["Checkpoint"])
         self.assertEqual(repairs[0]["params"]["mode"], "repair")
-        self.assertEqual(len(repairs), self.cfg.max_attempts)
+        self.assertEqual(len(repairs), increments.STAGE_REPAIR_ATTEMPTS)
+        self.assertNotEqual(increments.STAGE_REPAIR_ATTEMPTS, self.cfg.max_attempts)
+
+    def test_the_checkpoint_reads_the_slice_templates_own_line_shape(self):
+        self.cfg.path("design_slice").write_text(
+            "## Increments\n\n### Increment 1 — the seam\n\n"
+            "- **Goal:** a caller can patch a zone.\n"
+            "- **Checkpoint:** after this increment, a patch round-trips — "
+            "observed by the e2e suite\n")
+        rt = self.rt(self.happy_cli())
+        self.assertEqual(
+            increments.checkpoint(rt, 1),
+            "after this increment, a patch round-trips — observed by the e2e suite")
 
     def test_a_green_stage_check_closes_the_increment(self):
         cfg = driver_config.load(str(support.write_config(
@@ -235,6 +275,27 @@ class IncrementTest(support.TempProject):
         path.write_text("sprint_id: s1\ntasks:\n" + "".join(
             f"  - id: T{n}\n    increment: {n}\n" for n in numbers))
         return path
+
+    def test_the_tl_envelope_names_the_task_ids_from_the_sprint_file(self):
+        # a restarted driver has an empty in-memory worktree map; the durable record
+        # of what ids are taken is the sprint file
+        self.write_sprint(1, 2, 3)
+        cli = self.happy_cli()
+        agents = fakes.FakeAgents(self.cfg)
+        rt = self.rt(cli, agents=agents)
+        self.assertEqual(rt.worktrees, {})
+        increments.prepare_contracts(rt, 1)
+        tl = next(x for x in agents.launches if x["role"] == "wf-tl")
+        self.assertEqual(tl["params"]["task ids already used this sprint"],
+                         "T1, T2, T3")
+
+    def test_the_tl_envelope_says_none_yet_when_no_sprint_file_exists(self):
+        cli = self.happy_cli()
+        agents = fakes.FakeAgents(self.cfg)
+        rt = self.rt(cli, agents=agents)
+        increments.prepare_contracts(rt, 1)
+        tl = next(x for x in agents.launches if x["role"] == "wf-tl")
+        self.assertEqual(tl["params"]["task ids already used this sprint"], "none yet")
 
     def test_a_slice_recut_prunes_only_the_increment_the_design_issue_names(self):
         sprint = self.write_sprint(1, 2)

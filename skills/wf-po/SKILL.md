@@ -5,8 +5,8 @@ description: Product Owner — turns unstructured product input and the discover
 
 # wf-po
 
-**Read `wf-basics` first for the `.wf/` layout and config rules.** Resolve every
-path below from `.wf/config.yaml`:
+**Read `{{WF_SKILLS_DIR}}/wf-basics/SKILL.md` now** for the `.wf/` layout and config
+rules. Resolve every path below from `.wf/config.yaml`:
 
 - `CAPABILITIES` = `paths.capabilities`    (the durable capabilities file — read + write, committed)
 - `BRIEF`        = `paths.discover_brief`  (discover's agent digest — read, if present)

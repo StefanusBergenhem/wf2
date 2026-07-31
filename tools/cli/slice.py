@@ -16,7 +16,11 @@
 - **A9** — ``## Increments`` holds ``### Increment <n>`` blocks numbered 1..N in
   order, and N is within ``limits.increments_per_sprint``.
 - **A10** — every ``## System test cases`` case carries a ``**Covers:**`` line
-  naming at least one CAP id.
+  naming at least one CAP or L id (a learning-driven scenario covers an L id).
+- **A11** — every CAP on the ``**Serves:**`` header is covered by at least one case
+  the parser read. A10 speaks only for cases it recognised, so a slice whose case
+  syntax drifted yields zero scenarios and would otherwise pass in silence. L-ids
+  are exempt.
 
 Exits non-zero on any error finding.
 """
@@ -152,26 +156,41 @@ def increment_findings(text, cap):
     return msgs
 
 
-def testcase_covers_findings(text):
-    """The A10 findings: a SYS-TC case with no `**Covers:**` line naming a CAP. The
-    case's covered capability is what the close-time adequacy gate reads."""
-    msgs, current, covered = [], None, False
-
-    def flush():
-        if current and not covered:
-            msgs.append(f"slice: {current} carries no '**Covers:**' line — name the "
-                        f"capability the scenario proves")
-
+def testcases(text):
+    """{SYS-TC id: [CAP/L ids]} for every `## System test cases` case the parser reads. A
+    case whose head syntax drifted is absent from the map — the sprint's materializer
+    reads the same shape, so what does not parse here does not ship either."""
+    cases, current = {}, None
     for line in section(text, _SYSTEM_TESTS_HEADER).splitlines():
         head = _TC_HEAD_RE.search(line)
         if head:
-            flush()
-            current, covered = head.group(1), False
+            current = head.group(1)
+            cases.setdefault(current, [])
             continue
         if current and "**Covers:**" in line:
-            covered = bool(re.findall(r"\bCAP-\d+\b", line.split("**Covers:**", 1)[1]))
-    flush()
-    return msgs
+            cases[current] += _DRIVER_ID_RE.findall(line.split("**Covers:**", 1)[1])
+    return cases
+
+
+def testcase_covers_findings(text):
+    """The A10 findings: a SYS-TC case with no `**Covers:**` line naming a driver. A
+    scenario proves a capability or a learning; what it covers is what the close-time
+    adequacy gate reads."""
+    return [f"slice: {tc} carries no '**Covers:**' line — name the capability or "
+            f"learning the scenario proves"
+            for tc, ids in testcases(text).items() if not ids]
+
+
+def serves_coverage_findings(text):
+    """The A11 findings: a CAP on the `**Serves:**` header that no PARSED case covers.
+    A10 only speaks for cases it read, so a slice whose case syntax drifted yields zero
+    scenarios and passes in silence; this names the capability that would ship unproven.
+    L-ids are exempt — a learning needs no scenario."""
+    covered = {i for ids in testcases(text).values() for i in ids}
+    return [f"slice: {cid} is served but no parsed system test case covers it — write a "
+            f"'- **SYS-TC-<n>:** <case>' case with a '**Covers:** {cid}' line"
+            for cid in serves_ids(text)
+            if cid.startswith("CAP-") and cid not in covered]
 
 
 def _adr_title(path):
@@ -261,6 +280,7 @@ def _check(rest):
     errors += [{"code": "A9", "msg": m}
                for m in increment_findings(text, limit(args.config, "increments_per_sprint"))]
     errors += [{"code": "A10", "msg": m} for m in testcase_covers_findings(text)]
+    errors += [{"code": "A11", "msg": m} for m in serves_coverage_findings(text)]
     index = adr_index(common.project_root(args.config))
     adr_errors, citations = adr_citations(text, index)
     errors += adr_errors

@@ -17,7 +17,7 @@ PHASES = ("sprint_start", "designing", "increment_loop", "closeout",
           "awaiting_ruling", "stopped")
 
 _FIELDS = ("phase", "sprint_id", "sprint_branch", "increment", "stop_reason",
-           "stop_pending")
+           "stop_pending", "resume_phase", "closeout_done")
 
 
 def _now() -> str:
@@ -35,6 +35,12 @@ class State:
         # A stop signal seen mid-sprint: the loop finishes and ships the sprint it is
         # in, then exits. Carried on disk so a restart does not lose the signal.
         self.stop_pending = doc.get("stop_pending")
+        # The phase a pending ruling suspended, so the resume returns to it rather than
+        # re-running the phase machine from the top.
+        self.resume_phase = doc.get("resume_phase")
+        # The closeout steps this sprint already ran — a restart inside closeout must
+        # not re-dispatch them (a second adequacy review would shift the park count).
+        self.closeout_done = list(doc.get("closeout_done") or [])
 
     def as_doc(self) -> dict:
         return {"version": 1, **{k: getattr(self, k) for k in _FIELDS}}
@@ -61,6 +67,19 @@ class State:
         self.sprint_branch = branch
         self.increment = 1
         self.stop_reason = None
+        self.resume_phase = None
+        self.closeout_done = []
+
+    def step_done(self, step: str) -> None:
+        """Bank one finished closeout step, on disk, before the next one starts."""
+        if step not in self.closeout_done:
+            self.closeout_done.append(step)
+            self.save()
+
+    def suspend(self, phase: str) -> None:
+        """Park the run for a human ruling, remembering the phase to come back to."""
+        self.resume_phase = self.phase
+        self.enter(phase)
 
     def enter(self, phase: str) -> None:
         if phase not in PHASES:

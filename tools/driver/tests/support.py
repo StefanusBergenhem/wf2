@@ -61,13 +61,13 @@ paths:
   review_ready: ".wf/transient/review-ready.yaml"
   feedback: ".wf/transient/feedback.yaml"
   design_issues: ".wf/transient/design-issues.yaml"
-  spec_decisions: ".wf/transient/spec-decisions.md"
 
 parallel:
   worktree_base: ".wf/transient/worktrees"
 
 driver:
   agent_cmd: '{agent_cmd}'
+{agent_cmd_overrides}\
   max_parallel: 2
   max_unmerged_sprints: 3
   stop_file: ".wf/transient/STOP"
@@ -94,7 +94,7 @@ review:
   passes: [wf-review]
   max_attempts: 3
 
-closeout: [wf-retrospective, ship]
+closeout: [wf-retrospective, adequacy, ship]
 
 orchestrate:
   history_cap: 50
@@ -107,13 +107,18 @@ id_counters:
 
 
 def write_config(root: Path, *, tools=None, agent_cmd='echo "{prompt}"',
-                 review_state_cmd="", stage_check="") -> Path:
+                 review_state_cmd="", stage_check="", agent_cmd_overrides=None) -> Path:
     """Write a complete .wf/config.yaml into ``root`` and return its path."""
     (root / ".wf").mkdir(parents=True, exist_ok=True)
     cfg = root / ".wf" / "config.yaml"
+    overrides = ""
+    if agent_cmd_overrides:
+        overrides = "  agent_cmd_overrides:\n" + "".join(
+            f"    {role}: '{cmd}'\n" for role, cmd in agent_cmd_overrides.items())
     cfg.write_text(CONFIG_TMPL.format(
         tools=str(tools if tools is not None else TOOLS_DIR),
         agent_cmd=agent_cmd,
+        agent_cmd_overrides=overrides,
         review_state_cmd=review_state_cmd,
         stage_check=stage_check,
     ))

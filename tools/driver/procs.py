@@ -7,6 +7,7 @@ open-ended ones (agents, project gates) take their bound from config.
 """
 from __future__ import annotations
 
+import datetime
 import os
 import subprocess
 import time
@@ -34,6 +35,13 @@ class Completed:
     stderr: str
     duration_s: int
     timed_out: bool = False
+    # The wall-clock span, ISO-8601 UTC — what a telemetry row joins on.
+    started_at: str = ""
+    ended_at: str = ""
+
+
+def _stamp() -> str:
+    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def run(argv, *, timeout: int, cwd=None, shell: bool = False,
@@ -41,7 +49,7 @@ def run(argv, *, timeout: int, cwd=None, shell: bool = False,
     """Run a command under an explicit bound. Never raises on a non-zero exit or a
     timeout — the caller routes on ``rc``. ``stdout_path`` streams both streams to a
     file instead of capturing them (agent output is logged, never read)."""
-    started = time.monotonic()
+    started, started_at = time.monotonic(), _stamp()
     handle = None
     try:
         if stdout_path is not None:
@@ -66,4 +74,5 @@ def run(argv, *, timeout: int, cwd=None, shell: bool = False,
             handle.close()
     return Completed(argv=argv if isinstance(argv, list) else [str(argv)], rc=rc,
                      stdout=out, stderr=err,
-                     duration_s=int(time.monotonic() - started), timed_out=timed_out)
+                     duration_s=int(time.monotonic() - started), timed_out=timed_out,
+                     started_at=started_at, ended_at=_stamp())

@@ -21,26 +21,33 @@ from runtime import Halt, Pause
 
 _TC_HEAD_RE = re.compile(r"-\s+\*\*(SYS-TC-\d+):\*\*")
 _COVERS_RE = re.compile(r"\*\*Covers:\*\*(.*)")
+_HALT_MODE_RE = re.compile(r"^\s*mode:\s*([A-Za-z][\w-]*)", re.MULTILINE)
+
+# How many times a red slice is sent back to the design role before the run halts.
+# The build→review budget (`review.max_attempts`) bounds one task's chain, not this.
+SLICE_GATE_ATTEMPTS = 3
+# The closeout steps the driver runs itself; everything else in the list is a role.
+ADEQUACY_STEP = "adequacy"
+SHIP_STEP = "ship"
+DECISION_LOG_SECTION = "Decision log"
 
 
 # ── sprint_start ─────────────────────────────────────────────────────────────
 
 
 def sprint_start(rt, resume: bool = False) -> None:
-    if not rt.git.is_clean():
-        raise Halt("dirty_tree",
-                   "the working tree carries uncommitted changes — a sprint branch "
-                   "must be cut from a clean tree")
-    base = rt.git.stack_tip()
     if resume and rt.state.sprint_id:
         sprint_id, branch = rt.state.sprint_id, rt.state.sprint_branch
     else:
         sprint_id = rt.git.next_sprint_id()
         branch = f"{gitops.SPRINT_PREFIX}{sprint_id}"
+    _clean_tree_gate(rt, sprint_id)
+    base = rt.git.stack_tip()
+    if not (resume and rt.state.sprint_id):
         rt.state.start_sprint(sprint_id, branch)
     rt.state.save()
     rt.git.start_branch(branch, base)
-    rt.tele.event("sprint_start", sprint_id=sprint_id, branch=branch, base=base)
+    rt.tele.event("sprint_start", sprint=sprint_id, branch=branch, base=base)
     rt.log(f"sprint {sprint_id} on {branch} (base {base})")
 
     # resume hygiene: drop handoffs whose consumer can never return, and free the
@@ -60,6 +67,23 @@ def sprint_start(rt, resume: bool = False) -> None:
     rt.state.enter("designing")
 
 
+def _clean_tree_gate(rt, sprint_id) -> None:
+    """A sprint branch is cut from a clean tree. The one exception is the telemetry
+    sink: it is committed, and every role and Stop hook appends to it after the sprint's
+    last commit — so rows left there are carried into this sprint's first commit instead
+    of halting the loop. Any other path is still a halt."""
+    dirty = rt.git.dirty_paths()
+    if not dirty:
+        return
+    telemetry = rt.cfg.rel("telemetry")
+    if telemetry and set(dirty) == {telemetry}:
+        rt.git.commit_paths([telemetry], f"telemetry: carry rows into sprint {sprint_id}")
+        return
+    raise Halt("dirty_tree",
+               "the working tree carries uncommitted changes — a sprint branch must "
+               f"be cut from a clean tree: {', '.join(sorted(dirty))}")
+
+
 # ── designing ────────────────────────────────────────────────────────────────
 
 
@@ -76,15 +100,25 @@ def designing(rt) -> dict:
 
 def resume_ruling(rt) -> dict:
     """Re-enter a run that halted for a human ruling. The design role's resume mode
-    consumes the ruling; an unruled brief keeps the run paused."""
+    consumes the ruling; an unruled brief keeps the run paused. Where the run picks up
+    is what the brief's ``mode:`` header says the halt interrupted: an originate halt
+    carries on designing, a repair halt goes back into the increment loop."""
     decision_prep = rt.cfg.path_opt("decision_prep")
+    halted_in = ""
     if decision_prep and decision_prep.exists():
         if not ruling_present(decision_prep):
-            rt.tele.event("stop", reason="escalation", sprint_id=rt.state.sprint_id,
+            rt.tele.event("stop", reason="escalation", sprint=rt.state.sprint_id,
                           detail="the ruling section is still empty")
             raise Pause("escalation", f"{decision_prep} carries no ruling yet")
+        halted_in = halt_mode(decision_prep)
         rt.agents.launch("wf-designer", {"Mode": "resume"}, mode="resume")
         _escalation_gate(rt)
+    if halted_in == "repair" or (not halted_in
+                                 and rt.state.resume_phase == "increment_loop"):
+        rt.state.resume_phase = None
+        rt.state.enter("increment_loop")
+        return {}
+    rt.state.resume_phase = None
     return slice_gate(rt)
 
 
@@ -93,7 +127,19 @@ def ruling_present(path) -> bool:
     lines are not a ruling."""
     text = path.read_text()
     body = slice_reader.section(text, "Ruling")
-    return bool(re.sub(r"<!--.*?-->", "", body, flags=re.DOTALL).strip())
+    return bool(_prose(body))
+
+
+def halt_mode(path) -> str:
+    """The design-role mode the brief says it halted in (`originate` | `repair`), or ''
+    when it names none."""
+    found = _HALT_MODE_RE.search(path.read_text())
+    return found.group(1).lower() if found else ""
+
+
+def _prose(body: str) -> str:
+    """A markdown section's body with html comments stripped — a comment is not prose."""
+    return re.sub(r"<!--.*?-->", "", body, flags=re.DOTALL).strip()
 
 
 def slice_gate(rt) -> dict:
@@ -105,7 +151,7 @@ def slice_gate(rt) -> dict:
                     "the design role wrote no slice — nothing open and unparked is "
                     "in scope")
 
-    for _ in range(rt.cfg.max_attempts):
+    for _ in range(SLICE_GATE_ATTEMPTS):
         check = rt.cli.read("slice", "check")
         if check.ok:
             rt.state.enter("increment_loop")
@@ -124,8 +170,8 @@ def slice_gate(rt) -> dict:
 def _escalation_gate(rt) -> None:
     decision_prep = rt.cfg.path_opt("decision_prep")
     if decision_prep and decision_prep.exists():
-        rt.state.enter("awaiting_ruling")
-        rt.tele.event("stop", reason="escalation", sprint_id=rt.state.sprint_id,
+        rt.state.suspend("awaiting_ruling")
+        rt.tele.event("stop", reason="escalation", sprint=rt.state.sprint_id,
                       detail=str(decision_prep))
         raise Pause("escalation", f"a ruling is pending in {decision_prep}")
 
@@ -135,15 +181,49 @@ def _escalation_gate(rt) -> None:
 
 def closeout(rt) -> None:
     rt.state.enter("closeout")
+    steps = _closeout_steps(rt)
     rt.cli.mutate("pipeline", "transition", "--to", "end_of_sprint")
     served = _served_ids(rt)
-    for step in rt.cfg.closeout:
-        if step == "ship":
-            adequacy_pass(rt, served)
-            ship(rt)
+    for step in steps:
+        if step in rt.state.closeout_done:
+            rt.log(f"closeout: {step} already ran this sprint — skipping")
             continue
-        rt.agents.launch(step, {"mode": step, "sprint_branch": rt.state.sprint_branch},
-                         mode=step)
+        if step == SHIP_STEP:
+            ship(rt)          # terminal: it resets the state for the next sprint
+            return
+        if step == ADEQUACY_STEP:
+            adequacy_pass(rt, served)
+        else:
+            rt.agents.launch(step,
+                             {"mode": step, "sprint_branch": rt.state.sprint_branch},
+                             mode=step)
+        rt.state.step_done(step)
+
+
+def _closeout_steps(rt) -> list:
+    """The configured closeout list, checked before anything runs: every entry must be
+    one the driver can execute, `ship` is terminal, and the close-time adequacy gate
+    must run before it — shipping archives the slice and drains the working set the
+    gate reviews."""
+    steps = rt.cfg.closeout
+    unknown = [s for s in steps
+               if s not in (ADEQUACY_STEP, SHIP_STEP) and not s.startswith("wf-")]
+    if unknown:
+        raise Halt("unknown_closeout_step",
+                   f"closeout names {', '.join(unknown)} — an entry is a wf-* role, "
+                   f"'{ADEQUACY_STEP}', or '{SHIP_STEP}'")
+    if SHIP_STEP not in steps:
+        return steps
+    if steps[-1] != SHIP_STEP:
+        raise Halt("closeout_order",
+                   f"'{SHIP_STEP}' is the terminal closeout step — it archives the "
+                   f"slice and drains the working set, so nothing configured after it "
+                   f"can run: {', '.join(steps)}")
+    if ADEQUACY_STEP not in steps:
+        raise Halt("closeout_order",
+                   f"closeout must run '{ADEQUACY_STEP}' before '{SHIP_STEP}' — "
+                   f"without it no capability is ever proven, drained or parked")
+    return steps
 
 
 def _served_ids(rt) -> list:
@@ -162,24 +242,29 @@ def adequacy_pass(rt, served) -> None:
     for cap in [s for s in served if str(s).startswith("CAP-")]:
         entry = _capability_entry(rt, cap)
         rt.agents.launch("wf-adequacy", {
-            "Question": "full promise",
+            "Question": adequacy.FULL_PROMISE,
             "Capability": cap,
             "Statement": entry.get("statement", ""),
             "Value": entry.get("value", ""),
             "Claimed scenarios": ", ".join(_scenarios_for(rt, cap)) or "none in this slice",
             "Candidate shipped scenarios": "the [SYS-TC:] tags in the test tree "
                                            "(paths.tests) — derive them yourself",
-        }, mode="full-promise", task_id=cap)
+        }, mode=adequacy.FULL_PROMISE, task_id=cap)
 
         result = rt.cli.mutate("pipeline", "drain-capability", cap)
         drained = bool(result.ok and result.data.get("drained"))
-        rt.tele.event("adequacy", capability=cap, sprint_id=rt.state.sprint_id,
+        rt.tele.event("adequacy", capability=cap, sprint=rt.state.sprint_id,
                       verdict=result.data.get("verdict"), drained=drained)
         if drained:
             continue
+        # inadequate: the residuals are the next design's input, so they go back onto
+        # the capability before the park count decides whether it is designable at all.
+        digest = result.data.get("digest") or adequacy.newest_digest(rt.cfg, cap)
+        if digest:
+            rt.cli.mutate("pipeline", "append-residuals", cap, "--digest", str(digest))
         if adequacy.should_park(rt.cfg, cap):
             if adequacy.park_capability(rt.cfg, cap):
-                rt.tele.event("park", capability=cap, sprint_id=rt.state.sprint_id,
+                rt.tele.event("park", capability=cap, sprint=rt.state.sprint_id,
                               consecutive=adequacy.consecutive_inadequate(rt.cfg, cap))
                 rt.log(f"{cap} parked after {adequacy.PARK_THRESHOLD} inadequate "
                        f"verdicts — it needs a PO session")
@@ -222,12 +307,10 @@ def _scenarios_for(rt, cap) -> list:
 
 def ship(rt) -> None:
     """Close the sprint, then publish it in the run's one push."""
-    # Read what the close drains out of the working set BEFORE it drains it: the
-    # decision report and the slice's title are both gone once complete-sprint runs.
-    decisions = ""
-    spec_decisions = rt.cfg.path_opt("spec_decisions")
-    if spec_decisions and spec_decisions.exists():
-        decisions = spec_decisions.read_text()
+    # Read what the close drains out of the working set BEFORE it drains it: the slice
+    # carries both the decision report and the sprint's title, and complete-sprint
+    # archives the slice.
+    decisions = decision_log(rt)
     title = _title(rt)
 
     closed = rt.cli.mutate("pipeline", "complete-sprint")
@@ -241,8 +324,11 @@ def ship(rt) -> None:
     body_path.parent.mkdir(parents=True, exist_ok=True)
     body_path.write_text(_pr_body(rt, sprint_id, drain, decisions))
 
+    # The telemetry sink is committed and every role appended to it this sprint; it
+    # ships with the close so the next sprint starts from a clean tree.
     rt.git.commit_paths(
-        [rt.cfg.rel(k) for k in ("archive", "learnings", "capabilities", "plan")]
+        [rt.cfg.rel(k) for k in ("archive", "learnings", "capabilities", "plan",
+                                 "telemetry")]
         + [".wf/config.yaml"],
         f"sprint close: archive + drain {sprint_id}")
     rt.git.push(branch)
@@ -252,13 +338,23 @@ def ship(rt) -> None:
         raise Halt("ship_failed",
                    f"{sprint_id} is closed and committed on {branch}, but publishing "
                    f"it failed ({out}) — push and open the PR by hand")
-    rt.tele.event("ship", sprint_id=sprint_id, branch=branch, base=base, pr=out)
+    rt.tele.event("ship", sprint=sprint_id, branch=branch, base=base, pr=out)
     rt.log(f"shipped {sprint_id}: {out}")
 
     rt.state.sprint_id = None
     rt.state.sprint_branch = None
     rt.state.increment = 1
+    rt.state.closeout_done = []
     rt.state.enter("sprint_start")
+
+
+def decision_log(rt) -> str:
+    """The slice's `## Decision log` — every decision the design role took below the
+    escalation gate. It ships in the PR body, which is where the human reviews them."""
+    path = rt.cfg.path_opt("design_slice")
+    if not path or not path.exists():
+        return ""
+    return _prose(slice_reader.section(path.read_text(), DECISION_LOG_SECTION))
 
 
 def _title(rt) -> str:
@@ -291,7 +387,7 @@ def _pr_body(rt, sprint_id, drain, decisions) -> str:
     if plan and plan.exists():
         lines += ["## Plan", "", plan.read_text().strip(), ""]
     if decisions.strip():
-        lines += ["## Decisions", "", decisions.strip(), ""]
+        lines += [f"## {DECISION_LOG_SECTION}", "", decisions.strip(), ""]
     return "\n".join(lines)
 
 

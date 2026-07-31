@@ -6,7 +6,9 @@ stdout goes to a log file and is never read, so no routing decision can be made
 from an agent's prose.
 
 The launch command is the config template ``driver.agent_cmd`` with ``{prompt}``
-substituted — the one place harness differences live.
+substituted — the one place harness differences live. A role named in
+``driver.agent_cmd_overrides`` is launched with its own template instead, which is how
+a single role gets a different model or harness flag.
 """
 from __future__ import annotations
 
@@ -78,7 +80,7 @@ class Dispatcher:
     def launch(self, role: str, params: dict, *, cwd=None, task_id=None,
                increment=None, mode=None) -> Launched:
         prompt = build_prompt(self.cfg, role, params)
-        cmd = render_cmd(self.cfg.agent_cmd, prompt)
+        cmd = render_cmd(self.cfg.agent_cmd_for(role), prompt)
         log_path = self._log_path(role, task_id)
         if self.dry_run:
             self.planned.append({"role": role, "mode": mode, "task_id": task_id,
@@ -92,9 +94,10 @@ class Dispatcher:
 
         done = procs.run(cmd, timeout=self.timeout, cwd=cwd or self.cfg.root,
                          shell=True, stdout_path=log_path)
-        self.telemetry.event("dispatch", role=role, mode=mode, task_id=task_id,
-                             increment=increment, exit_code=done.rc,
+        self.telemetry.event("dispatch", role=role, mode=mode, task=task_id,
+                             increment=increment, rc=done.rc,
                              duration_s=done.duration_s,
+                             started_at=done.started_at, ended_at=done.ended_at,
                              timed_out=done.timed_out or None,
                              log=str(log_path))
         return Launched(role, done.rc, done.duration_s, done.timed_out, log_path,

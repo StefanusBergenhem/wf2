@@ -6,9 +6,9 @@ source vs. tests) and the companion fan-out: the built-in ``*.up.sql`` →
 ``*.down.sql`` sibling, plus any ``impact.companions`` rules the project config
 declares (``when`` glob on a changed/consumer file → ``add`` globs expanded
 against the tree, e.g. a migrations change fanning out to a codegen output
-folder). ``candidates`` is the union — the computed basis for a task's expected
-write set (``files_to_touch``), and what makes cross-task overlaps visible for
-ordering edges.
+folder). ``candidates`` is the union of the three sets: the mechanical floor for
+what a change must reach — the tree answers it, so nobody has to recall it — and
+what makes two tasks' overlapping reach visible when ordering them.
 """
 from __future__ import annotations
 

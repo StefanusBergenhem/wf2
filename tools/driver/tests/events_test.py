@@ -28,16 +28,35 @@ class TelemetryTest(support.TempProject):
         return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
 
     def test_event_row_carries_the_driver_kind_and_a_timestamp(self):
-        self.tele.event("dispatch", role="wf-build", task_id="T1", exit_code=0,
-                        duration_s=12)
+        self.tele.event("dispatch", role="wf-build", task="T1", rc=0, duration_s=12)
         (row,) = self.rows()
         self.assertEqual(row["kind"], "driver_event")
         self.assertEqual(row["event"], "dispatch")
         self.assertEqual(row["role"], "wf-build")
-        self.assertEqual(row["task_id"], "T1")
-        self.assertEqual(row["exit_code"], 0)
+        self.assertEqual(row["task"], "T1")
+        self.assertEqual(row["rc"], 0)
         self.assertEqual(row["duration_s"], 12)
         self.assertTrue(row["ts"].endswith("Z"))
+
+    def test_a_role_row_mirrors_the_role_into_agent(self):
+        # the telemetry reader classifies every row by `agent`; a driver row that
+        # carried only `role` was dropped or fuzzy-joined
+        self.tele.event("dispatch", role="wf-designer", mode="originate", sprint="s3",
+                        increment=2, rc=0, started_at="2026-07-31T09:00:00Z",
+                        ended_at="2026-07-31T09:04:00Z")
+        (row,) = self.rows()
+        self.assertEqual(row["agent"], "wf-designer")
+        self.assertEqual(row["role"], "wf-designer")
+        self.assertEqual(row["sprint"], "s3")
+        self.assertEqual(row["started_at"], "2026-07-31T09:00:00Z")
+        self.assertEqual(row["ended_at"], "2026-07-31T09:04:00Z")
+
+    def test_a_row_with_no_span_of_its_own_is_stamped_zero_length(self):
+        self.tele.event("stop", reason="manual_stop")
+        (row,) = self.rows()
+        self.assertEqual(row["started_at"], row["ts"])
+        self.assertEqual(row["ended_at"], row["ts"])
+        self.assertNotIn("agent", row)
 
     def test_rows_append_and_the_sink_dir_is_created(self):
         self.tele.event("sprint_start", sprint_id="s1")

@@ -119,10 +119,34 @@ class LaunchTest(support.TempProject):
         rows = [json.loads(x) for x in cfg.path("telemetry").read_text().splitlines()]
         self.assertEqual(rows[-1]["event"], "dispatch")
         self.assertEqual(rows[-1]["role"], "wf-build")
-        self.assertEqual(rows[-1]["task_id"], "T9")
+        self.assertEqual(rows[-1]["agent"], "wf-build")
+        self.assertEqual(rows[-1]["task"], "T9")
         self.assertEqual(rows[-1]["increment"], 2)
         self.assertEqual(rows[-1]["mode"], "fix")
-        self.assertEqual(rows[-1]["exit_code"], 0)
+        self.assertEqual(rows[-1]["rc"], 0)
+        self.assertTrue(rows[-1]["started_at"].endswith("Z"))
+        self.assertTrue(rows[-1]["ended_at"].endswith("Z"))
+
+    def test_a_pinned_role_launches_through_its_own_template(self):
+        script = self.root / "pinned-agent.sh"
+        script.write_text('#!/usr/bin/env bash\nprintf "pinned" > "$2"\n')
+        script.chmod(0o755)
+        (self.root / ".claude/agents/wf-designer.md").write_text("agent\n")
+        cfg = driver_config.load(str(support.write_config(
+            self.root, agent_cmd=f'bash -c "true" "{{prompt}}"',
+            agent_cmd_overrides={"wf-designer": f'{script} "{{prompt}}" {self.marker}'})))
+        d = driver_dispatch.Dispatcher(cfg, driver_events.Telemetry(cfg))
+        d.launch("wf-designer", {})
+        self.assertEqual(self.marker.read_text(), "pinned")
+        self.assertEqual(cfg.agent_cmd_for("wf-build"), cfg.agent_cmd)
+
+    def test_a_role_with_no_override_falls_back_to_the_shared_template(self):
+        cfg = driver_config.load(str(support.write_config(
+            self.root, agent_cmd=f'bash -c "touch {self.marker}" "{{prompt}}"',
+            agent_cmd_overrides={"wf-designer": "never-run {prompt}"})))
+        d = driver_dispatch.Dispatcher(cfg, driver_events.Telemetry(cfg))
+        self.assertEqual(d.launch("wf-build", {}).exit_code, 0)
+        self.assertTrue(self.marker.exists())
 
 
 if __name__ == "__main__":

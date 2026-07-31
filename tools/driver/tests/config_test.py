@@ -52,11 +52,21 @@ class ConfigTest(support.TempProject):
         cfg = self.load(stage_check="make e2e")
         self.assertEqual(cfg.review_passes, ["wf-review"])
         self.assertEqual(cfg.max_attempts, 3)
-        self.assertEqual(cfg.closeout, ["wf-retrospective", "ship"])
+        self.assertEqual(cfg.closeout, ["wf-retrospective", "adequacy", "ship"])
         self.assertEqual(cfg.base_branch, "main")
         self.assertEqual(cfg.command("stage_check"), "make e2e")
         self.assertEqual(cfg.command("preflight"), "")
         self.assertEqual(cfg.limit("increments_per_sprint"), 4)
+
+    def test_agent_cmd_overrides_pin_one_role_and_leave_the_rest(self):
+        pinned = "claude --model opus {prompt}"
+        cfg = self.load(agent_cmd_overrides={"wf-designer": pinned})
+        self.assertEqual(cfg.agent_cmd_for("wf-designer"), pinned)
+        self.assertEqual(cfg.agent_cmd_for("wf-build"), cfg.agent_cmd)
+
+    def test_agent_cmd_for_falls_back_when_no_override_map_exists(self):
+        cfg = self.load()
+        self.assertEqual(cfg.agent_cmd_for("wf-designer"), cfg.agent_cmd)
 
     def test_role_file_prefers_an_agent_over_a_skill(self):
         (self.root / ".claude/agents").mkdir(parents=True)

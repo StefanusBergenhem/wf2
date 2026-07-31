@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 #
-# Tests for `wf sprint task` (the build envelope), `wf sprint materialize` (inline
+# Tests for `wf sprint task` (the build envelope: stage narrative → covers → story
+# → acceptance → boundaries → grounding, plus the title), `wf sprint materialize` (inline
 # the slice's SYS-TC text), and `wf sprint check` (the contract gate over the
 # four-section schema: story / acceptance / boundaries / grounding).
 # Run: bash tools/cli/tests/sprint_test.sh   (exit 0 = all pass)
@@ -102,6 +103,7 @@ sprint_id: sprint-20260731-zones
 tasks:
   - id: T1
     increment: 1
+    title: "Zone store patch path"
     depends_on: []
     covers: [CAP-24]
     story: |
@@ -240,27 +242,36 @@ if wf sprint materialize >/dev/null 2>&1; then bad "materialize without slice sh
 # ---------------------------------------------------------------------------
 # wf sprint task — the build envelope
 # ---------------------------------------------------------------------------
-# Exactly: the increment's stage narrative → story → acceptance → boundaries →
-# grounding (+ the inlined SYS-TC on an e2e task). Nothing else travels.
+# Exactly: the increment's stage narrative → covers → story → acceptance →
+# boundaries → grounding, plus the task's title (+ the inlined SYS-TC on an e2e
+# task). Nothing else travels.
 
 write_slice; write_sprint
 wf sprint materialize >/dev/null
 OUT="$(wf sprint task T1 --format json)"
 [ "$(jget "$OUT" "d['id']")" = "T1" ] && ok "sprint task emits the requested task" || bad "envelope id" "$OUT"
-[ "$(jget "$OUT" "list(d)")" = "['id', 'increment', 'increment_narrative', 'story', 'acceptance', 'boundaries', 'grounding']" ] \
+[ "$(jget "$OUT" "list(d)")" = "['id', 'increment', 'title', 'increment_narrative', 'covers', 'story', 'acceptance', 'boundaries', 'grounding']" ] \
   && ok "sprint task emits the envelope fields in reading order" || bad "envelope order" "$OUT"
 echo "$OUT" | grep -q "Zone store seam" \
   && ok "envelope carries the increment's stage narrative" || bad "envelope narrative" "$OUT"
 [ "$(jget "$OUT" "'Increment 2' in d['increment_narrative']")" = "False" ] \
   && ok "envelope carries ONLY this increment's section" || bad "envelope narrative bleed" "$OUT"
-[ "$(jget "$OUT" "'covers' in d or 'depends_on' in d")" = "False" ] \
-  && ok "envelope drops planning metadata (covers, depends_on)" || bad "envelope metadata" "$OUT"
+# covers travels: build and review judge scope against the driver this task serves
+[ "$(jget "$OUT" "d['covers']")" = "['CAP-24']" ] \
+  && ok "envelope carries covers (build/review judge scope against it)" || bad "envelope covers" "$OUT"
+[ "$(jget "$OUT" "d['title']")" = "Zone store patch path" ] \
+  && ok "envelope carries the task title (the build's commit subject)" || bad "envelope title" "$OUT"
+[ "$(jget "$OUT" "'depends_on' in d")" = "False" ] \
+  && ok "envelope drops planning metadata (depends_on)" || bad "envelope metadata" "$OUT"
 
 # an e2e task's envelope carries the materialized scenario
 OUT="$(wf sprint task T2 --format json)"
 [ "$(jget "$OUT" "d['system_tests'][0]['id']")" = "SYS-TC-1" ] \
   && ok "envelope inlines the SYS-TC on an e2e task" || bad "envelope systest" "$OUT"
 echo "$OUT" | grep -q "HTTP surface" && ok "e2e envelope carries increment 2's narrative" || bad "envelope inc2" "$OUT"
+# title is optional: a task that carries none simply has no title field
+[ "$(jget "$OUT" "'title' in d")" = "False" ] \
+  && ok "envelope omits title when the task declares none" || bad "envelope no-title" "$OUT"
 
 # --write drops the envelope at the given path (the driver's current_task)
 DEST="$PROJ/.wf/transient/current-task.yaml"

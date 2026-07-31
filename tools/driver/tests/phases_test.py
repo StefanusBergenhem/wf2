@@ -14,6 +14,7 @@ import config as driver_config
 import fakes
 import phases
 import runtime as driver_runtime
+import state as driver_state
 
 SLICE_OK = {"verdict": "pass", "serves": ["CAP-001", "L-002"],
             "increments": [{"n": 1, "title": "seam"}, {"n": 2, "title": "http"}],
@@ -69,6 +70,28 @@ class PhaseTest(support.TempProject):
         rt = self.rt(git=fakes.FakeGit(clean=False))
         with self.assertRaises(driver_runtime.Halt):
             phases.sprint_start(rt)
+
+    def test_a_tree_dirtied_only_by_the_telemetry_sink_is_committed_not_halted(self):
+        # roles and Stop hooks append rows to the committed sink after the sprint's
+        # last commit; that must not block the next sprint
+        git = fakes.FakeGit(dirty=[self.cfg.rel("telemetry")], sprint_id="s2")
+        rt = self.rt(git=git)
+        self.cfg.path("discover_brief").parent.mkdir(parents=True, exist_ok=True)
+        self.cfg.path("discover_brief").write_text("brief\n")
+        phases.sprint_start(rt)
+        self.assertEqual(git.commits[0][1], [self.cfg.rel("telemetry")])
+        self.assertIn("telemetry", git.commits[0][0])
+        self.assertIn("s2", git.commits[0][0])
+        self.assertEqual(git.branches, ["sprint/s2"])
+
+    def test_any_other_dirt_alongside_the_telemetry_sink_still_halts(self):
+        git = fakes.FakeGit(dirty=[self.cfg.rel("telemetry"), "backend/zones.go"])
+        rt = self.rt(git=git)
+        with self.assertRaises(driver_runtime.Halt) as caught:
+            phases.sprint_start(rt)
+        self.assertEqual(caught.exception.reason, "dirty_tree")
+        self.assertIn("backend/zones.go", caught.exception.detail)
+        self.assertEqual(git.commits, [])
 
     def test_sprint_start_resumes_the_existing_sprint_branch(self):
         git = fakes.FakeGit(sprint_id="s5")
@@ -154,11 +177,75 @@ class PhaseTest(support.TempProject):
         rt.state.start_sprint("s1", "sprint/s1")
         phases.closeout(rt)
         self.assertEqual(agents.roles(), ["wf-retrospective", "wf-adequacy"])
-        self.assertEqual(agents.launches[-1]["params"]["Question"], "full promise")
+        self.assertEqual(agents.launches[-1]["params"]["Question"], "full-promise")
         self.assertIn("pipeline complete-sprint", cli.verbs())
         self.assertEqual(git.pushed, ["sprint/s1"])
         self.assertEqual(git.prs[0]["head"], "sprint/s1")
         self.assertEqual(git.prs[0]["base"], "main")
+
+    def closeout_cli(self):
+        return fakes.FakeCli({
+            ("slice", "check"): SLICE_OK,
+            ("pipeline", "drain-capability"): {"drained": True, "verdict": "adequate"},
+            ("pipeline", "complete-sprint"): {"sprint_id": "s1", "drain": {}},
+        })
+
+    def closeout_rt(self, steps, **kw):
+        path = support.write_config(self.root)
+        path.write_text(path.read_text().replace(
+            "closeout: [wf-retrospective, adequacy, ship]", f"closeout: {steps}"))
+        self.cfg = driver_config.load(str(path))
+        rt = self.rt(**kw)
+        rt.state.start_sprint("s1", "sprint/s1")
+        return rt
+
+    def test_a_closeout_step_the_driver_cannot_run_halts_rather_than_being_skipped(self):
+        self.write_slice()
+        rt = self.closeout_rt("[wf-retrospective, adequate, ship]",
+                              cli=self.closeout_cli())
+        with self.assertRaises(driver_runtime.Halt) as caught:
+            phases.closeout(rt)
+        self.assertEqual(caught.exception.reason, "unknown_closeout_step")
+        self.assertIn("adequate", caught.exception.detail)
+
+    def test_a_closeout_list_that_ships_before_adequacy_halts(self):
+        # ship archives the slice and drains the working set; an adequacy pass after
+        # it reviews a sprint that is already closed
+        self.write_slice()
+        rt = self.closeout_rt("[wf-retrospective, ship, adequacy]",
+                              cli=self.closeout_cli())
+        with self.assertRaises(driver_runtime.Halt) as caught:
+            phases.closeout(rt)
+        self.assertEqual(caught.exception.reason, "closeout_order")
+
+    def test_a_closeout_list_that_ships_without_adequacy_halts(self):
+        self.write_slice()
+        rt = self.closeout_rt("[wf-retrospective, ship]", cli=self.closeout_cli())
+        with self.assertRaises(driver_runtime.Halt) as caught:
+            phases.closeout(rt)
+        self.assertEqual(caught.exception.reason, "closeout_order")
+
+    def test_a_restart_mid_closeout_skips_the_steps_that_already_ran(self):
+        self.write_slice()
+        self.cfg.path("capabilities").write_text(
+            'version: 1\ncapabilities:\n  - id: "CAP-001"\n    statement: "s"\n')
+        agents = fakes.FakeAgents(self.cfg)
+
+        def die_after_retro(*a):
+            raise driver_runtime.Halt("boom", "the run was killed mid-closeout")
+        agents.on("wf-adequacy", die_after_retro)
+        rt = self.rt(cli=self.closeout_cli(), agents=agents)
+        rt.state.start_sprint("s1", "sprint/s1")
+        with self.assertRaises(driver_runtime.Halt):
+            phases.closeout(rt)
+        self.assertEqual(rt.state.closeout_done, ["wf-retrospective"])
+
+        # the restart re-enters closeout with the retrospective already banked
+        agents2 = fakes.FakeAgents(self.cfg)
+        rt2 = self.rt(cli=self.closeout_cli(), agents=agents2,
+                      state=driver_state.load(self.cfg))
+        phases.closeout(rt2)
+        self.assertEqual(agents2.roles(), ["wf-adequacy"])
 
     def test_three_inadequate_verdicts_park_the_capability(self):
         self.write_slice()
@@ -181,9 +268,15 @@ class PhaseTest(support.TempProject):
         phases.closeout(rt)
         self.assertIn("status: parked", self.cfg.path("capabilities").read_text())
 
-    def test_ship_folds_the_decision_report_into_the_pr_body(self):
-        self.write_slice()
-        self.cfg.path("spec_decisions").write_text("## D-1 — chose the seam\n")
+    def test_ship_folds_the_slices_decision_log_into_the_pr_body(self):
+        # the decision report lives in the slice, and complete-sprint archives the
+        # slice — so it is read before the close, not after
+        self.cfg.path("design_slice").write_text(
+            "# Design-slice — the seam\n\n**Serves:** CAP-001\n\n"
+            "## Decision log\n\n"
+            "<!-- Ships in the sprint PR body. -->\n\n"
+            "- **Assumption** — CAP-001 read as one caller at a time.\n\n"
+            "## Soundness\n\n- Cohesion: pass.\n")
         cli = fakes.FakeCli({
             ("slice", "check"): {"verdict": "pass", "serves": [], "increments": []},
             ("pipeline", "complete-sprint"): {"sprint_id": "s1",
@@ -194,8 +287,44 @@ class PhaseTest(support.TempProject):
         rt.state.start_sprint("s1", "sprint/s1")
         phases.closeout(rt)
         body = git.prs[0]["body"]
-        self.assertIn("D-1 — chose the seam", body)
+        self.assertIn("CAP-001 read as one caller at a time", body)
+        self.assertNotIn("Ships in the sprint PR body", body)   # comments are not prose
+        self.assertNotIn("Cohesion", body)                      # only its own section
         self.assertIn("L-2", body)
+
+    def test_ship_stages_the_telemetry_sink_with_the_close(self):
+        self.write_slice()
+        cli = fakes.FakeCli({
+            ("slice", "check"): {"verdict": "pass", "serves": [], "increments": []},
+            ("pipeline", "complete-sprint"): {"sprint_id": "s1", "drain": {}},
+        })
+        git = fakes.FakeGit()
+        rt = self.rt(cli=cli, git=git)
+        rt.state.start_sprint("s1", "sprint/s1")
+        phases.closeout(rt)
+        self.assertIn(self.cfg.rel("telemetry"), git.commits[-1][1])
+
+    def test_an_inadequate_verdict_appends_the_digests_residuals_to_the_capability(self):
+        self.write_slice()
+        self.cfg.path("capabilities").write_text(
+            'version: 1\ncapabilities:\n  - id: "CAP-001"\n    statement: "s"\n')
+        cache = self.cfg.path("drill_cache")
+        cache.mkdir(parents=True, exist_ok=True)
+        digest = cache / "adequacy-CAP-001-full-promise-20260101T000000Z.md"
+        digest.write_text("# Adequacy: CAP-001 — inadequate\n")
+        cli = fakes.FakeCli({
+            ("slice", "check"): SLICE_OK,
+            ("pipeline", "drain-capability"): (1, {"drained": False,
+                                                   "verdict": "inadequate",
+                                                   "digest": str(digest)}),
+            ("pipeline", "complete-sprint"): {"sprint_id": "s1", "drain": {}},
+        })
+        rt = self.rt(cli=cli)
+        rt.state.start_sprint("s1", "sprint/s1")
+        phases.closeout(rt)
+        call = next(c for c in cli.calls if c[:2] == ["pipeline", "append-residuals"])
+        self.assertEqual(call[2], "CAP-001")
+        self.assertEqual(call[call.index("--digest") + 1], str(digest))
 
     def test_closeout_leaves_the_state_ready_for_the_next_sprint(self):
         self.write_slice()

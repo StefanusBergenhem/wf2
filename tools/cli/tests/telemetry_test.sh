@@ -119,6 +119,61 @@ rget() { "$PYTHON" -c 'import sys,json; d=json.loads(sys.argv[1]); print(eval(sy
     && ok "roles: main_loop carries context_max" || bad "roles main ctx" "$OUT"
 [ "$(rget "$OUT" "d['matched']")" = "2" ] && ok "roles: reports matched count" || bad "roles matched" "$OUT"
 
+# ---------------------------------------------------------------------------
+# driver rows (kind: driver_event) — the driver brackets every dispatch, so its
+# window joins the subagent's usage row exactly instead of by time-window overlap.
+# ---------------------------------------------------------------------------
+DRV="$P/driver.jsonl"
+cat > "$DRV" <<'JSONL'
+{"kind":"driver_event","ts":"2026-07-12T11:00:00Z","event":"sprint_start","sprint":"sprint-1"}
+{"kind":"driver_event","ts":"2026-07-12T11:00:00Z","event":"dispatch","agent":"wf-build","role":"wf-build","mode":"build","sprint":"sprint-1","increment":1,"task":"T1","rc":0,"duration_s":3600,"started_at":"2026-07-12T11:00:00Z","ended_at":"2026-07-12T12:00:00Z"}
+{"kind":"driver_event","ts":"2026-07-12T11:20:00Z","event":"dispatch","agent":"wf-review","role":"wf-review","mode":"review","sprint":"sprint-1","increment":1,"task":"T1","rc":0,"duration_s":600,"started_at":"2026-07-12T11:10:00Z","ended_at":"2026-07-12T11:20:00Z"}
+{"kind":"driver_event","ts":"2026-07-12T12:00:00Z","event":"stop","reason":"work_exhausted","sprint":"sprint-1"}
+{"kind":"usage","session_id":"S2","hook_event":"SubagentStop","started_at":"2026-07-12T11:05:00Z","ended_at":"2026-07-12T11:15:00Z","tokens":{"input":700,"output":300,"cache_read":40000,"cache_creation":300},"tool_calls":4,"requests":6,"context_max":42000}
+JSONL
+OUT="$(wf telemetry roles --sink "$DRV" --config "$P/.wf/config.yaml" --format json 2>&1)"; RC=$?
+[ "$RC" -eq 0 ] && ok "roles: a driver-event sink exits zero" || bad "driver exit" "rc=$RC $OUT"
+[ "$(rget "$OUT" "d['matched']")" = "1" ] \
+    && ok "roles: a driver dispatch row is a join candidate" || bad "driver matched" "$OUT"
+# the usage window sits INSIDE wf-build's dispatch and merely overlaps wf-review's —
+# window-overlap scoring picks wf-review, containment picks the role that ran it
+[ "$(rget "$OUT" "next(r['context_max_max'] for r in d['roles'] if r['role']=='wf-build')")" = "42000" ] \
+    && ok "roles: the containing dispatch wins the join, not the best overlap" || bad "driver exact" "$OUT"
+[ "$(rget "$OUT" "any(r['role']=='wf-review' for r in d['roles'])")" = "False" ] \
+    && ok "roles: the overlapping dispatch takes no run it did not run" || bad "driver overlap" "$OUT"
+# a phase event (sprint_start, stop) names no role and must not become one
+[ "$(rget "$OUT" "len(d['roles'])")" = "1" ] \
+    && ok "roles: a driver phase event is not a role" || bad "driver phase" "$OUT"
+
+# a driver row that names its role only under `role` still joins
+cat > "$DRV" <<'JSONL'
+{"kind":"driver_event","ts":"2026-07-12T11:00:00Z","event":"dispatch","role":"wf-tl","mode":"increment","sprint":"sprint-1","increment":1,"rc":0,"duration_s":900,"started_at":"2026-07-12T11:00:00Z","ended_at":"2026-07-12T11:15:00Z"}
+{"kind":"usage","session_id":"S3","hook_event":"SubagentStop","started_at":"2026-07-12T11:01:00Z","ended_at":"2026-07-12T11:14:00Z","tokens":{"input":100,"output":200,"cache_read":300,"cache_creation":400},"tool_calls":2,"requests":3,"context_max":31000}
+JSONL
+OUT="$(wf telemetry roles --sink "$DRV" --config "$P/.wf/config.yaml" --format json 2>&1)"
+[ "$(rget "$OUT" "[r['role'] for r in d['roles']]")" = "['wf-tl']" ] \
+    && ok "roles: a driver row naming only 'role' still joins" || bad "driver role key" "$OUT"
+
+# the driver stamps whole seconds, so a transcript can overrun the dispatch span that
+# bracketed it: containment fails and the overlap fallback must still land the right role
+cat > "$DRV" <<'JSONL'
+{"kind":"driver_event","ts":"2026-07-12T11:00:00Z","event":"dispatch","agent":"wf-build","role":"wf-build","mode":"build","sprint":"sprint-1","increment":1,"task":"T1","rc":0,"duration_s":3600,"started_at":"2026-07-12T11:00:00Z","ended_at":"2026-07-12T12:00:00Z"}
+{"kind":"driver_event","ts":"2026-07-12T11:20:00Z","event":"dispatch","agent":"wf-review","role":"wf-review","mode":"review","sprint":"sprint-1","increment":1,"task":"T1","rc":0,"duration_s":600,"started_at":"2026-07-12T11:10:00Z","ended_at":"2026-07-12T11:20:00Z"}
+{"kind":"usage","session_id":"S5","hook_event":"SubagentStop","started_at":"2026-07-12T10:59:59.400Z","ended_at":"2026-07-12T12:00:00.700Z","tokens":{"input":1,"output":2,"cache_read":3,"cache_creation":4},"tool_calls":1,"requests":1,"context_max":51000}
+JSONL
+OUT="$(wf telemetry roles --sink "$DRV" --config "$P/.wf/config.yaml" --format json 2>&1)"
+[ "$(rget "$OUT" "[r['role'] for r in d['roles']]")" = "['wf-build']" ] \
+    && ok "roles: a transcript overrunning its dispatch span still joins that role" || bad "driver trunc" "$OUT"
+
+# no candidate contains the usage window (clock skew) → the overlap join still matches
+cat > "$DRV" <<'JSONL'
+{"kind":"driver_event","ts":"2026-07-12T11:00:00Z","event":"dispatch","agent":"wf-build","role":"wf-build","mode":"build","sprint":"sprint-1","increment":1,"task":"T1","rc":0,"duration_s":300,"started_at":"2026-07-12T11:00:00Z","ended_at":"2026-07-12T11:05:00Z"}
+{"kind":"usage","session_id":"S4","hook_event":"SubagentStop","started_at":"2026-07-12T10:59:58Z","ended_at":"2026-07-12T11:05:03Z","tokens":{"input":10,"output":20,"cache_read":30,"cache_creation":40},"tool_calls":1,"requests":1,"context_max":7000}
+JSONL
+OUT="$(wf telemetry roles --sink "$DRV" --config "$P/.wf/config.yaml" --format json 2>&1)"
+[ "$(rget "$OUT" "next(r['context_max_max'] for r in d['roles'] if r['role']=='wf-build')")" = "7000" ] \
+    && ok "roles: falls back to the overlap join when nothing contains the window" || bad "driver fuzzy" "$OUT"
+
 echo ""
 echo "  telemetry verbs: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
