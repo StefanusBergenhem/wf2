@@ -147,3 +147,16 @@ else
       echo "$IGNORE_LINE"; } >> "$GITIGNORE"
     echo "  added $IGNORE_LINE to .gitignore"
 fi
+
+# Gitignore the toolkit's Python bytecode, exactly once — a stray __pycache__
+# under .wf/tools/ dirties the tree and trips the driver's clean-tree gate.
+TOOLS_REL="$(cfg_path tools)"
+if [ -n "$TOOLS_REL" ]; then
+    PYCACHE_LINE="$TOOLS_REL/**/__pycache__/"
+    if [ -f "$GITIGNORE" ] && grep -qxF "$PYCACHE_LINE" "$GITIGNORE"; then
+        echo "  gitignore already ignores $PYCACHE_LINE"
+    else
+        { echo "$PYCACHE_LINE"; } >> "$GITIGNORE"
+        echo "  added $PYCACHE_LINE to .gitignore"
+    fi
+fi

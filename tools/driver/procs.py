@@ -7,9 +7,14 @@ open-ended ones (agents, project gates) take their bound from config.
 """
 from __future__ import annotations
 
+import os
 import subprocess
 import time
 from dataclasses import dataclass
+
+# The CLI verbs run from the installed .wf/tools/ tree; bytecode written there
+# dirties the target's working tree and trips the driver's clean-tree gate.
+_ENV = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
 
 # Git plumbing answers in milliseconds; a call still running after this has hung.
 GIT_TIMEOUT_S = 120
@@ -44,11 +49,12 @@ def run(argv, *, timeout: int, cwd=None, shell: bool = False,
             handle = stdout_path.open("w", encoding="utf-8", errors="replace")
             proc = subprocess.run(argv, cwd=cwd and str(cwd), shell=shell,
                                   stdout=handle, stderr=subprocess.STDOUT,
-                                  timeout=timeout)
+                                  timeout=timeout, env=_ENV)
             out, err = "", ""
         else:
             proc = subprocess.run(argv, cwd=cwd and str(cwd), shell=shell,
-                                  capture_output=True, text=True, timeout=timeout)
+                                  capture_output=True, text=True, timeout=timeout,
+                                  env=_ENV)
             out, err = proc.stdout, proc.stderr
         rc, timed_out = proc.returncode, False
     except subprocess.TimeoutExpired:
