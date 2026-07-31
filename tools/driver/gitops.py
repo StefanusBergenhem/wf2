@@ -140,7 +140,8 @@ class Git:
         the forge counts as merged as soon as the fetch has seen it."""
         refs = self._base_refs()
         return [b for b in self.sprint_branches()
-                if not any(self.is_merged_into(b, ref) for ref in refs)]
+                if _SPRINT_ORDINAL_RE.match(b)
+                and not any(self.is_merged_into(b, ref) for ref in refs)]
 
     def stack_tip(self) -> str:
         """What the next sprint branches from: the top of the stack, else the base."""

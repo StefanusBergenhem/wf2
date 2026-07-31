@@ -65,6 +65,18 @@ class GitopsTest(support.TempProject):
         support.git(self.root, "merge", "-q", "--no-ff", "-m", "merge s1", "sprint/s1")
         self.assertEqual(self.git.stack(), ["sprint/s2"])
 
+    def test_stack_ignores_legacy_sprint_branches(self):
+        # A repo migrated from the old shape carries sprint/<name> branches whose
+        # PRs squash-merged (never ancestors of base). Only the driver's own
+        # sprint/s<N> branches are the stack.
+        self.git.start_branch("sprint/sprint-20260727-spec-first", "main")
+        (self.root / "legacy.txt").write_text("x")
+        support.git(self.root, "add", "legacy.txt")
+        support.git(self.root, "commit", "-q", "-m", "legacy work")
+        support.git(self.root, "checkout", "-q", "main")
+        self.assertEqual(self.git.stack(), [])
+        self.assertEqual(self.git.stack_tip(), "main")
+
     def test_stack_tip_and_pr_base_follow_the_stack(self):
         self.assertEqual(self.git.stack_tip(), "main")
         self.assertEqual(self.git.pr_base("sprint/s1"), "main")
