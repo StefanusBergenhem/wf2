@@ -29,6 +29,23 @@ def die(msg: str, code: int = 2) -> "NoReturn":  # type: ignore[name-defined]
     sys.exit(code)
 
 
+# Every subprocess this CLI starts carries an explicit bound. Git plumbing answers in
+# milliseconds; a call still running after this has hung, and an unbounded wait stalls
+# whatever the driver is holding open behind it (L-090).
+GIT_TIMEOUT_S = 60
+
+
+def git_out(args, timeout: int = GIT_TIMEOUT_S) -> "str | None":
+    """Run a git command and return its stripped stdout, or None on any failure —
+    non-zero exit, no git on PATH, or the timeout expiring."""
+    try:
+        proc = subprocess.run(args, capture_output=True, text=True, check=True,
+                              timeout=timeout)
+    except (subprocess.SubprocessError, FileNotFoundError, OSError):
+        return None
+    return proc.stdout.strip()
+
+
 # Test-file heuristic (deliberately simple + language-agnostic): a path is a
 # plausible test home when a directory segment is a conventional test dir, or the
 # filename carries test/spec as a delimited token (covers *_test.*, test_*.*,
@@ -89,15 +106,7 @@ def host_root() -> Path:
     SAME artifacts whether it is invoked from the main checkout or from a per-task
     worktree. Falls back to the current directory when not inside a git repo (e.g.
     a test harness's throwaway tmp project)."""
-    try:
-        out = subprocess.run(
-            ["git", "rev-parse", "--git-common-dir"],
-            capture_output=True,
-            text=True,
-            check=True,
-        ).stdout.strip()
-    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
-        return Path.cwd()
+    out = git_out(["git", "rev-parse", "--git-common-dir"])
     if not out:
         return Path.cwd()
     common_dir = Path(out)
@@ -112,31 +121,14 @@ def worktree_root() -> Path:
     image of ``host_root``: use this to act on the tree you are standing in (linting
     files, reading a diff), and ``host_root`` to resolve shared run state. Falls back
     to the current directory when not inside a git repo."""
-    try:
-        out = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"],
-            capture_output=True,
-            text=True,
-            check=True,
-        ).stdout.strip()
-    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
-        return Path.cwd()
+    out = git_out(["git", "rev-parse", "--show-toplevel"])
     return Path(out) if out else Path.cwd()
 
 
 def current_branch(root: Path) -> "str | None":
     """The branch checked out at ``root``, or None (detached HEAD, or not a git repo).
     Lets a resumed run recover a run-state field that was stored null."""
-    try:
-        out = subprocess.run(
-            ["git", "-C", str(root), "branch", "--show-current"],
-            capture_output=True,
-            text=True,
-            check=True,
-        ).stdout.strip()
-    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
-        return None
-    return out or None
+    return git_out(["git", "-C", str(root), "branch", "--show-current"]) or None
 
 
 def default_config() -> str:

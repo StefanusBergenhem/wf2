@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 #
-# Tests for the wf orchestrate helpers — the judgment-free return-inspection /
-# routing verdicts. Run: bash tools/cli/tests/orchestrate_test.sh (exit 0 = pass).
+# Tests for the wf orchestrate helpers — the judgment-free return-inspection and
+# resume-safety verdicts the driver routes on.
+# Run: bash tools/cli/tests/orchestrate_test.sh (exit 0 = pass).
 # wf2-source-only — never rendered into an install target.
 set -uo pipefail
 
@@ -146,95 +147,6 @@ wf orchestrate preserve-uncommitted "$R" T1 >/dev/null
 git -C "$R" -c core.hooksPath=/dev/null log --name-only -1 --pretty=format: | grep -q "junk.log" \
     && bad "pres ignored" "ignored file committed" || ok "preserve: gitignored file stays out"
 
-# ── dispatch-fix ─────────────────────────────────────────────────────────────
-# Every design issue routes to the single spec fixer, wf-spec-fix. Build/review/stage-repair
-# raise a BARE issue (no fix_kind); wf-tl tags a preparing-phase slice issue `scope: slice`.
-
-mk_di() {  # mk_di [extra-flow-fields] → project dir; DI-1 is a bare running-stage issue
-    local p; p="$(mktemp -d)"; mkdir -p "$p/.wf/transient"
-    cat > "$p/.wf/config.yaml" <<YAML
-version: 1
-paths:
-  design_issues: ".wf/transient/design-issues.yaml"
-  sprint: ".wf/transient/sprint.yaml"
-YAML
-    cat > "$p/.wf/transient/design-issues.yaml" <<YAML
-issues:
-  - {id: DI-1, task_id: T1, status: open${1:+, $1}}
-YAML
-    echo "$p"
-}
-# A bare design issue (no fix_kind) routes to wf-spec-fix autonomously.
-P="$(mk_di)"
-OUTD="$(wf orchestrate dispatch-fix DI-1 --config "$P/.wf/config.yaml")"; RC=$?
-[ "$(jget "$OUTD" "d['subagent_type']")" = "wf-spec-fix" ] && [ "$RC" -eq 0 ] \
-    && ok "dispatch-fix: bare design issue → wf-spec-fix (exit 0)" || bad "df bare" "$OUTD rc=$RC"
-[ "$(jget "$OUTD" "d['human_gate']")" = "False" ] \
-    && ok "dispatch-fix: bare issue is autonomous (no human gate)" || bad "df bare gate" "$OUTD"
-# The router ignores any fix_kind on the entry — routing no longer depends on the raiser's guess.
-P="$(mk_di "fix_kind: spec_amendment")"
-[ "$(jget "$(wf orchestrate dispatch-fix DI-1 --config "$P/.wf/config.yaml")" "d['subagent_type']")" = "wf-spec-fix" ] \
-    && ok "dispatch-fix: a leftover fix_kind does not change the route" || bad "df fixkind-ignored" ""
-
-# A slice issue wf-tl raises in `preparing` carries scope: slice — no task, no sprint.
-# Routes to wf-spec-fix autonomously, but only for a bounded number of re-cut rounds.
-
-mk_slice_di() {  # mk_slice_di <how-many-rounds> → prints project dir; the LAST is open
-    local p n; p="$(mktemp -d)"; n="$1"; mkdir -p "$p/.wf/transient"
-    cat > "$p/.wf/config.yaml" <<YAML
-version: 1
-paths:
-  design_issues: ".wf/transient/design-issues.yaml"
-  sprint: ".wf/transient/sprint.yaml"
-YAML
-    echo "issues:" > "$p/.wf/transient/design-issues.yaml"
-    for i in $(seq 1 "$n"); do
-        local st=resolved; [ "$i" -eq "$n" ] && st=open
-        echo "  - {id: DI-SLICE-$i, task_id: null, scope: slice, status: $st}" \
-            >> "$p/.wf/transient/design-issues.yaml"
-    done
-    echo "$p"
-}
-P="$(mk_slice_di 1)"
-OUTS="$(wf orchestrate dispatch-fix DI-SLICE-1 --config "$P/.wf/config.yaml")"; RCS=$?
-[ "$(jget "$OUTS" "d['subagent_type']")" = "wf-spec-fix" ] && [ "$RCS" -eq 0 ] \
-    && ok "dispatch-fix: slice issue → wf-spec-fix (exit 0)" || bad "df slice" "$OUTS rc=$RCS"
-[ "$(jget "$OUTS" "d['envelope']['task_id'] is None")" = "True" ] \
-    && ok "dispatch-fix: slice envelope carries no task_id" || bad "df slice task_id" "$OUTS"
-[ "$(jget "$OUTS" "'sprint_artifact' in d['envelope']")" = "False" ] \
-    && ok "dispatch-fix: slice envelope omits sprint_artifact (none exists in preparing)" \
-    || bad "df slice sprint_artifact" "$OUTS"
-# The envelope names the artifacts that are THERE: dispatch-fix reports what is on disk.
-P="$(mk_slice_di 1)"
-: > "$P/.wf/transient/sprint.yaml"
-OUTSP="$(wf orchestrate dispatch-fix DI-SLICE-1 --config "$P/.wf/config.yaml")"
-[ "$(jget "$OUTSP" "d['envelope'].get('sprint_artifact') or ''")" = ".wf/transient/sprint.yaml" ] \
-    && ok "dispatch-fix: slice envelope names \$SPRINT when one is on disk" \
-    || bad "df slice sprint present" "$OUTSP"
-# round 2 is still autonomous — the loop is cheap, and one bad cut deserves one re-cut
-P="$(mk_slice_di 2)"
-OUT2="$(wf orchestrate dispatch-fix DI-SLICE-2 --config "$P/.wf/config.yaml")"; RC2=$?
-[ "$(jget "$OUT2" "d['human_gate']")" = "False" ] && [ "$RC2" -eq 0 ] \
-    && ok "dispatch-fix: 2nd slice rejection still routes to wf-spec-fix" || bad "df slice round2" "$OUT2 rc=$RC2"
-# round 3 → the fixer is not converging; a human rules on the slice
-P="$(mk_slice_di 3)"
-OUT3="$(wf orchestrate dispatch-fix DI-SLICE-3 --config "$P/.wf/config.yaml" 2>/dev/null)"; RC3=$?
-[ "$(jget "$OUT3" "d['human_gate']")" = "True" ] && [ "$RC3" -eq 1 ] \
-    && ok "dispatch-fix: 3rd slice rejection → human gate (exit 1)" || bad "df slice round3" "$OUT3 rc=$RC3"
-[ -n "$(jget "$OUT3" "d.get('reason') or ''")" ] \
-    && ok "dispatch-fix: the round-bound gate says why" || bad "df slice round3 reason" "$OUT3"
-# The bound counts slice rejections ONLY: a sprint's bare running-stage issues share the
-# file, and counting them would gate a slice loop that has laps left.
-P="$(mk_slice_di 2)"
-cat >> "$P/.wf/transient/design-issues.yaml" <<'YAML'
-  - {id: DI-1, task_id: T1, status: resolved}
-  - {id: DI-2, task_id: T2, status: resolved}
-YAML
-OUTM="$(wf orchestrate dispatch-fix DI-SLICE-2 --config "$P/.wf/config.yaml" 2>/dev/null)"; RCM=$?
-[ "$(jget "$OUTM" "d['human_gate']")" = "False" ] && [ "$RCM" -eq 0 ] \
-    && ok "dispatch-fix: the round bound counts slice rejections, not the sprint's other DIs" \
-    || bad "df slice mixed-kinds" "$OUTM rc=$RCM"
-
 # ── sweep-transients ─────────────────────────────────────────────────────────
 # Staleness routes on pipeline_state.task_states: the artifact names its task_id;
 # a terminal task status (approved/completed/blocked/escalated/design_issue) makes
@@ -333,31 +245,22 @@ SW="$(wf orchestrate sweep-transients --config "$P/.wf/config.yaml")"
     && [ -f "$P/.wf/transient/design-issues.yaml" ] \
     && ok "sweep-di: open entry with task_id: null → kept" || bad "sweep-di null-task" "$SW"
 
-# A RESOLVED slice-scoped entry is the preparing loop's own history: dispatch-fix counts
-# these to bound the re-design rounds, so pruning one mid-loop under-counts the round on
-# a resume and hands the SA a third lap it should not get. Keep them while preparing runs.
-DI_ROUND1='issues:\n  - {id: DI-SLICE-1, task_id: null, scope: slice, status: resolved}\n  - {id: DI-SLICE-2, task_id: null, scope: slice, status: open}\n'
-P="$(mk_sweep_di "$DI_ROUND1" 'current_phase: preparing\n')"
-SW="$(wf orchestrate sweep-transients --config "$P/.wf/config.yaml")"
-[ "$(jget "$SW" "len(d['pruned'])")" = "0" ] \
-    && grep -q "DI-SLICE-1" "$P/.wf/transient/design-issues.yaml" \
-    && ok "sweep-di: resolved slice issue kept while preparing (it is the round count)" \
-    || bad "sweep-di slice-history" "$SW"
-# Once preparing is over, the same entry is residue.
-P="$(mk_sweep_di "$DI_ROUND1" 'current_phase: running_stage\n')"
+# A slice-scoped entry (no task) is a live handoff until the design role resolves it;
+# once resolved it is residue like any other closed entry, whatever the phase.
+DI_SLICE='issues:\n  - {id: DI-SLICE-1, task_id: null, scope: slice, status: resolved}\n  - {id: DI-SLICE-2, task_id: null, scope: slice, status: open}\n'
+P="$(mk_sweep_di "$DI_SLICE" 'current_phase: designing\n')"
 SW="$(wf orchestrate sweep-transients --config "$P/.wf/config.yaml")"
 [ "$(jget "$SW" "len(d['pruned'])")" = "1" ] && [ "$(jget "$SW" "d['pruned'][0]['id']")" = "DI-SLICE-1" ] \
     && grep -q "DI-SLICE-2" "$P/.wf/transient/design-issues.yaml" \
-    && ok "sweep-di: resolved slice issue pruned once preparing is over" \
-    || bad "sweep-di slice-residue" "$SW"
-# No pipeline-state file → the phase is UNKNOWN, which is not "not preparing": keep
-# everything, exactly as the top-level-task_id sweep does.
-P="$(mk_sweep_di "$DI_ROUND1" 'current_phase: preparing\n')"
+    && ok "sweep-di: resolved slice issue pruned, the open one kept" \
+    || bad "sweep-di slice" "$SW"
+# No pipeline-state file → keep everything, exactly as the top-level-task_id sweep does.
+P="$(mk_sweep_di "$DI_SLICE" 'current_phase: designing\n')"
 rm "$P/.wf/transient/pipeline-state.yaml"
 SW="$(wf orchestrate sweep-transients --config "$P/.wf/config.yaml")"
 [ "$(jget "$SW" "len(d['pruned'])")" = "0" ] && [ "$(jget "$SW" "len(d['deleted'])")" = "0" ] \
     && grep -q "DI-SLICE-1" "$P/.wf/transient/design-issues.yaml" \
-    && ok "sweep-di: no pipeline-state file → nothing pruned (phase unknown)" \
+    && ok "sweep-di: no pipeline-state file → nothing pruned" \
     || bad "sweep-di no-state" "$SW"
 
 # A status-less entry is the malformed-writer case: it defaults to `open` and stays. The

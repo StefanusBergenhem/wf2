@@ -28,7 +28,7 @@ describe crisply is one whose contents will keep growing.
 **Ask:** for each concept the change touches, exactly one component owns it?
 **Smells:** two components both claim it (overlap — pick an owner, the other depends
 on it) or none does (orphan — a new home, or assign it to the best-fit existing
-component). A requirement with no clean owner is the loudest version of this smell.
+component). Work with no clean owner is the loudest version of this smell.
 
 ## Dependency direction (DIP, acyclicity)
 
@@ -53,23 +53,22 @@ point; reserve in-place modification for when extension genuinely doesn't fit.
 
 ## Allocation completeness
 
-**Ask:** does every component the change **traverses** own at least one requirement — the
-core logic, its orchestration (the coordinating handler), and its composition root (where
-dependencies are wired)? **Smell:** a behaviour that must be observable end-to-end carries
-requirements only on its core-logic component, leaving the wiring unallocated. → An
-untouched composition root is the gap that ships a feature half-built — a `nil`-wired
-dependency that compiles and silently does nothing. Allocate the full delivery path, the
-composition root included.
+**Ask:** does every component a behaviour **traverses** carry work in the increment's
+allocation — the core logic, its orchestration (the coordinating handler), and its
+composition root (where dependencies are wired)? **Smell:** an increment whose
+checkpoint claims an observable behaviour but whose allocation names only the
+core-logic component, leaving the wiring to nobody. → An untouched composition root
+is the gap that ships a feature half-built: a `nil`-wired dependency that compiles and
+silently does nothing. Allocate the full delivery path, the composition root included.
 
 ## Move discipline
 
 A split, merge, new component, or dependency change must **improve a fitness measure
 above** — sharper responsibility, lower coupling, a cleaner dependency direction. If
 a proposed move doesn't measurably improve one of these, don't make it: churn
-without a fitness gain is cost with no benefit. Every move you do make is a
-load-bearing decision (candidate ADR) and a reason to re-run discover afterwards.
+without a fitness gain is cost with no benefit. Every move you make is a
+load-bearing decision — test it against the ADR threshold.
 
-Every move you put in a slice must be **realized by a requirement's edit set** — a component
-the move restructures needs a requirement in that same slice whose build performs it. A move
-no requirement carries is unowned scope: defer it to a later slice, or give the restructured
-component a driven requirement whose build performs it.
+Every move must be **realized inside an increment's allocation** — a component the
+move restructures needs work in that same increment carrying it out. A move no
+increment carries is unowned scope: defer it to a later sprint, or allocate it.

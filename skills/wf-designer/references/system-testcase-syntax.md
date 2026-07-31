@@ -3,21 +3,19 @@
 Contents:
 - The Gherkin-light form
 - Covering capabilities (`Covers:`)
-- Cover the whole promise
+- Cover what the iteration claims
 - The end-to-end rule
 - Verifiable assertions
 - The system-test checklist
 - What not to write
 
 A **system test case** is a capability-level, black-box scenario that proves a capability
-end-to-end by exercising the assembled path across components. There is no requirement
-above it — it answers directly to the capability. You write the human-readable scenario
-and give it a repo-unique `SYS-TC-<n>` id (minted from `id_counters.sys_tc`); wf-tl
-plans it as its own e2e task and the build writes the executable test tagged
+end-to-end by exercising the assembled path across components. It answers directly to the
+capability. Write the human-readable scenario and give it a repo-unique `SYS-TC-<n>` id;
+the Tech Lead plans it as its own e2e task and the build writes the executable test tagged
 `[SYS-TC:SYS-TC-<n>] <description>` — the durable proof record the register derives on
-demand. The shipped scenario set is the capability's **proof** — a scenario the set is
-missing keeps the capability open. It **covers capabilities**, never component
-requirements.
+demand. The shipped scenario set is the capability's **proof**: a scenario the set is
+missing keeps the capability open.
 
 ## The Gherkin-light form
 
@@ -43,19 +41,21 @@ Then  <the observable, verifiable end state or output>
 
 Every case declares the capabilities it proves on a `Covers:` line.
 
-- A case covers **at least one `CAP-<n>`** and never lists a component requirement
-  (`REQ-<n>`) — a system test proves the user-facing capability, not an internal component
-  obligation.
-- One capability may need several cases (distinct end-to-end behaviours); one case may
-  cover several capabilities.
+- A case covers **at least one `CAP-<n>`**. One capability may need several cases (distinct
+  end-to-end behaviours); one case may cover several capabilities.
+- A learning-driven case with no capability above it covers the `L-<n>` that drove it.
 
-## Cover the whole promise
+## Cover what the iteration claims
 
-Write the **set** against the capability's statement, not against the design you just
-shaped — the design's decomposition is exactly what a narrow set inherits its blind spots
-from. **Load `references/promise-sweep.md` and sweep every class it lists before calling
-the set done** — a class you skip is a scenario the adequacy review will name as a
-residual, at the cost of a re-cut.
+Write the **set** against the slice's **claimed scope** for each capability — the promise
+this iteration takes on — not against the increments you just cut. The decomposition is
+what a narrow set inherits its blind spots from. **Load
+`{{WF_SKILLS_DIR}}/wf-sa/references/promise-sweep.md` and sweep every class it lists
+before calling the set done** — a class you skip is a scenario the adequacy gate will name
+as a residual, at the cost of a re-cut.
+
+A path the claimed scope deliberately leaves for a later iteration gets **no scenario** —
+it is stated as left, not silently missing.
 
 ## The end-to-end rule
 
@@ -80,7 +80,7 @@ boundary (API, database, event bus, UI).
 
 ## The system-test checklist
 
-Run each case through these gates before appending it to the design slice:
+Run each case through these gates before putting it in the slice:
 
 - **Black-box.** Interacts only via public interfaces. Smell: the scenario names internal
   classes, private methods, or functions.
@@ -88,9 +88,13 @@ Run each case through these gates before appending it to the design slice:
   calls, or state left by another test.
 - **Single pathway.** One core behaviour per case. Smell: multiple `When`s or unrelated
   actions grouped under one scenario — split them.
-- **Traceable.** Every `CAP-<n>` in `Covers:` is actually exercised by the steps.
+- **Traceable.** Every id in `Covers:` is actually exercised by the steps.
 - **Complete preconditions.** The `Given` accounts for everything the `When` needs to
   succeed.
+- **Grounded in a surface that exists.** A `When`/`Then` naming a surface — "changed through
+  the API", "the write path updates X" — commits every downstream task to it. Open the
+  handler and the repository (or drill) before writing the step; when the surface is
+  missing, either an increment builds it or the step exercises a lever that does exist.
 
 ## What not to write
 
@@ -100,5 +104,5 @@ Run each case through these gates before appending it to the design slice:
   the boundary is wrong.
 - **UI mechanics.** Use abstract actions (*"When the user submits valid credentials"*), not
   click-by-click steps, unless the capability is itself about a UI control.
-- **Happy-path only.** If a driving capability has an error / unwanted behaviour, write the
-  corresponding error-path case too.
+- **Happy-path only.** If a driving capability has an error / unwanted behaviour inside the
+  claimed scope, write the corresponding error-path case too.

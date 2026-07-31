@@ -36,10 +36,9 @@ _AGENT_DOCS = {"AGENTS.md", "CLAUDE.md"}
 _GENERATED_RE = re.compile(r"@generated|code generated|do not edit", re.I)
 _SPEC_ID_RE = re.compile(r"\b(?:REQ-\d+|ADR-\d+|CAP-\d+|SYS-TC-\d+|L-\d{2,3})\b")
 # Only the [SYS-TC:] proving tag is a legal spec reference in code. A [REQ:] token is
-# the retired lane — requirement ids live in the backlog/slice/contract and drain from
-# the merge record — so it earns no exemption: exempting it would let a block state a
-# requirement verbatim and pass, which is the persisted-spec-prose this rule exists to
-# stop.
+# the retired lane — no requirement id exists outside a task contract any more — so it
+# earns no exemption: exempting it would let a block state a requirement verbatim and
+# pass, which is the persisted-spec-prose this rule exists to stop.
 _TAG_RE = re.compile(r"\[SYS-TC:")
 # A decision record cited by its own repo-relative path (e.g.
 # ".wf/adrs/ADR-003-unified-requirement-model-compliance-orchestrator.md") points a
@@ -53,7 +52,8 @@ _RATIO_MIN_LINES = 50
 # rules whose count increase in a touched pre-existing file fails the ratchet —
 # each is fixable inside the diff that introduced it. file-length is deliberately
 # absent (splitting is planning work); warn-severity rules never gate.
-_RATCHET_RULES = {"func-length", "comment-block", "spec-narrative", "agents-md-length"}
+_RATCHET_RULES = {"func-length", "comment-block", "spec-narrative", "agents-md-length",
+                  "charter-length", "plan-length"}
 
 
 def _cfg(config):
@@ -61,20 +61,44 @@ def _cfg(config):
     if not isinstance(h, dict):
         common.die("no hygiene block in config — add one (see the config template)")
     missing = [k for k in ("file_warn", "file_error", "func_error", "comment_block_max",
-                           "comment_ratio_warn", "agents_md_max") if k not in h]
+                           "comment_ratio_warn", "agents_md_max", "charter_max",
+                           "plan_max") if k not in h]
     if missing:
         common.die(f"hygiene config missing: {', '.join(missing)}")
     return h
 
 
+def _doc_caps(config, cfg):
+    """{relpath: (rule, cap)} for the two governed planning docs. The charter is read
+    at every design session and the plan rides in every sprint PR, so both are bounded
+    by line count exactly as an AGENTS.md is — they are not project source, so nothing
+    else in this linter applies to them."""
+    paths = common.config_doc(config).get("paths") or {}
+    out = {}
+    for key, rule, cap_key in (("charter", "charter-length", "charter_max"),
+                               ("plan", "plan-length", "plan_max")):
+        rel = paths.get(key)
+        if rel:
+            out[str(rel)] = (rule, int(cfg[cap_key]), key)
+    return out
+
+
 def _git(root, *args, check=True):
-    r = subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True)
+    """Run git under an explicit bound — an unbounded call here would hang the build
+    gate behind it (L-090)."""
+    try:
+        r = subprocess.run(["git", "-C", str(root), *args], capture_output=True,
+                           text=True, timeout=common.GIT_TIMEOUT_S)
+    except subprocess.TimeoutExpired:
+        common.die(f"git {' '.join(args)}: timed out after {common.GIT_TIMEOUT_S}s")
     if check and r.returncode != 0:
         common.die(f"git {' '.join(args)}: {r.stderr.strip()}")
     return r
 
 
-def _candidate(relpath):
+def _candidate(relpath, doc_caps):
+    if relpath in doc_caps:  # a governed planning doc, wherever config puts it
+        return True
     if relpath.startswith(".wf/"):  # wf machinery is not project code (mirrors `wf impact`)
         return False
     p = Path(relpath)
@@ -136,13 +160,21 @@ def _go_funcs(lines):
     return out
 
 
-def _check_file(relpath, text, cfg):
+def _check_file(relpath, text, cfg, doc_caps=None):
     lines = text.splitlines()
     n = len(lines)
     name, ext = Path(relpath).name, Path(relpath).suffix
     find = lambda rule, sev, line, msg: {
         "rule": rule, "severity": sev, "file": relpath, "line": line, "msg": msg}
 
+    governed = (doc_caps or {}).get(relpath)
+    if governed:
+        rule, cap, key = governed
+        if n > cap:
+            return [find(rule, "error", 1,
+                         f"{n} lines > hygiene.{key}_max {cap} — trim it; this file is "
+                         f"read whole every time the loop plans")]
+        return []
     if name in _AGENT_DOCS:
         if n > cfg["agents_md_max"]:
             return [find("agents-md-length", "error", 1,
@@ -221,6 +253,7 @@ def _check(rest):
                                                           "instead of the full findings list")
     args = p.parse_args(rest)
     cfg = _cfg(args.config)
+    doc_caps = _doc_caps(args.config, cfg)
     # The tree to lint is the one the caller stands in (a task worktree, typically);
     # the config supplies thresholds only. Anchoring on the config's root instead
     # would read an unchanged host checkout from a worktree and pass on an empty diff.
@@ -239,10 +272,11 @@ def _check(rest):
                         f"checked nothing. Run it from the tree you changed.",
             }, args.format)
             return 1
-        files = [f for f in touched if _candidate(f)]
+        files = [f for f in touched if _candidate(f, doc_caps)]
     else:
         tracked = [l for l in _git(root, "ls-files").stdout.splitlines() if l]
-        files = [f for f in dict.fromkeys(tracked + _untracked(root)) if _candidate(f)]
+        files = [f for f in dict.fromkeys(tracked + _untracked(root))
+                 if _candidate(f, doc_caps)]
 
     findings, regressions = [], []
     checked = 0
@@ -251,7 +285,7 @@ def _check(rest):
         if not path.is_file():
             continue  # deleted in the diff
         checked += 1
-        cur = _check_file(rel, path.read_text(errors="replace"), cfg)
+        cur = _check_file(rel, path.read_text(errors="replace"), cfg, doc_caps)
         findings.extend(cur)
         if not args.diff_base:
             continue
@@ -259,7 +293,7 @@ def _check(rest):
         if base.returncode != 0:  # new file: every error-severity finding regresses
             regressions.extend(f for f in cur if f["severity"] == "error")
             continue
-        base_counts = Counter(f["rule"] for f in _check_file(rel, base.stdout, cfg))
+        base_counts = Counter(f["rule"] for f in _check_file(rel, base.stdout, cfg, doc_caps))
         cur_by_rule = {}
         for f in cur:
             cur_by_rule.setdefault(f["rule"], []).append(f)

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 #
-# Tests for the wf pipeline brain — stage computation + the staged frontier query.
+# Tests for the wf pipeline brain — increment scoping, sub-layer computation, the
+# frontier query, and the close-time drain.
 # Run: bash tools/cli/tests/pipeline_test.sh   (exit 0 = all pass)
 # wf2-source-only — never rendered into an install target.
 set -uo pipefail
@@ -20,6 +21,7 @@ bad() { fail=$((fail+1)); echo "  FAIL - $1"; echo "         $2"; }
 
 # jget <json-string> <python-expr over `d`> -> prints the value
 jget() { "$PYTHON" -c 'import sys,json; d=json.loads(sys.argv[1]); print(eval(sys.argv[2]))' "$1" "$2"; }
+yget() { "$PYTHON" -c 'import sys,yaml; d=yaml.safe_load(open(sys.argv[1])); print(eval(sys.argv[2]))' "$1" "$2"; }
 
 # Make a fresh tmp project with a config and the given sprint YAML on stdin.
 new_proj() {
@@ -32,7 +34,9 @@ paths:
   pipeline_state: ".wf/transient/pipeline-state.yaml"
   pipeline_history: ".wf/transient/pipeline-history.yaml"
 parallel:
-  max_concurrent_tasks: 4
+  worktree_base: ".wf/transient/worktrees"
+driver:
+  max_parallel: 4
 YAML
     cat > "$proj/.wf/sprint.yaml"
     echo "$proj"
@@ -43,32 +47,64 @@ wf() { local proj="$1"; shift; "$PYTHON" "$WF" "$@" --config "$proj/.wf/config.y
 # Seed pipeline_state task_states / stages from a YAML body on stdin.
 seed_state() { cat > "$1/.wf/transient/pipeline-state.yaml"; }
 
-# Diamond DAG used across cases: stages [[T1,T2],[T3],[T4]]
+# Diamond DAG inside increment 1: sub-layers [[T1,T2],[T3],[T4]]. T5 belongs to
+# increment 2 and depends on T4 — a backward cross-increment edge, which is legal.
 DIAMOND='tasks:
-  - {id: T1, depends_on: []}
-  - {id: T2, depends_on: []}
-  - {id: T3, depends_on: [T1, T2]}
-  - {id: T4, depends_on: [T3]}'
+  - {id: T1, increment: 1, depends_on: []}
+  - {id: T2, increment: 1, depends_on: []}
+  - {id: T3, increment: 1, depends_on: [T1, T2]}
+  - {id: T4, increment: 1, depends_on: [T3]}
+  - {id: T5, increment: 2, depends_on: [T4]}'
 
-# ── compute-stages ───────────────────────────────────────────────────────────
+# ── compute-stages: one increment at a time ──────────────────────────────────
 
 PROJ="$(echo "$DIAMOND" | new_proj)"
-OUT="$(wf "$PROJ" pipeline compute-stages --format json)"
+OUT="$(wf "$PROJ" pipeline compute-stages --increment 1 --format json)"
 [ "$(jget "$OUT" "d['stages']")" = "[['T1', 'T2'], ['T3'], ['T4']]" ] \
-    && ok "compute-stages layers the diamond into 3 stages" \
+    && ok "compute-stages layers increment 1 into 3 sub-layers" \
     || bad "compute-stages layering" "$OUT"
+[ "$(jget "$OUT" "d['increment']")" = "1" ] && ok "compute-stages records the increment" || bad "increment" "$OUT"
 [ "$(jget "$OUT" "d['total']")" = "3" ] && ok "compute-stages total=3" || bad "total" "$OUT"
 [ "$(jget "$OUT" "d['current']")" = "1" ] && ok "compute-stages current=1" || bad "current" "$OUT"
 [ "$(jget "$OUT" "d['recomputed']")" = "True" ] && ok "compute-stages recomputed=True" || bad "recomputed" "$OUT"
 
-# idempotent: a second run preserves the plan
-OUT2="$(wf "$PROJ" pipeline compute-stages --format json)"
+# increment 2's task never enters increment 1's plan (the TL is dispatched per increment)
+[ "$(jget "$OUT" "'T5' in str(d['stages'])")" = "False" ] \
+    && ok "compute-stages leaves a later increment's task out of the plan" || bad "cross-increment leak" "$OUT"
+
+# idempotent for the SAME increment
+OUT2="$(wf "$PROJ" pipeline compute-stages --increment 1 --format json)"
 [ "$(jget "$OUT2" "d['recomputed']")" = "False" ] \
-    && ok "compute-stages is idempotent (recomputed=False on re-run)" || bad "idempotent" "$OUT2"
+    && ok "compute-stages is idempotent for the same increment" || bad "idempotent" "$OUT2"
+
+# a DIFFERENT increment always recomputes — its dependency in increment 1 is unmerged,
+# so the task cannot be placed
+OUT3="$(wf "$PROJ" pipeline compute-stages --increment 2 --format json)"
+[ "$(jget "$OUT3" "d['recomputed']")" = "True" ] \
+    && ok "compute-stages recomputes when a new increment is named" || bad "increment switch" "$OUT3"
+[ "$(jget "$OUT3" "d['blocked']")" = "['T5']" ] \
+    && ok "compute-stages blocks a task whose earlier-increment dep never merged" || bad "unmerged cross-dep" "$OUT3"
+
+# with the earlier increment merged, increment 2 layers cleanly
+PROJ_M2="$(echo "$DIAMOND" | new_proj)"
+seed_state "$PROJ_M2" <<'YAML'
+task_states:
+  T4: {status: completed}
+YAML
+OUTM2="$(wf "$PROJ_M2" pipeline compute-stages --increment 2 --format json)"
+[ "$(jget "$OUTM2" "d['stages']")" = "[['T5']]" ] \
+    && ok "compute-stages: a merged earlier-increment dep is satisfied" || bad "merged cross-dep" "$OUTM2"
+
+# an increment no task declares is a mechanical failure
+if wf "$PROJ" pipeline compute-stages --increment 9 >/dev/null 2>&1; then
+    bad "unknown increment should fail" "exited 0"
+else
+    ok "compute-stages: an increment no task declares → non-zero exit"
+fi
 
 # cycle → non-zero exit, no plan
-PROJ_C="$(printf 'tasks:\n  - {id: A, depends_on: [B]}\n  - {id: B, depends_on: [A]}\n' | new_proj)"
-if wf "$PROJ_C" pipeline compute-stages --format json >/dev/null 2>&1; then
+PROJ_C="$(printf 'tasks:\n  - {id: A, increment: 1, depends_on: [B]}\n  - {id: B, increment: 1, depends_on: [A]}\n' | new_proj)"
+if wf "$PROJ_C" pipeline compute-stages --increment 1 --format json >/dev/null 2>&1; then
     bad "cycle should fail" "exited 0"
 else
     ok "compute-stages HALTs (non-zero) on a dependency cycle"
@@ -77,11 +113,11 @@ fi
 # a pre-completed task drops out of the layering and frees its dependents
 PROJ_D="$(echo "$DIAMOND" | new_proj)"
 seed_state "$PROJ_D" <<'YAML'
-current_phase: preparing
+current_phase: designing
 task_states:
   T1: {status: completed}
 YAML
-OUTD="$(wf "$PROJ_D" pipeline compute-stages --format json)"
+OUTD="$(wf "$PROJ_D" pipeline compute-stages --increment 1 --format json)"
 [ "$(jget "$OUTD" "d['stages']")" = "[['T2'], ['T3'], ['T4']]" ] \
     && ok "compute-stages excludes a completed task, deps still satisfied" || bad "completed-exclusion" "$OUTD"
 
@@ -91,49 +127,80 @@ seed_state "$PROJ_B" <<'YAML'
 task_states:
   T1: {status: blocked}
 YAML
-OUTB="$(wf "$PROJ_B" pipeline compute-stages --format json)"
+OUTB="$(wf "$PROJ_B" pipeline compute-stages --increment 1 --format json)"
 [ "$(jget "$OUTB" "d['stages']")" = "[['T2']]" ] \
     && ok "compute-stages: blocked T1 leaves only T2 placeable" || bad "blocked layering" "$OUTB"
 [ "$(jget "$OUTB" "sorted(d['blocked'])")" = "['T3', 'T4']" ] \
     && ok "compute-stages: T3,T4 transitively blocked by T1" || bad "blocked propagation" "$OUTB"
 
+# ── increments (the driver's position in the sprint) ─────────────────────────
+
+PROJ_I="$(echo "$DIAMOND" | new_proj)"
+seed_state "$PROJ_I" <<'YAML'
+task_states:
+  T1: {status: completed}
+  T2: {status: completed}
+YAML
+INC="$(wf "$PROJ_I" pipeline increments --format json)"
+[ "$(jget "$INC" "[i['increment'] for i in d['increments']]")" = "[1, 2]" ] \
+    && ok "increments lists the declared increments in build order" || bad "increments list" "$INC"
+[ "$(jget "$INC" "d['increments'][0]['tasks']")" = "4" ] \
+    && ok "increments counts each increment's tasks" || bad "increments count" "$INC"
+[ "$(jget "$INC" "d['increments'][0]['completed']")" = "2" ] \
+    && ok "increments counts what has merged" || bad "increments merged" "$INC"
+[ "$(jget "$INC" "d['next']")" = "1" ] && ok "increments names the next unfinished increment" || bad "increments next" "$INC"
+[ "$(jget "$INC" "d['current'] is None")" = "True" ] \
+    && ok "increments reports no current increment before compute-stages" || bad "increments current" "$INC"
+wf "$PROJ_I" pipeline compute-stages --increment 1 >/dev/null
+[ "$(jget "$(wf "$PROJ_I" pipeline increments --format json)" "d['current']")" = "1" ] \
+    && ok "increments reports the increment the stage plan belongs to" || bad "increments current set" ""
+
+# every task in an increment merged → done
+PROJ_ID="$(echo "$DIAMOND" | new_proj)"
+seed_state "$PROJ_ID" <<'YAML'
+task_states:
+  T1: {status: completed}
+  T2: {status: completed}
+  T3: {status: completed}
+  T4: {status: completed}
+YAML
+INCD="$(wf "$PROJ_ID" pipeline increments --format json)"
+[ "$(jget "$INCD" "d['increments'][0]['done']")" = "True" ] && ok "increments marks a fully merged increment done" || bad "increments done" "$INCD"
+[ "$(jget "$INCD" "d['next']")" = "2" ] && ok "increments points at the next increment" || bad "increments next2" "$INCD"
+
 # ── next (frontier) ──────────────────────────────────────────────────────────
 
-# fresh stage 1 dispatches both independent roots
 PROJ1="$(echo "$DIAMOND" | new_proj)"
-wf "$PROJ1" pipeline compute-stages >/dev/null
+wf "$PROJ1" pipeline compute-stages --increment 1 >/dev/null
 N1="$(wf "$PROJ1" pipeline next --format json)"
 [ "$(jget "$N1" "[e['task_id'] for e in d['dispatch']]")" = "['T1', 'T2']" ] \
-    && ok "next: stage 1 dispatches T1,T2" || bad "next dispatch" "$N1"
+    && ok "next: sub-layer 1 dispatches T1,T2" || bad "next dispatch" "$N1"
+[ "$(jget "$N1" "d['increment']")" = "1" ] && ok "next: reports the increment" || bad "next increment" "$N1"
 [ "$(jget "$N1" "d['stage']['index']")" = "1" ] && ok "next: stage.index=1" || bad "stage index" "$N1"
-[ "$(jget "$N1" "d['terminal']['stage_done']")" = "False" ] && ok "next: stage not done with pending work" || bad "stage_done" "$N1"
+[ "$(jget "$N1" "d['terminal']['stage_done']")" = "False" ] && ok "next: sub-layer not done with pending work" || bad "stage_done" "$N1"
 [ "$(jget "$N1" "d['dispatch'][0]['worktree']")" = ".wf/transient/worktrees/sprint-T1" ] \
     && ok "next: dispatch carries the computed worktree path" || bad "worktree" "$N1"
-[ "$(jget "$N1" "'mode' in d['dispatch'][0]")" = "False" ] \
-    && ok "next: dispatch entry carries no mode field (wf-build derives its mode)" \
-    || bad "dispatch mode field" "$N1"
 [ "$(jget "$N1" "sorted(d['dispatch'][0])")" = "['task_id', 'worktree']" ] \
     && ok "next: dispatch entry carries exactly task_id + worktree" \
     || bad "dispatch entry keys" "$N1"
 
-# cap=1 → one dispatched, the other ready
+# driver.max_parallel is the concurrency cap
 PROJ_CAP="$(echo "$DIAMOND" | new_proj)"
 "$PYTHON" - "$PROJ_CAP/.wf/config.yaml" <<'PY'
 import sys,yaml
-p=sys.argv[1]; d=yaml.safe_load(open(p)); d['parallel']['max_concurrent_tasks']=1
+p=sys.argv[1]; d=yaml.safe_load(open(p)); d['driver']['max_parallel']=1
 open(p,'w').write(yaml.safe_dump(d))
 PY
-wf "$PROJ_CAP" pipeline compute-stages >/dev/null
+wf "$PROJ_CAP" pipeline compute-stages --increment 1 >/dev/null
 NCAP="$(wf "$PROJ_CAP" pipeline next --format json)"
 [ "$(jget "$NCAP" "[e['task_id'] for e in d['dispatch']]")" = "['T1']" ] \
-    && ok "next: cap=1 dispatches only T1" || bad "cap dispatch" "$NCAP"
+    && ok "next: driver.max_parallel=1 dispatches only T1" || bad "cap dispatch" "$NCAP"
 [ "$(jget "$NCAP" "d['ready']")" = "['T2']" ] && ok "next: cap=1 leaves T2 ready" || bad "cap ready" "$NCAP"
 
 # an in-flight task occupies a slot and is not re-dispatched
 PROJ_IF="$(echo "$DIAMOND" | new_proj)"
-wf "$PROJ_IF" pipeline compute-stages >/dev/null
 seed_state "$PROJ_IF" <<'YAML'
-stages: {definitions: [[T1, T2], [T3], [T4]], current: 1, total: 3}
+stages: {increment: 1, definitions: [[T1, T2], [T3], [T4]], current: 1, total: 3}
 task_states:
   T1: {status: building}
 YAML
@@ -152,34 +219,35 @@ NIF="$(wf "$PROJ_IF" pipeline next --format json)"
 [ "$(jget "$NIF" "[e['task_id'] for e in d['dispatch']]")" = "['T2']" ] \
     && ok "next: only T2 dispatched while T1 in-flight" || bad "in_flight dispatch" "$NIF"
 
-# stage settled when all stage tasks completed (but sprint not done — more stages)
+# sub-layer settled, increment not done (more sub-layers)
 PROJ_SD="$(echo "$DIAMOND" | new_proj)"
 seed_state "$PROJ_SD" <<'YAML'
-stages: {definitions: [[T1, T2], [T3], [T4]], current: 1, total: 3}
+stages: {increment: 1, definitions: [[T1, T2], [T3], [T4]], current: 1, total: 3}
 task_states:
   T1: {status: completed}
   T2: {status: completed}
 YAML
 NSD="$(wf "$PROJ_SD" pipeline next --format json)"
-[ "$(jget "$NSD" "d['terminal']['stage_done']")" = "True" ] && ok "next: stage_done when stage tasks completed" || bad "stage_done true" "$NSD"
-[ "$(jget "$NSD" "d['terminal']['sprint_done']")" = "False" ] && ok "next: sprint not done mid-sprint" || bad "sprint_done false" "$NSD"
+[ "$(jget "$NSD" "d['terminal']['stage_done']")" = "True" ] && ok "next: stage_done when the sub-layer's tasks completed" || bad "stage_done true" "$NSD"
+[ "$(jget "$NSD" "d['terminal']['increment_done']")" = "False" ] && ok "next: increment not done mid-increment" || bad "increment_done false" "$NSD"
+[ "$(jget "$NSD" "d['terminal']['sprint_done']")" = "False" ] && ok "next: sprint not done mid-increment" || bad "sprint_done false" "$NSD"
 
-# a parked design-issue task does NOT hold the stage open
+# a parked design-issue task does NOT hold the sub-layer open
 PROJ_DI="$(echo "$DIAMOND" | new_proj)"
 seed_state "$PROJ_DI" <<'YAML'
-stages: {definitions: [[T1, T2], [T3], [T4]], current: 1, total: 3}
+stages: {increment: 1, definitions: [[T1, T2], [T3], [T4]], current: 1, total: 3}
 task_states:
   T1: {status: completed}
   T2: {status: design_issue}
 YAML
 NDI="$(wf "$PROJ_DI" pipeline next --format json)"
 [ "$(jget "$NDI" "d['repairing']")" = "['T2']" ] && ok "next: design_issue task surfaces as repairing" || bad "repairing" "$NDI"
-[ "$(jget "$NDI" "d['terminal']['stage_done']")" = "True" ] && ok "next: parked DI does not hold the stage open" || bad "parked stage_done" "$NDI"
+[ "$(jget "$NDI" "d['terminal']['stage_done']")" = "True" ] && ok "next: parked DI does not hold the sub-layer open" || bad "parked stage_done" "$NDI"
 
-# an approved task (awaiting batch merge) is settled — surfaced, not re-dispatched, stage settles
+# an approved task (awaiting batch merge) is settled — surfaced, not re-dispatched
 PROJ_APN="$(echo "$DIAMOND" | new_proj)"
 seed_state "$PROJ_APN" <<'YAML'
-stages: {definitions: [[T1, T2], [T3], [T4]], current: 1, total: 3}
+stages: {increment: 1, definitions: [[T1, T2], [T3], [T4]], current: 1, total: 3}
 task_states:
   T1: {status: approved}
   T2: {status: completed}
@@ -187,17 +255,30 @@ YAML
 NAPN="$(wf "$PROJ_APN" pipeline next --format json)"
 [ "$(jget "$NAPN" "d['approved']")" = "['T1']" ] && ok "next: approved task surfaces under approved[]" || bad "approved list" "$NAPN"
 [ "$(jget "$NAPN" "[e['task_id'] for e in d['dispatch']]")" = "[]" ] && ok "next: approved task is not re-dispatched" || bad "approved dispatch" "$NAPN"
-[ "$(jget "$NAPN" "d['terminal']['stage_done']")" = "True" ] && ok "next: approved task does not hold the stage open" || bad "approved stage_done" "$NAPN"
+[ "$(jget "$NAPN" "d['terminal']['stage_done']")" = "True" ] && ok "next: approved task does not hold the sub-layer open" || bad "approved stage_done" "$NAPN"
 
-# last stage complete → sprint_done
+# last sub-layer of increment 1 complete → increment_done, but a later increment is
+# declared, so the sprint is NOT done
 PROJ_FIN="$(echo "$DIAMOND" | new_proj)"
 seed_state "$PROJ_FIN" <<'YAML'
-stages: {definitions: [[T1, T2], [T3], [T4]], current: 3, total: 3}
+stages: {increment: 1, definitions: [[T1, T2], [T3], [T4]], current: 3, total: 3}
 task_states:
   T4: {status: completed}
 YAML
 NFIN="$(wf "$PROJ_FIN" pipeline next --format json)"
-[ "$(jget "$NFIN" "d['terminal']['sprint_done']")" = "True" ] && ok "next: sprint_done on last stage complete" || bad "sprint_done true" "$NFIN"
+[ "$(jget "$NFIN" "d['terminal']['increment_done']")" = "True" ] && ok "next: increment_done on the last sub-layer" || bad "increment_done true" "$NFIN"
+[ "$(jget "$NFIN" "d['terminal']['sprint_done']")" = "False" ] \
+    && ok "next: sprint not done while a later increment is declared" || bad "sprint_done later" "$NFIN"
+
+# the last increment's last sub-layer → sprint_done
+PROJ_LAST="$(echo "$DIAMOND" | new_proj)"
+seed_state "$PROJ_LAST" <<'YAML'
+stages: {increment: 2, definitions: [[T5]], current: 1, total: 1}
+task_states:
+  T5: {status: completed}
+YAML
+NLAST="$(wf "$PROJ_LAST" pipeline next --format json)"
+[ "$(jget "$NLAST" "d['terminal']['sprint_done']")" = "True" ] && ok "next: sprint_done after the last increment" || bad "sprint_done true" "$NLAST"
 
 # next before compute-stages → halt
 PROJ_NC="$(echo "$DIAMOND" | new_proj)"
@@ -210,14 +291,14 @@ NNC="$(wf "$PROJ_NC" pipeline next --format json)"
 PROJ_M="$(echo "$DIAMOND" | new_proj)"
 
 # transition writes phase + history
-wf "$PROJ_M" pipeline transition --to preparing --reason kickoff >/dev/null
+wf "$PROJ_M" pipeline transition --to designing --reason kickoff >/dev/null
 CP="$(wf "$PROJ_M" pipeline current-phase --format json)"
-[ "$(jget "$CP" "d['phase']")" = "preparing" ] && ok "transition sets current_phase" || bad "transition" "$CP"
+[ "$(jget "$CP" "d['phase']")" = "designing" ] && ok "transition sets current_phase" || bad "transition" "$CP"
 
 # current-phase resolves sprint_branch from git when the stored value is null (L-020)
 PROJ_GB="$(echo "$DIAMOND" | new_proj)"
 seed_state "$PROJ_GB" <<'YAML'
-current_phase: running_stage
+current_phase: increment_loop
 sprint_branch: null
 YAML
 ( cd "$PROJ_GB" && git init -q && git config user.email t@t.t && git config user.name t \
@@ -245,7 +326,7 @@ TSC="$(wf "$PROJ_M" pipeline task-state T1 --format json)"
 [ "$(jget "$TSC" "d['state']")" = "completed" ] && ok "complete-task → completed" || bad "complete" "$TSC"
 [ "$(jget "$TSC" "d['build_commit']")" = "abc123" ] && ok "complete-task records build_commit" || bad "build_commit" "$TSC"
 
-# approve-task → approved (passed all passes, awaiting the end_of_stage batch merge)
+# approve-task → approved (passed all passes, awaiting the batch merge)
 PROJ_AP="$(echo "$DIAMOND" | new_proj)"
 APPC="$(wf "$PROJ_AP" pipeline approve-task T1 --commit cab00d --format json)"
 [ "$(jget "$APPC" "d.get('ok') is True and d.get('event')=='task_approved' and d.get('status')=='approved'")" = "True" ] \
@@ -294,8 +375,7 @@ if wf "$PROJ_M" pipeline resolve-design-issue DI-nope >/dev/null 2>&1; then
 else
     ok "resolve-design-issue errors on an unknown id"
 fi
-# resolve-design-issue un-parks the implicated task (design_issue → pending) so the
-# scheduler can place it again — e.g. behind a component_defect follow-up task.
+# resolve-design-issue un-parks the implicated task (design_issue → pending)
 [ "$(jget "$(wf "$PROJ_M" pipeline task-state T4 --format json)" "d['state']")" = "pending" ] \
     && ok "resolve-design-issue resets the parked task to pending" || bad "DI resolve unpark" \
     "$(wf "$PROJ_M" pipeline task-state T4 --format json)"
@@ -307,12 +387,12 @@ wf "$PROJ_M" pipeline resolve-design-issue DI-2 >/dev/null
     && ok "resolve-design-issue leaves a non-parked task status alone" || bad "DI resolve non-parked" \
     "$(wf "$PROJ_M" pipeline task-state T5 --format json)"
 
-# A stage-boundary DI is task-less: record-design-issue with no --task records the DI and
-# parks NO phantom task, so a later fix-mode read never mistakes it for a real sprint task.
+# A boundary DI is task-less: record-design-issue with no --task records the DI and
+# parks NO phantom task.
 wf "$PROJ_M" pipeline record-design-issue DI-STAGE --severity medium --fix_kind spec_amendment >/dev/null
 UDS="$(wf "$PROJ_M" pipeline unresolved-design-issues --format json)"
 [ "$(jget "$UDS" "any(i['di_id']=='DI-STAGE' for i in d['issues'])")" = "True" ] \
-    && ok "record-design-issue records a task-less (stage-boundary) DI" || bad "task-less DI record" "$UDS"
+    && ok "record-design-issue records a task-less (boundary) DI" || bad "task-less DI record" "$UDS"
 [ "$(jget "$(wf "$PROJ_M" pipeline task-state DI-STAGE --format json)" "d['state']")" = "pending" ] \
     && ok "task-less DI parks no phantom task" || bad "task-less DI phantom park" \
     "$(wf "$PROJ_M" pipeline task-state DI-STAGE --format json)"
@@ -321,8 +401,7 @@ UDS2="$(wf "$PROJ_M" pipeline unresolved-design-issues --format json)"
 [ "$(jget "$UDS2" "any(i['di_id']=='DI-STAGE' for i in d['issues'])")" = "False" ] \
     && ok "task-less DI resolves cleanly" || bad "task-less DI resolve" "$UDS2"
 
-# Build/review/stage-repair raise a BARE issue — no --fix_kind. wf-spec-fix classifies it
-# and writes the kind back to the host artifact; record-design-issue must not require it.
+# Build/review/stage-repair raise a BARE issue — no --fix_kind.
 wf "$PROJ_M" pipeline record-design-issue DI-BARE --task T4 --severity high >/dev/null 2>&1 \
     && ok "record-design-issue accepts a bare issue (no --fix_kind)" || bad "bare DI record" "requires --fix_kind"
 UDB="$(wf "$PROJ_M" pipeline unresolved-design-issues --format json)"
@@ -342,26 +421,26 @@ RC="$(wf "$PROJ_R" pipeline reclaim-stale --format json)"
 [ "$(jget "$(wf "$PROJ_R" pipeline task-state T1 --format json)" "d['state']")" = "pending" ] \
     && ok "reclaim-stale resets orphan to pending" || bad "reclaim state" ""
 
-# ── staged-model mutations ───────────────────────────────────────────────────
+# ── sub-layer mutations ──────────────────────────────────────────────────────
 
-# advance-stage walks current; no-op on the last stage
+# advance-stage walks current; no-op on the last sub-layer
 PROJ_A="$(echo "$DIAMOND" | new_proj)"
-wf "$PROJ_A" pipeline compute-stages >/dev/null
+wf "$PROJ_A" pipeline compute-stages --increment 1 >/dev/null
 A1="$(wf "$PROJ_A" pipeline advance-stage --format json)"
-[ "$(jget "$A1" "d['current']")" = "2" ] && ok "advance-stage → stage 2" || bad "advance 2" "$A1"
+[ "$(jget "$A1" "d['current']")" = "2" ] && ok "advance-stage → sub-layer 2" || bad "advance 2" "$A1"
 wf "$PROJ_A" pipeline advance-stage >/dev/null   # → 3 (last)
 A3="$(wf "$PROJ_A" pipeline advance-stage --format json)"
-[ "$(jget "$A3" "d['advanced']")" = "False" ] && ok "advance-stage is a no-op past the last stage" || bad "advance last" "$A3"
+[ "$(jget "$A3" "d['advanced']")" = "False" ] && ok "advance-stage is a no-op past the last sub-layer" || bad "advance last" "$A3"
 
-# propagate-blocks: an escalated dep dooms its dependents
+# propagate-blocks: an escalated dep dooms its dependents, across increments too
 PROJ_P="$(echo "$DIAMOND" | new_proj)"
 seed_state "$PROJ_P" <<'YAML'
 task_states:
   T1: {status: escalated}
 YAML
 PB="$(wf "$PROJ_P" pipeline propagate-blocks --format json)"
-[ "$(jget "$PB" "sorted(d['blocked'])")" = "['T3', 'T4']" ] \
-    && ok "propagate-blocks dooms T3,T4 behind escalated T1" || bad "propagate" "$PB"
+[ "$(jget "$PB" "sorted(d['blocked'])")" = "['T3', 'T4', 'T5']" ] \
+    && ok "propagate-blocks dooms dependents behind escalated T1, across increments" || bad "propagate" "$PB"
 
 # stage timing
 PROJ_TM="$(echo "$DIAMOND" | new_proj)"
@@ -373,7 +452,7 @@ SE="$(wf "$PROJ_TM" pipeline stage-end --stage 1 --format json)"
 # stage-summary derives lists from task_states
 PROJ_SS="$(echo "$DIAMOND" | new_proj)"
 seed_state "$PROJ_SS" <<'YAML'
-stages: {definitions: [[T1, T2], [T3], [T4]], current: 1, total: 3}
+stages: {increment: 1, definitions: [[T1, T2], [T3], [T4]], current: 1, total: 3}
 task_states:
   T1: {status: completed}
   T2: {status: escalated}
@@ -386,47 +465,46 @@ SUM="$(wf "$PROJ_SS" pipeline stage-summary --stage 1 --format json)"
 
 # complete-sprint resets to idle and clears the sprint slot (no archive configured)
 PROJ_CS="$(echo "$DIAMOND" | new_proj)"
-wf "$PROJ_CS" pipeline transition --to running_stage >/dev/null
+wf "$PROJ_CS" pipeline transition --to increment_loop >/dev/null
 wf "$PROJ_CS" pipeline complete-sprint >/dev/null
 [ "$(jget "$(wf "$PROJ_CS" pipeline current-phase --format json)" "d['phase']")" = "idle" ] \
     && ok "complete-sprint resets phase to idle" || bad "complete-sprint phase" ""
 [ ! -f "$PROJ_CS/.wf/sprint.yaml" ] && ok "complete-sprint clears the sprint slot" || bad "complete-sprint sprint" "still present"
 
-# complete-sprint with paths.archive set: drains sprint+slice into the archive, snapshots the backlog
-PROJ_A="$(mktemp -d)"; mkdir -p "$PROJ_A/.wf/transient"
-cat > "$PROJ_A/.wf/config.yaml" <<'YAML'
+# complete-sprint with paths.archive set: drains sprint+slice into the archive
+PROJ_A2="$(mktemp -d)"; mkdir -p "$PROJ_A2/.wf/transient"
+cat > "$PROJ_A2/.wf/config.yaml" <<'YAML'
 version: 1
 paths:
   sprint: ".wf/transient/sprint.yaml"
   design_slice: ".wf/transient/design-slice.md"
-  design_backlog: ".wf/design-backlog.md"
+  capabilities: ".wf/CAPABILITIES.yaml"
   design_issues: ".wf/transient/design-issues.yaml"
   pipeline_state: ".wf/transient/pipeline-state.yaml"
   archive: ".wf/archive"
 YAML
-printf 'sprint_id: sprint-xyz\ntasks: []\n' > "$PROJ_A/.wf/transient/sprint.yaml"
-printf '# slice body\n'                     > "$PROJ_A/.wf/transient/design-slice.md"
-printf '# backlog body\n'                   > "$PROJ_A/.wf/design-backlog.md"
-printf 'issues:\n- id: DI-T1\n  status: resolved\n' > "$PROJ_A/.wf/transient/design-issues.yaml"
-printf 'current_phase: running_stage\n'     > "$PROJ_A/.wf/transient/pipeline-state.yaml"
-CA="$("$PYTHON" "$WF" pipeline complete-sprint --config "$PROJ_A/.wf/config.yaml" --format json)"
+printf 'sprint_id: sprint-xyz\ntasks: []\n' > "$PROJ_A2/.wf/transient/sprint.yaml"
+printf '# slice body\n'                     > "$PROJ_A2/.wf/transient/design-slice.md"
+printf 'version: 1\ncapabilities: []\n'     > "$PROJ_A2/.wf/CAPABILITIES.yaml"
+printf 'issues:\n- id: DI-T1\n  status: resolved\n' > "$PROJ_A2/.wf/transient/design-issues.yaml"
+printf 'current_phase: closeout\n'          > "$PROJ_A2/.wf/transient/pipeline-state.yaml"
+CA="$("$PYTHON" "$WF" pipeline complete-sprint --config "$PROJ_A2/.wf/config.yaml" --format json)"
 [ "$(jget "$CA" "d['sprint_id']")" = "sprint-xyz" ] && ok "complete-sprint(archive): reports sprint_id" || bad "archive sprint_id" "$CA"
-[ ! -f "$PROJ_A/.wf/transient/sprint.yaml" ] && ok "complete-sprint(archive): drains the sprint" || bad "archive drain sprint" "still present"
-[ ! -f "$PROJ_A/.wf/transient/design-slice.md" ] && ok "complete-sprint(archive): drains the slice" || bad "archive drain slice" "still present"
-[ ! -f "$PROJ_A/.wf/transient/design-issues.yaml" ] && ok "complete-sprint(archive): drains the design-issues file" || bad "archive drain design_issues" "still present"
-[ -f "$PROJ_A/.wf/design-backlog.md" ] && ok "complete-sprint(archive): leaves the backlog (snapshot only)" || bad "archive backlog kept" "backlog gone"
-ls "$PROJ_A/.wf/archive/sprint-xyz/"*__sprint.yaml >/dev/null 2>&1 && ok "complete-sprint(archive): sprint snapshot under <archive>/<sprint_id>/" || bad "archive sprint snap" "$(ls -R "$PROJ_A/.wf/archive" 2>&1)"
-ls "$PROJ_A/.wf/archive/sprint-xyz/"*__design-slice.md >/dev/null 2>&1 && ok "complete-sprint(archive): slice snapshot present" || bad "archive slice snap" "$(ls "$PROJ_A/.wf/archive/sprint-xyz" 2>&1)"
-ls "$PROJ_A/.wf/archive/sprint-xyz/"*__design-issues.yaml >/dev/null 2>&1 && ok "complete-sprint(archive): design-issues snapshot present" || bad "archive design_issues snap" "$(ls "$PROJ_A/.wf/archive/sprint-xyz" 2>&1)"
-ls "$PROJ_A/.wf/archive/sprint-xyz/"*__design-backlog.md >/dev/null 2>&1 && ok "complete-sprint(archive): backlog snapshot present" || bad "archive backlog snap" "$(ls "$PROJ_A/.wf/archive/sprint-xyz" 2>&1)"
-[ "$(jget "$(wf "$PROJ_A" pipeline current-phase --format json)" "d['phase']")" = "idle" ] && ok "complete-sprint(archive): resets phase to idle" || bad "archive phase idle" "$CA"
+[ ! -f "$PROJ_A2/.wf/transient/sprint.yaml" ] && ok "complete-sprint(archive): drains the sprint" || bad "archive drain sprint" "still present"
+[ ! -f "$PROJ_A2/.wf/transient/design-slice.md" ] && ok "complete-sprint(archive): drains the slice" || bad "archive drain slice" "still present"
+[ ! -f "$PROJ_A2/.wf/transient/design-issues.yaml" ] && ok "complete-sprint(archive): drains the design-issues file" || bad "archive drain design_issues" "still present"
+[ -f "$PROJ_A2/.wf/CAPABILITIES.yaml" ] && ok "complete-sprint(archive): leaves the capabilities file (snapshot only)" || bad "archive caps kept" "gone"
+ls "$PROJ_A2/.wf/archive/sprint-xyz/"*__sprint.yaml >/dev/null 2>&1 && ok "complete-sprint(archive): sprint snapshot under <archive>/<sprint_id>/" || bad "archive sprint snap" "$(ls -R "$PROJ_A2/.wf/archive" 2>&1)"
+ls "$PROJ_A2/.wf/archive/sprint-xyz/"*__design-slice.md >/dev/null 2>&1 && ok "complete-sprint(archive): slice snapshot present" || bad "archive slice snap" "$(ls "$PROJ_A2/.wf/archive/sprint-xyz" 2>&1)"
+ls "$PROJ_A2/.wf/archive/sprint-xyz/"*__CAPABILITIES.yaml >/dev/null 2>&1 && ok "complete-sprint(archive): capabilities snapshot present" || bad "archive caps snap" "$(ls "$PROJ_A2/.wf/archive/sprint-xyz" 2>&1)"
+[ "$(jget "$("$PYTHON" "$WF" pipeline current-phase --config "$PROJ_A2/.wf/config.yaml" --format json)" "d['phase']")" = "idle" ] && ok "complete-sprint(archive): resets phase to idle" || bad "archive phase idle" "$CA"
 
 # archive-history spills the overflow past the cap
 PROJ_H="$(echo "$DIAMOND" | new_proj)"
 "$PYTHON" - "$PROJ_H/.wf/transient/pipeline-state.yaml" <<'PY'
 import sys,yaml
 p=sys.argv[1]
-d={"current_phase":"running_stage","history":[{"ts":"t","event":f"e{i}"} for i in range(10)]}
+d={"current_phase":"increment_loop","history":[{"ts":"t","event":f"e{i}"} for i in range(10)]}
 open(p,'w').write(yaml.safe_dump(d))
 PY
 wf "$PROJ_H" pipeline archive-history --cap 3 >/dev/null
@@ -435,150 +513,231 @@ HT="$(wf "$PROJ_H" pipeline history-tail 100 --format json)"
 [ "$(jget "$HT" "len(d)")" = "4" ] && ok "archive-history keeps cap + the archival marker live" || bad "archive-history live" "$HT"
 [ -f "$PROJ_H/.wf/transient/pipeline-history.yaml" ] && ok "archive-history writes the spill file" || bad "archive-history spill" "missing"
 
-# ── complete-sprint: the close-time drain (backlog trim, learnings, drain report) ──
+# ── complete-sprint: the close-time drain ────────────────────────────────────
+# The slice's Serves header says what the sprint set out to serve; the merge record
+# says what shipped. A learning drains when every task covering it merged.
 
-yget() { "$PYTHON" -c 'import sys,yaml; d=yaml.safe_load(open(sys.argv[1])); print(eval(sys.argv[2]))' "$1" "$2"; }
-
-PROJ_D="$(mktemp -d)"; mkdir -p "$PROJ_D/.wf/transient" "$PROJ_D/tests"
-cat > "$PROJ_D/.wf/config.yaml" <<'YAML'
+PROJ_D2="$(mktemp -d)"; mkdir -p "$PROJ_D2/.wf/transient" "$PROJ_D2/tests"
+cat > "$PROJ_D2/.wf/config.yaml" <<'YAML'
 version: 1
 paths:
   sprint: ".wf/transient/sprint.yaml"
   design_slice: ".wf/transient/design-slice.md"
-  design_backlog: ".wf/design-backlog.md"
   learnings: ".wf/LEARNINGS.yaml"
+  capabilities: ".wf/CAPABILITIES.yaml"
   drain_report: ".wf/transient/drain-report.yaml"
   pipeline_state: ".wf/transient/pipeline-state.yaml"
   archive: ".wf/archive"
   tests: ["tests"]
 YAML
-cat > "$PROJ_D/.wf/transient/sprint.yaml" <<'YAML'
+cat > "$PROJ_D2/.wf/transient/sprint.yaml" <<'YAML'
 sprint_id: sprint-drain
 tasks:
 - id: T1
-  covers: [REQ-1, REQ-2]
-  serves: [CAP-3]
+  increment: 1
+  covers: [CAP-3]
 - id: T2
+  increment: 1
+  covers: [CAP-3]
   system_tests:
   - id: SYS-TC-1
     description: bad X rejected end-to-end
     covers: [CAP-3]
-  serves: [CAP-3]
 - id: T3
-  covers: [REQ-3]
-  serves: [L-2]
+  increment: 2
+  covers: [L-2]
 - id: T4
-  covers: [REQ-4]
-  serves: [L-5]
+  increment: 2
+  covers: [L-5]
 YAML
-cat > "$PROJ_D/.wf/transient/pipeline-state.yaml" <<'YAML'
-current_phase: end_of_sprint
+cat > "$PROJ_D2/.wf/transient/pipeline-state.yaml" <<'YAML'
+current_phase: closeout
 task_states:
   T1: {status: completed}
   T2: {status: completed}
   T3: {status: escalated}
   T4: {status: completed}
 YAML
-cat > "$PROJ_D/.wf/design-backlog.md" <<'MD'
-# Design backlog
-
-## Widget validation — serves CAP-3 / L-2 / L-7
-
-**Narrative:** validation flows API -> core -> store.
-
-**Component requirements:**
-- **REQ-1** — the widget validates X  *(owner: core · CAP-3)*
-- **REQ-2** — the API rejects bad X  *(owner: api · CAP-3 · proof: inspection — lint
-  rule in .golangci.yml)*
-
-**System test cases:**
-- **SYS-TC-1** — bad X rejected end-to-end  *(covers CAP-3)*
-
-## Perf hardening — serves L-2 / L-5
-
-**Component requirements:**
-- **REQ-3** — the store batches writes  *(owner: store · L-2)*
-- **REQ-4** — the store caps fan-out  *(owner: store · L-5)*
-MD
-cat > "$PROJ_D/.wf/LEARNINGS.yaml" <<'YAML'
+cat > "$PROJ_D2/.wf/LEARNINGS.yaml" <<'YAML'
+# .wf/LEARNINGS.yaml — project-code learnings (committed).
+# The header comment MUST survive a drain (L-106).
 version: 1
 learnings:
 - id: L-2
-  observation: batching
-- id: L-7
-  observation: validation gap
+  observation: batching — keep the — dash
+- id: L-5
+  observation: fan-out cap
+- id: L-9
+  observation: untouched by this sprint
 YAML
-cat > "$PROJ_D/.wf/transient/design-slice.md" <<'MD'
+cat > "$PROJ_D2/.wf/CAPABILITIES.yaml" <<'YAML'
+version: 1
+capabilities:
+- id: CAP-3
+  statement: "Operators can reject bad X."
+YAML
+cat > "$PROJ_D2/.wf/transient/design-slice.md" <<'MD'
 # slice
 
-## Supersedes
+**Serves:** CAP-3, L-2, L-5
 
-- **SYS-TC-9** — replaced end-to-end · successor **SYS-TC-1**
-- **REQ-9** — replaced · successor **REQ-1**
+## Supersessions
+
+- the old rejection path — proven by `tests/old_test.go` (SYS-TC-9) · human-ruled ·
+  successor: increment 1
 MD
-printf '// [SYS-TC:SYS-TC-9] old scenario\nfunc TestOld(t *testing.T) {}\n' > "$PROJ_D/tests/old_test.go"
+printf '// [SYS-TC:SYS-TC-9] old scenario\nfunc TestOld(t *testing.T) {}\n' > "$PROJ_D2/tests/old_test.go"
 
-CD="$("$PYTHON" "$WF" pipeline complete-sprint --config "$PROJ_D/.wf/config.yaml" --format json)"
-BL="$PROJ_D/.wf/design-backlog.md"
+CD="$("$PYTHON" "$WF" pipeline complete-sprint --config "$PROJ_D2/.wf/config.yaml" --format json)"
+LRN="$PROJ_D2/.wf/LEARNINGS.yaml"
+RPT="$PROJ_D2/.wf/transient/drain-report.yaml"
 
-# backlog trim: the fully-shipped design block is gone; the partial one keeps its unshipped id
-grep -q "Widget validation" "$BL" && bad "drain: emptied design removed" "block survived" \
-    || ok "drain: fully-shipped design block removed from the backlog"
-grep -q "REQ-3" "$BL" && ok "drain: unshipped REQ-3 kept in the backlog" || bad "drain REQ-3 kept" "gone"
-grep -q "REQ-4" "$BL" && bad "drain: shipped REQ-4 trimmed" "still present" \
-    || ok "drain: shipped REQ-4 trimmed from the partial design"
-grep -q "Perf hardening" "$BL" && ok "drain: partial design block survives" || bad "drain partial block" "gone"
+# L-5's only task merged → drains. L-2's task escalated → stays. L-9 was not served.
+[ "$(yget "$LRN" "[e['id'] for e in d['learnings']]")" = "['L-2', 'L-9']" ] \
+    && ok "drain: L-5 drained (its task merged), L-2 and L-9 kept" || bad "drain learnings" "$(cat "$LRN")"
+grep -q "header comment MUST survive" "$LRN" \
+    && ok "drain: the learnings file's comments survive the rewrite (L-106)" || bad "drain comments" "$(cat "$LRN")"
+grep -q "batching — keep the — dash" "$LRN" \
+    && ok "drain: unicode survives the rewrite (L-106)" || bad "drain unicode" "$(cat "$LRN")"
 
-# learnings: L-7 (last server emptied) drains; L-2 (still served by the partial design) stays
-LRN="$PROJ_D/.wf/LEARNINGS.yaml"
-[ "$(yget "$LRN" "[e['id'] for e in d['learnings']]")" = "['L-2']" ] \
-    && ok "drain: L-7 drained, L-2 kept (still served)" || bad "drain learnings" "$(cat "$LRN")"
+# capabilities never drain on the merge record — only an adequacy verdict drains one
+[ "$(yget "$PROJ_D2/.wf/CAPABILITIES.yaml" "[e['id'] for e in d['capabilities']]")" = "['CAP-3']" ] \
+    && ok "drain: a served capability is NOT drained by the merge record" || bad "drain caps" "$(cat "$PROJ_D2/.wf/CAPABILITIES.yaml")"
 
-# drain report: capability candidate, shipped scenario, partial ship, survivors
-RPT="$PROJ_D/.wf/transient/drain-report.yaml"
+# drain report: what was served, what drained, what the adequacy gate must review
 [ -f "$RPT" ] && ok "drain: report written" || bad "drain report" "missing"
 [ "$(yget "$RPT" "d['reports'][0]['sprint_id']")" = "sprint-drain" ] \
     && ok "report: names the sprint" || bad "report sprint_id" "$(cat "$RPT")"
-[ "$(yget "$RPT" "d['reports'][0]['emptied_designs']")" = "['Widget validation']" ] \
-    && ok "report: emptied design listed" || bad "report emptied" "$(cat "$RPT")"
-[ "$(yget "$RPT" "d['reports'][0]['proof_gate_candidates'][0]['capability']")" = "CAP-3" ] \
-    && ok "report: CAP-3 is a proof-gate candidate" || bad "report candidate" "$(cat "$RPT")"
-[ "$(yget "$RPT" "d['reports'][0]['proof_gate_candidates'][0]['shipped_scenarios'][0]['id']")" = "SYS-TC-1" ] \
-    && ok "report: candidate carries its shipped scenario" || bad "report scenario" "$(cat "$RPT")"
-[ "$(yget "$RPT" "sorted(d['reports'][0]['partially_shipped'][0]['remaining'])")" = "['REQ-3']" ] \
-    && ok "report: partial design's remaining ids listed" || bad "report partial" "$(cat "$RPT")"
-[ "$(yget "$RPT" "d['reports'][0]['learnings_drained']")" = "['L-7']" ] \
+[ "$(yget "$RPT" "d['reports'][0]['served']")" = "['CAP-3', 'L-2', 'L-5']" ] \
+    && ok "report: carries the slice's serves header" || bad "report served" "$(cat "$RPT")"
+[ "$(yget "$RPT" "d['reports'][0]['learnings_drained']")" = "['L-5']" ] \
     && ok "report: drained learning listed" || bad "report learnings" "$(cat "$RPT")"
+[ "$(yget "$RPT" "d['reports'][0]['learnings_retained'][0]['id']")" = "L-2" ] \
+    && ok "report: a retained learning says why" || bad "report retained" "$(cat "$RPT")"
+[ "$(yget "$RPT" "'T3' in d['reports'][0]['learnings_retained'][0]['reason']")" = "True" ] \
+    && ok "report: the retained reason names the unmerged task" || bad "report retained reason" "$(cat "$RPT")"
+[ "$(yget "$RPT" "d['reports'][0]['adequacy_candidates'][0]['capability']")" = "CAP-3" ] \
+    && ok "report: CAP-3 is an adequacy candidate" || bad "report candidate" "$(cat "$RPT")"
+[ "$(yget "$RPT" "d['reports'][0]['adequacy_candidates'][0]['shipped_scenarios'][0]['id']")" = "SYS-TC-1" ] \
+    && ok "report: candidate carries its shipped scenario" || bad "report scenario" "$(cat "$RPT")"
 [ "$(yget "$RPT" "d['reports'][0]['superseded_survivors'][0]['id']")" = "SYS-TC-9" ] \
     && ok "report: surviving superseded SYS-TC tag listed" || bad "report survivors" "$(cat "$RPT")"
 
-# archive: the backlog + learnings snapshots hold the PRE-trim state
-grep -q "Widget validation" "$PROJ_D/.wf/archive/sprint-drain/"*__design-backlog.md 2>/dev/null \
-    && ok "archive: backlog snapshot is pre-trim" || bad "archive pre-trim backlog" "$(ls "$PROJ_D/.wf/archive/sprint-drain" 2>&1)"
-ls "$PROJ_D/.wf/archive/sprint-drain/"*__LEARNINGS.yaml >/dev/null 2>&1 \
-    && ok "archive: learnings snapshot present" || bad "archive learnings snap" "$(ls "$PROJ_D/.wf/archive/sprint-drain" 2>&1)"
+# archive: the learnings snapshot holds the PRE-drain state
+grep -q "L-5" "$PROJ_D2/.wf/archive/sprint-drain/"*__LEARNINGS.yaml 2>/dev/null \
+    && ok "archive: learnings snapshot is pre-drain" || bad "archive pre-drain learnings" "$(ls "$PROJ_D2/.wf/archive/sprint-drain" 2>&1)"
 
 # the emitted summary carries the drain
-[ "$(jget "$CD" "d['drain']['emptied_designs']")" = "['Widget validation']" ] \
+[ "$(jget "$CD" "d['drain']['learnings_drained']")" = "['L-5']" ] \
     && ok "emit: drain summary in the command output" || bad "emit drain" "$CD"
 
-# no-archive project: the trim still runs (draining is not archiving)
-PROJ_D2="$(mktemp -d)"; mkdir -p "$PROJ_D2/.wf/transient"
-cat > "$PROJ_D2/.wf/config.yaml" <<'YAML'
+# no-archive project: the drain still runs (draining is not archiving)
+PROJ_D3="$(mktemp -d)"; mkdir -p "$PROJ_D3/.wf/transient"
+cat > "$PROJ_D3/.wf/config.yaml" <<'YAML'
 version: 1
 paths:
   sprint: ".wf/transient/sprint.yaml"
-  design_backlog: ".wf/design-backlog.md"
+  design_slice: ".wf/transient/design-slice.md"
+  learnings: ".wf/LEARNINGS.yaml"
   drain_report: ".wf/transient/drain-report.yaml"
   pipeline_state: ".wf/transient/pipeline-state.yaml"
 YAML
-printf 'sprint_id: s2\ntasks:\n- id: T1\n  covers: [REQ-8]\n  serves: [L-1]\n' > "$PROJ_D2/.wf/transient/sprint.yaml"
-printf 'task_states:\n  T1: {status: completed}\n' > "$PROJ_D2/.wf/transient/pipeline-state.yaml"
-printf '# Design backlog\n\n## Small fix — serves L-1\n\n**Component requirements:**\n- **REQ-8** — x  *(owner: core · L-1)*\n' > "$PROJ_D2/.wf/design-backlog.md"
-"$PYTHON" "$WF" pipeline complete-sprint --config "$PROJ_D2/.wf/config.yaml" --format json >/dev/null
-grep -q "Small fix" "$PROJ_D2/.wf/design-backlog.md" && bad "no-archive trim" "block survived" \
-    || ok "drain: trim runs without an archive configured"
-[ -f "$PROJ_D2/.wf/transient/drain-report.yaml" ] && ok "drain: report written without an archive" || bad "no-archive report" "missing"
+printf 'sprint_id: s2\ntasks:\n- id: T1\n  increment: 1\n  covers: [L-1]\n' > "$PROJ_D3/.wf/transient/sprint.yaml"
+printf 'task_states:\n  T1: {status: completed}\n' > "$PROJ_D3/.wf/transient/pipeline-state.yaml"
+printf '# slice\n\n**Serves:** L-1\n' > "$PROJ_D3/.wf/transient/design-slice.md"
+printf 'version: 1\nlearnings:\n- id: L-1\n  observation: x\n' > "$PROJ_D3/.wf/LEARNINGS.yaml"
+"$PYTHON" "$WF" pipeline complete-sprint --config "$PROJ_D3/.wf/config.yaml" --format json >/dev/null
+grep -q "L-1" "$PROJ_D3/.wf/LEARNINGS.yaml" && bad "no-archive drain" "L-1 survived" \
+    || ok "drain: the learnings drain runs without an archive configured"
+[ -f "$PROJ_D3/.wf/transient/drain-report.yaml" ] && ok "drain: report written without an archive" || bad "no-archive report" "missing"
+
+# ── drain-capability: the adequacy verdict is read from disk, never from prose ──
+
+mk_cap_proj() {  # → project dir with CAP-3 open and a drill-cache
+    local p; p="$(mktemp -d)"; mkdir -p "$p/.wf/transient/drill-cache"
+    cat > "$p/.wf/config.yaml" <<'YAML'
+version: 1
+paths:
+  capabilities: ".wf/CAPABILITIES.yaml"
+  drill_cache: ".wf/transient/drill-cache"
+  archive: ".wf/archive"
+YAML
+    cat > "$p/.wf/CAPABILITIES.yaml" <<'YAML'
+# CAPABILITIES — the durable why (committed). This comment must survive.
+version: 1
+capabilities:
+- id: CAP-3
+  statement: "Operators can reject bad X — with an em dash."
+  notes: ""
+- id: CAP-4
+  statement: "Operators can list zones."
+YAML
+    echo "$p"
+}
+
+P="$(mk_cap_proj)"
+printf '# Adequacy: CAP-3 — adequate\n**Date:** now\n' \
+    > "$P/.wf/transient/drill-cache/adequacy-CAP-3-20260731T090000Z.md"
+DC="$("$PYTHON" "$WF" pipeline drain-capability CAP-3 --config "$P/.wf/config.yaml" --format json)"; RCD=$?
+[ "$RCD" -eq 0 ] && [ "$(jget "$DC" "d['drained']")" = "True" ] \
+    && ok "drain-capability: an adequate digest drains the capability" || bad "drain-cap adequate" "rc=$RCD $DC"
+[ "$(yget "$P/.wf/CAPABILITIES.yaml" "[e['id'] for e in d['capabilities']]")" = "['CAP-4']" ] \
+    && ok "drain-capability: only the reviewed capability is removed" || bad "drain-cap removal" "$(cat "$P/.wf/CAPABILITIES.yaml")"
+grep -q "This comment must survive" "$P/.wf/CAPABILITIES.yaml" \
+    && ok "drain-capability: the capabilities file's comments survive (L-106)" || bad "drain-cap comments" "$(cat "$P/.wf/CAPABILITIES.yaml")"
+ls "$P/.wf/archive/capabilities/"*__CAPABILITIES.yaml >/dev/null 2>&1 \
+    && ok "drain-capability: snapshots the pre-drain file into the archive" || bad "drain-cap archive" "$(ls -R "$P/.wf/archive" 2>&1)"
+[ "$(jget "$DC" "'drill-cache' in d['digest']")" = "True" ] \
+    && ok "drain-capability: resolves the newest digest from paths.drill_cache" || bad "drain-cap digest" "$DC"
+
+# an inadequate verdict mutates nothing and exits 1
+P="$(mk_cap_proj)"
+printf '# Adequacy: CAP-3 — inadequate\n' \
+    > "$P/.wf/transient/drill-cache/adequacy-CAP-3-20260731T090000Z.md"
+DC="$("$PYTHON" "$WF" pipeline drain-capability CAP-3 --config "$P/.wf/config.yaml" --format json)"; RCD=$?
+[ "$RCD" -eq 1 ] && [ "$(jget "$DC" "d['drained']")" = "False" ] \
+    && ok "drain-capability: an inadequate digest exits 1" || bad "drain-cap inadequate" "rc=$RCD $DC"
+[ "$(yget "$P/.wf/CAPABILITIES.yaml" "[e['id'] for e in d['capabilities']]")" = "['CAP-3', 'CAP-4']" ] \
+    && ok "drain-capability: an inadequate verdict mutates nothing" || bad "drain-cap inadequate mutation" "$(cat "$P/.wf/CAPABILITIES.yaml")"
+
+# the newest digest wins — a stale inadequate one does not veto a later adequate one
+P="$(mk_cap_proj)"
+printf '# Adequacy: CAP-3 — inadequate\n' > "$P/.wf/transient/drill-cache/adequacy-CAP-3-20260701T090000Z.md"
+printf '# Adequacy: CAP-3 — adequate\n'   > "$P/.wf/transient/drill-cache/adequacy-CAP-3-20260731T090000Z.md"
+DC="$("$PYTHON" "$WF" pipeline drain-capability CAP-3 --config "$P/.wf/config.yaml" --format json)"
+[ "$(jget "$DC" "d['drained']")" = "True" ] \
+    && ok "drain-capability: the newest digest is the verdict" || bad "drain-cap newest" "$DC"
+
+# a digest reviewing a DIFFERENT capability is a mechanical failure
+P="$(mk_cap_proj)"
+printf '# Adequacy: CAP-4 — adequate\n' > "$P/.wf/transient/drill-cache/adequacy-CAP-3-20260731T090000Z.md"
+if "$PYTHON" "$WF" pipeline drain-capability CAP-3 --config "$P/.wf/config.yaml" >/dev/null 2>&1; then
+    bad "drain-capability: mismatched digest should fail" "exited 0"
+else
+    ok "drain-capability: a digest reviewing another capability → non-zero exit"
+fi
+
+# no digest at all → mechanical failure, never a silent pass
+P="$(mk_cap_proj)"
+if "$PYTHON" "$WF" pipeline drain-capability CAP-3 --config "$P/.wf/config.yaml" >/dev/null 2>&1; then
+    bad "drain-capability: no digest should fail" "exited 0"
+else
+    ok "drain-capability: no adequacy digest → non-zero exit"
+fi
+
+# an explicit --verdict path wins over the drill-cache scan
+P="$(mk_cap_proj)"
+printf '# Adequacy: CAP-3 — adequate\n' > "$P/verdict.md"
+DC="$("$PYTHON" "$WF" pipeline drain-capability CAP-3 --verdict "$P/verdict.md" --config "$P/.wf/config.yaml" --format json)"
+[ "$(jget "$DC" "d['drained']")" = "True" ] && [ "$(jget "$DC" "d['digest']")" = "$P/verdict.md" ] \
+    && ok "drain-capability: --verdict names the digest to read" || bad "drain-cap explicit" "$DC"
+
+# a capability that is not open cannot be drained twice
+if "$PYTHON" "$WF" pipeline drain-capability CAP-3 --verdict "$P/verdict.md" --config "$P/.wf/config.yaml" >/dev/null 2>&1; then
+    bad "drain-capability: draining a closed capability should fail" "exited 0"
+else
+    ok "drain-capability: a capability already drained → non-zero exit"
+fi
 
 # ── summary ──
 echo ""

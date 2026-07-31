@@ -1,24 +1,25 @@
-"""wf orchestrate — the orchestrator's mechanical helpers.
+"""wf orchestrate — the driver's mechanical helpers.
 
-The judgment-free verdict scripts: the controller (the skill OR the Python driver)
-shells out to these between sub-agent dispatches, then switches on their EXACT
-stdout and exit codes. Verdicts come from on-disk artifacts, never from parsing a
-sub-agent's prose — compliance by mechanism.
+The judgment-free verdict scripts: the driver shells out to these between agent
+dispatches, then switches on their EXACT stdout and exit codes. Verdicts come from
+on-disk artifacts, never from parsing an agent's prose — compliance by mechanism.
 
   inspect-build-return   Build Return Protocol detector
   inspect-review-return  Review Return Protocol detector
   preserve-uncommitted   commit uncommitted work before re-dispatch
   sweep-transients       session-start broom (resume safety)
-  dispatch-fix           route a design issue to wf-spec-fix (slice cap → human)
 
 Unlike the query verbs (which route through common.emit), every verb here prints
-the raw shape its contract names — a compact JSON line, an indent=2 blob, or a bare
-word — and returns the documented exit code.
+the raw shape its contract names — a compact JSON line or a bare word — and returns
+the documented exit code.
 
 Worktree discipline: the inspect/preserve verbs read the WORKTREE's OWN
 ``.wf/config.yaml`` (a positional ``<worktree-path>``), resolving artifact paths
 against the worktree root — that is where the build/review agent wrote them. The
-sweep/dispatch verbs take a cwd-relative ``--config`` (default ``.wf/config.yaml``).
+sweep verb takes a cwd-relative ``--config`` (default ``.wf/config.yaml``).
+
+Every git call carries an explicit timeout: a hung subprocess with no bound stalls
+the whole loop behind it, and a harness default is not a bound we chose (L-090).
 """
 from __future__ import annotations
 
@@ -34,6 +35,11 @@ except ImportError:  # pragma: no cover - environment guard (common.py already g
     sys.stderr.write("wf: PyYAML is required (pip install pyyaml)\n")
     sys.exit(2)
 
+
+# Git plumbing on a worktree is sub-second work; a call still running after this has
+# hung, and every second past it is a driver slot held by nothing.
+GIT_TIMEOUT_S = 60
+GIT_COMMIT_TIMEOUT_S = 600
 
 # preserve-uncommitted writes this subject; inspect-review-return peels it off HEAD to
 # find the verdict-bearing commit underneath. One literal, so the two cannot drift.
@@ -185,6 +191,7 @@ def _git_out(worktree_path: Path, *args: str):
             ["git", "-C", str(worktree_path), *args],
             capture_output=True,
             text=True,
+            timeout=GIT_TIMEOUT_S,
         )
     except (OSError, subprocess.SubprocessError):
         return False, ""
@@ -302,7 +309,7 @@ def _preserve_uncommitted(rest):
     try:
         st = subprocess.run(
             ["git", "-C", str(worktree_path), "status", "--porcelain=v1"],
-            capture_output=True, text=True,
+            capture_output=True, text=True, timeout=GIT_TIMEOUT_S,
         )
     except (OSError, subprocess.SubprocessError):
         return _err("error: git status failed", 1)
@@ -372,13 +379,15 @@ def _preserve_uncommitted(rest):
     try:
         add = subprocess.run(
             ["git", "-C", str(worktree_path), "add", "-f", "--", *files_to_stage],
-            capture_output=True, text=True,
+            capture_output=True, text=True, timeout=GIT_TIMEOUT_S,
         )
         if add.returncode != 0:
             return _err("error: git add failed", 1)
+        # A commit runs the project's hooks, which can be slow — it gets its own,
+        # wider bound rather than the plumbing one.
         commit = subprocess.run(
             ["git", "-C", str(worktree_path), "commit", "-m", commit_message],
-            capture_output=True, text=True,
+            capture_output=True, text=True, timeout=GIT_COMMIT_TIMEOUT_S,
         )
         if commit.returncode != 0:
             return _err("error: git commit failed", 1)
@@ -441,14 +450,12 @@ def _sweep_transients(rest):
     p_pipeline_state = resolve("pipeline_state", ".wf/transient/pipeline-state.yaml")
 
     task_states = None  # None → no pipeline-state file → keep everything
-    in_preparing = False
     if p_pipeline_state.is_file():
         try:
             doc = yaml.safe_load(p_pipeline_state.read_text()) or {}
         except yaml.YAMLError as e:
             return _err(f"error: parse {p_pipeline_state}: {e}")
         task_states = doc.get("task_states") or {}
-        in_preparing = doc.get("current_phase") == "preparing"
 
     deleted = []
     skipped = []
@@ -492,22 +499,13 @@ def _sweep_transients(rest):
         """design-issues.yaml holds a LIST of entries, each with its own task_id — the
         top-level-task_id rule above cannot read it, so prune per entry instead.
 
-        An entry is a live handoff iff `status: open` (the same test both readers already
-        apply: `_open_design_issue_for_task` here, and `dispatch-fix`, which refuses to
-        route anything already resolved/overridden). A closed entry is pruned regardless
+        An entry is a live handoff iff `status: open` (the same test
+        `_open_design_issue_for_task` applies above). A closed entry is pruned regardless
         of its task_id — deliberately NOT keyed on task_states, because complete-sprint
         resets pipeline_state to a bare `idle`: by the next run the shipped sprint's task
         states are gone, and a task_states-keyed rule would keep the file forever.
-        An open entry prunes only when its task is provably terminal.
-
-        A task-less entry during `preparing` is a slice re-cut round (`scope: slice`):
-        dispatch-fix counts those to bound the rounds, so while preparing runs they survive
-        whatever their status — pruning one under-counts the round on a resume and hands the
-        fixer a lap it should not get. Once preparing is over they are residue.
-
-        Without a pipeline-state file the phase is UNKNOWN, not "not preparing" — keep
-        everything, as `sweep` above does. Guessing here prunes the round count and
-        silently lifts the re-design bound."""
+        An open entry prunes only when its task is provably terminal — including a
+        task-less, slice-scoped one, which stays live until the design role resolves it."""
         if not path.exists():
             return
         if task_states is None:
@@ -534,12 +532,11 @@ def _sweep_transients(rest):
             task_id = issue.get("task_id")
             task_id = "" if task_id is None else str(task_id)
             if not task_id:
-                if in_preparing or status == "open":
-                    survivors.append(issue)  # live handoff, or this loop's round count
+                if status == "open":
+                    survivors.append(issue)  # a live slice-scoped handoff
                     continue
                 pruned.append({"path": str(path), "id": iid,
-                               "reason": f"slice issue is {status} and preparing is over "
-                                         "— residue"})
+                               "reason": f"slice issue is {status} — residue"})
                 continue
             if status != "open":
                 pruned.append({"path": str(path), "id": iid,
@@ -585,137 +582,9 @@ def _sweep_transients(rest):
     return 0
 
 
-# ===========================================================================
-# 5. dispatch-fix
-# ===========================================================================
-
-# Every design issue raised during a run routes to the single spec fixer, wf-spec-fix:
-# a bare issue from build/review/stage-repair, or a slice-scoped one wf-tl raises in
-# `preparing` when it cannot decompose the slice. wf-spec-fix classifies it and resolves it
-# across the design layer — amend the contract, author a follow-up task, amend a
-# requirement/ADR, or re-cut the slice — and halts to a human only when the driving
-# capability itself is wrong. The one gate the router still owns is non-convergence.
-_SPEC_FIXER = "wf-spec-fix"
-
-# How many times a rejected slice may be re-cut before a human rules on it. Each lap is
-# autonomous and cheap, but a re-cut is only tested by the NEXT decomposition — so a slice
-# still failing after this many laps is one the fixer is not converging on. A slice issue
-# carries `scope: slice`; running-stage issues do not, so they never count against it.
-_MAX_REDESIGN_ROUNDS = 2
-
-
-def _dispatch_fix(rest):
-    config_path_str = ".wf/config.yaml"
-    di_id = ""
-
-    i = 0
-    while i < len(rest):
-        a = rest[i]
-        if a == "--config":
-            if i + 1 >= len(rest):
-                return _err("unknown arg: --config")
-            config_path_str = rest[i + 1]
-            i += 2
-        elif a.startswith("-"):
-            return _err(f"unknown arg: {a}")
-        else:
-            di_id = a
-            i += 1
-
-    if not di_id:
-        return _err("error: DI id is required (positional arg)")
-
-    config_path = Path(config_path_str)
-    if not config_path.is_file():
-        return _err(f"error: config not found at {config_path_str}")
-
-    config_path = config_path.resolve()
-    project_root = (
-        config_path.parent.parent if config_path.name == "config.yaml" else Path.cwd()
-    ).resolve()
-
-    try:
-        config = yaml.safe_load(config_path.read_text()) or {}
-    except yaml.YAMLError as exc:
-        return _err(f"error: failed to parse {config_path}: {exc}")
-
-    paths = config.get("paths", {}) or {}
-    di_path = (project_root / paths.get("design_issues", ".wf/transient/design-issues.yaml")).resolve()
-    sprint_path = (project_root / paths.get("sprint", ".wf/transient/sprint.yaml")).resolve()
-
-    if not di_path.exists():
-        return _err(f"error: design issues file not found at {di_path}")
-
-    try:
-        doc = yaml.safe_load(di_path.read_text()) or {}
-    except yaml.YAMLError as exc:
-        return _err(f"error: failed to parse {di_path}: {exc}")
-
-    issues = doc.get("issues", []) or []
-    entry = next((it for it in issues if isinstance(it, dict) and it.get("id") == di_id), None)
-    if entry is None:
-        return _err(f"error: DI {di_id} not found in {di_path}")
-
-    status = entry.get("status", "open")
-    if status in ("resolved", "overridden"):
-        return _err(f"error: DI {di_id} status is '{status}'; no routing decision needed")
-
-    scope = entry.get("scope", "")
-    task_id = entry.get("task_id", "")
-
-    subagent_type = _SPEC_FIXER
-    human_gate = False
-    reason = ""
-    # A slice the fixer cannot make decomposable would re-cut forever — each lap is tested
-    # only by the next decomposition, which rejects it again. Every lap so far is on disk,
-    # so count them (resolved or open) rather than tracking the loop's position, and hand a
-    # non-converging slice to a human.
-    if scope == "slice":
-        rounds = sum(1 for it in issues
-                     if isinstance(it, dict) and it.get("scope") == "slice")
-        if rounds > _MAX_REDESIGN_ROUNDS:
-            subagent_type = None
-            human_gate = True
-            reason = (
-                f"{rounds} slice rejections on this sprint (limit {_MAX_REDESIGN_ROUNDS}) — "
-                "the slice is not converging on a decomposable cut. Run /wf-sa interactively."
-            )
-
-    def relpath(p):
-        try:
-            return str(p.relative_to(project_root))
-        except ValueError:
-            return str(p)
-
-    envelope = {
-        "mode": "fix",
-        "di_id": di_id,
-        "task_id": task_id,
-        "di_artifact": relpath(di_path),
-    }
-    # Name the sprint only when there is one to read: a slice issue is raised in
-    # `preparing`, where wf-tl may have halted before ever writing it.
-    if sprint_path.exists():
-        envelope["sprint_artifact"] = relpath(sprint_path)
-
-    result = {
-        "di_id": di_id,
-        "task_id": task_id,
-        "subagent_type": subagent_type,
-        "human_gate": human_gate,
-        "envelope": envelope,
-    }
-    if reason:
-        result["reason"] = reason
-
-    print(json.dumps(result, indent=2, sort_keys=False))
-    return 1 if human_gate else 0
-
-
 COMMANDS = {
     ("orchestrate", "inspect-build-return"): _inspect_build_return,
     ("orchestrate", "inspect-review-return"): _inspect_review_return,
     ("orchestrate", "preserve-uncommitted"): _preserve_uncommitted,
     ("orchestrate", "sweep-transients"): _sweep_transients,
-    ("orchestrate", "dispatch-fix"): _dispatch_fix,
 }

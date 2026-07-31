@@ -1,0 +1,113 @@
+<!--
+  SLICE — one sprint's design. TRANSIENT: written at sprint start, consumed by the
+  per-increment Tech Lead dispatches, drained at sprint close. Gitignored, never
+  durable. Reference the brief and drill digests by path — do NOT restate structure.
+-->
+
+# Slice — <the sprint's scope in one line>
+
+**Serves:** CAP-NNN, CAP-NNN, L-NNN   <!-- every id in full; a range enumerates nothing -->
+**System view:** see `<paths.discover_brief>`; depth in `<paths.drill_cache>/<digests consulted>`
+**Date:** YYYY-MM-DD
+
+## Design narrative
+
+<!-- The story of the change, in prose. Rides in every task envelope. Describes only THIS
+     CHANGE — existing structure stays in the brief and drill digests, referenced by path:
+     - the shape chosen and the force that drove it;
+     - how each end-to-end behaviour flows through the components IN ORDER, wiring
+       included (composition root, orchestration);
+     - each touched component's role — a sentence or two, never a section. -->
+
+<the shape, the flow end-to-end (wiring included), each component's role>
+
+## Claimed scope
+
+<!-- One entry per served capability: what THIS iteration delivers of its promise, and
+     what it knowingly leaves. The design-time adequacy gate judges the scenario set
+     against these words. Never claim a capability complete. -->
+
+- **CAP-NNN** — delivers: <the part of the promise this sprint proves>. Leaves:
+  <the part deliberately deferred>.
+
+## Increments
+
+<!-- Ordered; the Tech Lead is dispatched once per increment, in this order. Count within
+     limits.increments_per_sprint. -->
+
+### Increment 1 — <goal in one line>
+
+- **Allocation:** <component> — <what it must do>; <component> — <what it must do>
+  (the composition root and orchestration included whenever the behaviour is observable)
+- **Flow:** <how the behaviour moves through those components, in order, wiring included>
+- **Checkpoint:** after this increment, <X> demonstrably works — observed by <how>
+- **System tests:** SYS-TC-NNN   <!-- the cases this increment completes; omit if none -->
+
+### Increment 2 — <goal in one line>
+
+<same shape>
+
+## System test cases
+
+<!-- Gherkin-light, black-box, covering a capability. Ids repo-unique from the SYS-TC lane. -->
+
+- **SYS-TC-1:** <clear title of the end-to-end behaviour>
+  **Covers:** CAP-NNN
+  - **Given** <initial state / preconditions>
+  - **When** <the external trigger or action>
+  - **Then** <the observable, verifiable end state or output>
+
+## Interface contracts
+
+<!-- ONLY for a seam whose two sides are built in DIFFERENT increments. Behaviour lives in
+     the increments; only the shape lives here. Omit the section when no seam spans two
+     increments. -->
+
+- **<component or seam>** — produced in increment N, consumed in increment M
+
+      <the signature / struct / endpoint request+response shape>
+
+## Supersessions
+
+<!-- Shipped behaviour this slice invalidates. Component behaviour has no durable id — name
+     its proving test file(s). A shipped SYS-TC scenario is above the escalation gate and
+     never appears here. Omit the section when nothing shipped is invalidated. -->
+
+- <the behaviour retired> — proven by `<test file path>` · <one-line reason> · successor:
+  increment N — or "retired, no successor"
+
+## NFR & authz
+
+<!-- Every entry is either allocated work or an explicit deferral — never a silent absence. -->
+
+- **Envelope:** increment N bounds <the fan-out / latency> at <subject · metric · threshold ·
+  condition · source>  — or **deferred:** <what · why · revisit when>
+- **Authz:** increment N guards <the new/changed entry points>  — or **deferred:** <what ·
+  why · revisit when>
+
+## Binding ADRs
+
+- **ADR-NNN** — <title> · <the constraint line it imposes on this change>
+
+## Soundness
+
+<!-- One line per design heuristic: pass with its justification, or the conflict found and
+     how it was resolved. -->
+
+- **Boundary & responsibility (SRP):** <pass + why, or conflict + resolution>
+- **Ownership:** <…>
+- **Dependency direction:** <…>
+- **Interface stability:** <…>
+- **Extension over modification:** <…>
+- **Allocation completeness:** <…>
+- **Move discipline:** <…>
+
+## Decision log
+
+<!-- Ships in the sprint PR body. Every decision taken below the escalation gate. -->
+
+- **Assumption** — CAP-NNN read as <the reading designed to>, not <the reading rejected>.
+- **Supersession** — <shipped component behaviour retired> · <why>.
+- **Deferral** — <NFR/authz item deferred> · <why> · <revisit when>.
+- **Plan reshuffle** — <milestone moved/dropped> · <what the repo state argued>.
+- **Repair** — <di-id>: <what was changed> · <class-wide sweep, or "none">.

@@ -15,13 +15,18 @@ project:
                               # list (["claude", "pi"]) when several are installed.
                               # install.sh reads it on a flagless re-install and
                               # renders every listed target (a --target flag wins).
-  base_branch: "main"         # Branch the orchestrator cuts sprint branches from and
-                              # opens the ship PR against.
+  base_branch: "main"         # Branch the first sprint branches from, and the base a
+                              # stacked sprint PR falls back to once the one below merges.
 
 paths:
   tools: ".wf/tools"          # Installed toolkit machinery (extractors, scripts). Committed.
   transient: ".wf/transient"  # Derived, disposable output root (read-views, plans, handovers).
                               # Gitignored. Never hand-edited.
+  # Installed role files — the driver builds a role's prompt by naming its file, so it
+  # needs the dirs the installer rendered them into.
+  skills: ".{{TARGET}}/skills"   # driver: a skill-shaped role lives at <paths.skills>/<role>/SKILL.md
+  agents: ".{{TARGET}}/agents"   # driver: an agent-shaped role lives at <paths.agents>/<role>.md
+
   discover: ".wf/transient/discover"          # wf-discover working dir (extractor --out; cleared each run).
   # wf-discover output files — each a whole path, so a downstream skill that reads
   # one (e.g. brief) follows a single config edit if it moves.
@@ -29,14 +34,19 @@ paths:
   discover_clusters: ".wf/transient/discover/clusters.json"      # cluster output (passed to discover.py --clusters-out)
   discover_subsystems: ".wf/transient/discover/subsystems.json"  # scout output (semantic cache)
   discover_view: ".wf/transient/discover/view.html"              # human interactive map
-  discover_brief: ".wf/transient/discover/brief.md"              # agent digest (consumed by planning skills)
+  discover_brief: ".wf/transient/discover/brief.md"              # agent digest (refreshed at every sprint start)
   telemetry: ".wf/telemetry/sessions.jsonl"   # Session log. Committed. Skills append session
                                               # rows; on the claude target an installed
                                               # Stop/SubagentStop hook also appends `kind: usage`
                                               # token/tool rows. wf-retrospective drains it to
                                               # paths.archive at closeout, so it holds one cycle,
                                               # not all history (bounds the retrospective's own read).
-  capabilities: ".wf/CAPABILITIES.yaml"       # User-voice capabilities (wf-po appends; wf-sa drains when proven: system tests shipped + adequacy review). Committed.
+
+  # The durable why + the durable direction. Both are human-owned; the autonomous
+  # design role reads them and writes only paths.plan.
+  capabilities: ".wf/CAPABILITIES.yaml"       # User-voice capabilities (wf-po appends; `pipeline drain-capability` removes one on an adequate verdict). Committed.
+  charter: ".wf/charter.md"                   # Direction: target shape, ranked forces, domain language, sequencing rationale, no-go zones. A wf-sa session writes it; the design role reads it, never writes it. Committed.
+  plan: ".wf/plan.md"                         # Rolling milestone plan — the one durable file the design role writes, revised at every sprint start and trimmed as milestones ship. Rides in every sprint PR. Committed.
 
   # Test-tree roots — every root the tag scanners sweep for [SYS-TC:] tags
   # (register.py, retired.py, render_design.py, complete-sprint's superseded sweep). A
@@ -49,64 +59,80 @@ paths:
 
   # Learnings — distilled from telemetry by wf-retrospective. First-class design
   # inputs (peer of capabilities); each entry is one actionable observation.
-  learnings: ".wf/LEARNINGS.yaml"             # Project-code learnings (wf-retrospective appends; wf-sa drains when built). Committed.
+  learnings: ".wf/LEARNINGS.yaml"             # Project-code learnings (wf-retrospective appends; complete-sprint drains one when every task covering it merged). Committed.
   wf_learnings: ".wf/wf-learnings.yaml"       # wf-toolkit friction, for the wf maintainer. Committed.
   retro_report: ".wf/transient/retro-report.md"  # wf-retrospective's human-facing digest of ONE run: proposed AGENTS.md edits (gotchas), this run's new/reinforced learnings, and the execution summary. The maintainer's inbox — read after a run, then acted on. Overwritten each run; derived from telemetry + the learnings files, so transient.
 
-  # Planning layer (wf-sa, wf-tl). The durable planning artifacts are the ADRs and the
-  # design-backlog (committed); the design-slice, drill-cache, and sprint are transient —
-  # regenerated per change, consumed by the next role, never hand-maintained.
-  adrs: ".wf/adrs"                             # Durable architecture decision records (wf-sa). Committed dir, one .md per ADR.
-  design_backlog: ".wf/design-backlog.md"      # wf-sa's designed-but-unbuilt work; complete-sprint trims built ids from the merge record at sprint close. Committed.
-  design_slice: ".wf/transient/design-slice.md"   # wf-sa cuts this from the backlog for wf-tl; retained through build, drained at complete-sprint. Transient.
-  design_view: ".wf/transient/design-view.html"   # wf-sa interactive design diagram (render_design.py). Transient.
-  design_graph: ".wf/transient/design-graph.json" # wf-sa's authored change-graph (the renderer's input); wf-tl reads it to plan against the change's shape. Transient.
-  drain_report: ".wf/transient/drain-report.yaml" # complete-sprint appends what each closed sprint drained (emptied designs, drained learnings, capabilities that lost their last serving design); wf-sa's proof gate consumes and deletes it. Transient.
-  domain_view: ".wf/transient/domain-view.html"   # wf-sa entity/domain-model diagram (render_design.py entity mode). Transient.
-  decision_prep: ".wf/transient/decision-prep.md" # A capability decision the fixer could not take autonomously (wf-spec-fix on a capability halt): the brief + render_design decisions fields; the human's next wf-sa run presents it, then deletes it. Transient.
-  drill_cache: ".wf/transient/drill-cache"        # Shared scout digests (wf-po/wf-sa dispatch wf-drill, wf-sa also wf-adequacy; the agents append, both roles read). Transient dir.
-  sprint: ".wf/transient/sprint.yaml"             # wf-tl task DAG the orchestrator executes. Transient.
+  # Planning layer. The ADRs are durable; the design-slice, drill-cache, and sprint are
+  # transient — cut fresh each sprint, consumed by the next role, drained at close.
+  adrs: ".wf/adrs"                             # Durable architecture decision records. Committed dir, one .md per ADR.
+  design_slice: ".wf/transient/design-slice.md"   # The sprint's design: serves header, narrative, claimed scope, ordered increments, SYS-TC cases, supersessions, soundness verdicts, decision log. Read by the TL and by every task envelope; drained at complete-sprint. Transient.
+  design_view: ".wf/transient/design-view.html"   # Interactive design diagram (render_design.py). Transient.
+  design_graph: ".wf/transient/design-graph.json" # The authored change-graph (the renderer's input); wf-tl reads it to plan against the change's shape. Transient.
+  domain_view: ".wf/transient/domain-view.html"   # Entity/domain-model diagram (render_design.py entity mode). Transient.
+  drain_report: ".wf/transient/drain-report.yaml" # complete-sprint appends what each closed sprint served, drained, and left for the adequacy gate; the ship step folds it into the PR body. Transient.
+  decision_prep: ".wf/transient/decision-prep.md" # A decision the design role could not take autonomously (ADR threshold, capability recast, shipped-scenario supersession, charter contradiction): the brief, the options, the recommendation. The driver pauses; a wf-sa session rules; the design role resumes from the ruling. Transient.
+  drill_cache: ".wf/transient/drill-cache"        # Shared scout digests — wf-drill and wf-adequacy write here (an adequacy digest is `adequacy-<CAP-id>-<utc>.md`, which `pipeline drain-capability` reads as the drain verdict). Transient dir.
+  sprint: ".wf/transient/sprint.yaml"             # The increment's task contracts (story / acceptance / boundaries / grounding), authored per increment by wf-tl. Transient.
 
   # Maintainer research archive (committed). WRITE-ONLY: the drain sites snapshot each
-  # artifact here as it leaves the working set (capabilities + learnings as wf-sa drains
-  # them; slice + sprint + shipped backlog at complete-sprint). NO wf role
-  # is ever instructed to read it — it exists solely so the wf2 maintainer can study run
-  # quality offline. It is OUTSIDE the governed working set, so the governor's
-  # derive-don't-store rule does not apply: nothing consumes it as truth, so it cannot rot.
+  # artifact here as it leaves the working set (capabilities on an adequate verdict;
+  # learnings, slice, and sprint at complete-sprint). NO wf role is ever instructed to
+  # read it — it exists solely so the wf2 maintainer can study run quality offline. It is
+  # OUTSIDE the governed working set, so the governor's derive-don't-store rule does not
+  # apply: nothing consumes it as truth, so it cannot rot.
   archive: ".wf/archive"
 
-  # Orchestration (the build pipeline). pipeline-state is the live run state the brain
-  # and the orchestrator read/write on every transition; pipeline-history is its spilled
-  # audit tail. Both transient (machine-owned, gitignored). complete-sprint drains the
-  # working set from the merge record (backlog trim, learnings drain, drain report) and
-  # snapshots the shipped plan + final state to paths.archive before resetting.
-  pipeline_state: ".wf/transient/pipeline-state.yaml"      # live run state: stages, task_states, design_issues, history. Transient.
+  # Run state. pipeline-state is the live state the brain and the driver read/write on
+  # every transition; pipeline-history is its spilled audit tail. Both transient
+  # (machine-owned, gitignored). complete-sprint drains the working set from the slice's
+  # serves header + the merge record and snapshots the shipped state to paths.archive
+  # before resetting.
+  pipeline_state: ".wf/transient/pipeline-state.yaml"      # live run state: phase, sub-layers, task_states, design_issues, history. Transient.
   pipeline_history: ".wf/transient/pipeline-history.yaml"  # archived history overflow. Transient.
 
-  # Per-task pipeline artifacts — written by the build/review agents inside their task
-  # worktree, read by the orchestrator's return-inspection (verdict from on-disk artifact,
-  # never from prose). Worktree-local + transient.
-  current_task: ".wf/transient/current-task.yaml"      # the extracted task contract the build agent reads.
+  # Per-task artifacts — written by the build/review agents inside their task worktree,
+  # read by the driver's return-inspection (verdict from on-disk artifact, never from
+  # prose). Worktree-local + transient.
+  current_task: ".wf/transient/current-task.yaml"      # the build envelope `sprint task --write` drops for the build agent.
   review_ready: ".wf/transient/review-ready.yaml"      # build → review handoff (build done, gates green).
   feedback: ".wf/transient/feedback.yaml"              # review → build rejection feedback.
 
   # Design issues — the one artifact above with a host-side life too: build/review raise a
-  # bare one in their worktree and the orchestrator copies it here; wf-tl raises a
-  # slice-scoped one (`scope: slice`) straight here in preparing, when no worktree exists yet.
-  # dispatch-fix routes every entry to wf-spec-fix; sweep-transients prunes the closed ones. Transient.
+  # bare one in their worktree and the driver copies it here; wf-tl raises a slice-scoped
+  # one (`scope: slice`) straight here when an increment will not decompose within the
+  # slice's allocation. The design role's repair mode resolves them; sweep-transients
+  # prunes the closed ones. Transient.
   design_issues: ".wf/transient/design-issues.yaml"
-  # Spec-fix decision report — wf-spec-fix appends one short block per design issue it resolves
-  # autonomously (what changed, and any shipped requirement it superseded). `ship` folds it into
-  # the PR body so the human reviews the run's spec decisions; archived + drained at sprint close. Transient.
+  # Decision report — the design role appends one short block per issue it resolves
+  # autonomously (what changed, and any component-level behaviour it superseded). `ship`
+  # folds it into the PR body so the human reviews the run's design decisions; archived +
+  # drained at sprint close. Transient.
   spec_decisions: ".wf/transient/spec-decisions.md"
 
 parallel:
-  max_concurrent_tasks: 4                     # within-stage concurrency cap — independent tasks run in parallel worktrees.
   worktree_base: ".wf/transient/worktrees"    # per-task git worktree root. Transient.
+
+driver:
+  # The loop program: it launches every role headlessly and routes on exit codes plus
+  # artifacts on disk — never on an agent's prose.
+  agent_cmd: 'claude -p --dangerously-skip-permissions "{prompt}"'
+                              # driver: role launch template; {prompt} is substituted.
+                              # Per harness — opencode: `opencode run "{prompt}"`.
+  max_parallel: 4             # driver: tasks dispatched concurrently within one sub-layer.
+  max_unmerged_sprints: 3     # driver: stack-depth cap — pause when this many shipped
+                              # sprint branches are still unmerged into base_branch.
+                              # Set to 1 during bring-up: one sprint per invocation.
+  stop_file: ".wf/transient/STOP"  # driver: manual stop — when this file appears, finish
+                                   # the current sprint cleanly, ship it, and exit.
+
+limits:
+  increments_per_sprint: 4    # `slice check` errors above this — a sprint that big is not one iteration.
+  tasks_per_increment: 10     # `sprint check` errors above this; wf-tl raises a slice defect rather than decomposing past it.
 
 commands:
   preflight: ""        # per-task gate (lint + tests + build) — wf-init captures it from repo evidence at init; build runs it before every handoff.
-  stage_check: ""      # heavier checks run only at a stage boundary (e2e / integration) — wf-init captures it at init; empty skips them.
+  stage_check: ""      # heavier checks run only at an increment boundary (e2e / integration) — wf-init captures it at init; empty skips them.
 
 hygiene:
   # `wf hygiene check` thresholds — the context-cost rules (file length bounds what a
@@ -119,13 +145,15 @@ hygiene:
   comment_block_max: 8    # contiguous full-line comment block cap
   comment_ratio_warn: 0.25 # comment-lines / total-lines report threshold (files ≥ 50 lines)
   agents_md_max: 200      # AGENTS.md / CLAUDE.md line cap — this file loads into every agent context
+  charter_max: 120        # paths.charter line cap — the design role reads it whole, every sprint
+  plan_max: 60            # paths.plan line cap — milestone altitude only, no component detail
 
 impact:
-  # Companion fan-out rules for `wf impact files` (the wf-tl files_to_touch
-  # computation): when a changed or consumer file matches `when`, every file the
-  # `add` globs match joins the candidate set — e.g. a migrations edit fanning out
-  # to a regenerated codegen folder. The *.up.sql → *.down.sql sibling is built in.
-  # Add a rule when a run shows a mechanical fan-out the tool missed, e.g.:
+  # Companion fan-out rules for `wf impact files`: when a changed or consumer file
+  # matches `when`, every file the `add` globs match joins the candidate set — e.g. a
+  # migrations edit fanning out to a regenerated codegen folder. The *.up.sql →
+  # *.down.sql sibling is built in. Add a rule when a run shows a mechanical fan-out the
+  # tool missed, e.g.:
   #   - when: "backend/migrations/*"
   #     add: ["frontend/src/generated/public/*.ts"]
   companions: []
@@ -143,5 +171,4 @@ id_counters:            # high-water marks for draining id lanes — only ever i
   cap: 0                # CAP-NNN (wf-po bumps)
   learning: 0           # L-NNN in paths.learnings (wf-retrospective bumps)
   wf_learning: 0        # L-NNN in paths.wf_learnings (wf-retrospective bumps)
-  req: 0                # REQ-<n> — component requirements (wf-sa bumps; ids live only in backlog/slice/contract)
-  sys_tc: 0             # SYS-TC-<n> — system test cases (wf-sa bumps; ids persist as [SYS-TC:] tags in tests)
+  sys_tc: 0             # SYS-TC-<n> — system test cases (the design role bumps; ids persist as [SYS-TC:] tags in tests)

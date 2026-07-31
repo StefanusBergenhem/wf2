@@ -1,22 +1,24 @@
 """wf pipeline — the orchestration decision brain.
 
-The orchestrator (the thin skill) holds no scheduling logic of its own: it asks
-this module what to do next. The model is
-**staged** — tasks are layered into dependency stages, run one stage at a time
-with a barrier between, and within a stage the independent tasks run in parallel
-under a concurrency cap:
+The driver holds no scheduling logic of its own: it asks this module what to do
+next. A sprint runs as ordered **increments**; one increment at a time is
+decomposed into tasks, and those tasks are layered into dependency **sub-layers**
+run one at a time with a barrier between, parallel within under a concurrency cap:
 
-  - ``compute-stages`` topologically layers ``sprint.yaml`` into ordered stages
-    (stage N's tasks depend only on stages 1..N-1) and stores the plan. Run once
-    in *preparing*; idempotent on resume.
-  - ``next`` returns the *current* stage's dispatch frontier (the pending tasks it
-    can start now, capped to free slots) plus whether the stage is settled and
-    whether the whole sprint is done. The controller drives off ``terminal``.
+  - ``increments`` reports the increments the sprint declares, with their task
+    counts and how far each has settled — the driver's position in the sprint.
+  - ``compute-stages --increment N`` topologically layers *that increment's* tasks
+    into ordered sub-layers and stores the plan. Idempotent on resume; naming a
+    different increment recomputes.
+  - ``next`` returns the current sub-layer's dispatch frontier (the pending tasks
+    it can start now, capped to free slots) plus whether the sub-layer is settled,
+    the increment is done, and the sprint is done. The driver drives off
+    ``terminal``.
 
-Everything mechanical lives here so the controller never schedules by hand. State
-*mutations* (transition / dispatch / complete-task / …) and *advancing* the stage
-are separate verbs (see the run-state section); return *routing* lives in the
-inspect/dispatch helpers.
+Everything mechanical lives here so the driver never schedules by hand. State
+*mutations* (transition / dispatch / complete-task / …) and *advancing* the
+sub-layer are separate verbs (see the run-state section); return *routing* lives
+in the inspect helpers.
 """
 from __future__ import annotations
 
@@ -27,6 +29,7 @@ from pathlib import Path
 
 import archive
 import common
+import slice as slice_checks
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "reconcile"))
 from reconcile import DEFAULT_TEST_GLOBS, harvest  # noqa: E402
@@ -94,6 +97,22 @@ def _sprint_graph(sprint):
     return tasks, ids, deps_of
 
 
+def _increment_key(value):
+    """Sort key over increment labels: numbers first, in numeric order, then any
+    non-numeric label alphabetically — so increment 10 follows 9, not 1."""
+    n = _as_increment(value)
+    if n is None:
+        return (-1, 0, "")
+    return (0, n, "") if isinstance(n, int) else (1, 0, str(n))
+
+
+def _declared_increments(sprint):
+    """The increment labels the sprint's tasks declare, in build order."""
+    numbers = {t.get("increment") for t in (sprint.get("tasks") or [])
+               if isinstance(t, dict) and t.get("increment") is not None}
+    return sorted(numbers, key=_increment_key)
+
+
 def _layer_stages(ids, deps_of, completed, excluded):
     """Topologically layer ids into ordered stages. A task lands in the lowest stage
     where every dependency is either already ``completed`` or placed in an earlier
@@ -120,21 +139,29 @@ def _layer_stages(ids, deps_of, completed, excluded):
 
 
 def _compute_stages(rest):
-    """Layer sprint.yaml into ordered dependency stages and store the plan in
-    pipeline_state (stages.definitions / current / total). Idempotent: if a plan
-    already exists it is preserved (preserving an in-flight ``current``) unless
-    --force. HALTs on a dependency cycle — a cyclic graph is unschedulable."""
+    """Layer ONE increment's tasks into ordered dependency sub-layers and store the
+    plan in pipeline_state (stages.increment / definitions / current / total). The TL
+    is dispatched per increment, so only its tasks exist to layer; a dependency on an
+    earlier increment is already merged and satisfied. Idempotent: an existing plan
+    for the SAME increment is preserved (keeping an in-flight ``current``) unless
+    --force; naming a different increment always recomputes. HALTs on a dependency
+    cycle — a cyclic graph is unschedulable."""
     p = common.base_parser("pipeline compute-stages")
+    p.add_argument("--increment", required=True,
+                   help="the increment whose tasks to layer")
     p.add_argument("--force", action="store_true",
-                   help="recompute even if a stage plan already exists")
+                   help="recompute even if a plan for this increment already exists")
     args = p.parse_args(rest)
 
     sprint = common.load_yaml(common.resolve_path(args.config, "sprint", None))
     doc = _load_state(args)
+    increment = _as_increment(args.increment)
 
     existing = doc.get("stages") or {}
-    if existing.get("definitions") and not args.force:
+    if (existing.get("definitions") and not args.force
+            and existing.get("increment") == increment):
         common.emit({
+            "increment": increment,
             "stages": existing.get("definitions"),
             "total": existing.get("total"),
             "current": existing.get("current", 1),
@@ -142,41 +169,99 @@ def _compute_stages(rest):
         }, args.format)
         return 0
 
-    tasks, ids, deps_of = _sprint_graph(sprint)
-    cycle = _detect_cycle(deps_of)
+    tasks, all_ids, all_deps = _sprint_graph(sprint)
+    cycle = _detect_cycle(all_deps)
     if cycle:
         common.die(f"dependency cycle: {' -> '.join(cycle)}")
 
     task_states = doc.get("task_states") or {}
     status_of = {t["id"]: _effective_status(t["id"], t.get("status"), task_states) for t in tasks}
-    completed = {tid for tid in ids if status_of[tid] in _COMPLETED}
-    excluded = {tid for tid in ids if status_of[tid] in _BLOCKED}
+    in_increment = [t["id"] for t in tasks if _as_increment(t.get("increment")) == increment]
+    if not in_increment:
+        common.die(f"no task declares increment {increment} — run the TL for it first")
+    scope = set(in_increment)
 
-    stages, unplaceable = _layer_stages(ids, deps_of, completed, excluded)
+    deps_of = {tid: [d for d in all_deps[tid] if d in scope] for tid in in_increment}
+    completed = {tid for tid in in_increment if status_of[tid] in _COMPLETED}
+    excluded = {tid for tid in in_increment if status_of[tid] in _BLOCKED}
+    # A dependency OUTSIDE this increment is an earlier increment's task: merged at its
+    # boundary, so satisfied. One that is not completed cannot be waited on here — this
+    # increment's sub-layers only order its own tasks.
+    stranded = {tid for tid in in_increment
+                if any(d not in scope and status_of.get(d) not in _COMPLETED
+                       for d in all_deps[tid])}
+    excluded |= stranded
 
-    doc["stages"] = {"definitions": stages, "current": 1, "total": len(stages)}
-    # Tasks that can never run (depend on a blocked/excluded task) are recorded as
-    # blocked so the status view and end_of_stage propagation agree with the plan.
+    stages, unplaceable = _layer_stages(in_increment, deps_of, completed, excluded)
+    unplaceable = sorted(set(unplaceable) | stranded)
+
+    doc["stages"] = {"increment": increment, "definitions": stages, "current": 1,
+                     "total": len(stages)}
+    # Tasks that can never run (they depend on a blocked task, or on an earlier
+    # increment's task that never merged) are recorded as blocked so the status view
+    # and the boundary's propagation agree with the plan.
     if unplaceable:
         blocked = doc.setdefault("blocked_tasks", {})
         for tid in unplaceable:
-            reason = next((d for d in deps_of[tid] if d in excluded), "blocked")
+            reason = next((d for d in all_deps[tid]
+                           if d in excluded or status_of.get(d) not in _COMPLETED), "blocked")
             if isinstance(blocked, list):
                 blocked.append({"task_id": tid, "blocked_by": reason})
             else:
                 blocked.setdefault(tid, {"blocked_by": reason})
     doc.setdefault("history", []).append({
-        "ts": _now(), "event": "stages_computed",
+        "ts": _now(), "event": "stages_computed", "increment": increment,
         "total": len(stages), "blocked": sorted(unplaceable),
     })
     _save_state(args, doc)
 
     common.emit({
+        "increment": increment,
         "stages": stages,
         "total": len(stages),
         "current": 1,
         "blocked": sorted(unplaceable),
         "recomputed": True,
+    }, args.format)
+    return 0
+
+
+def _as_increment(value):
+    """Normalise an increment label: numeric where possible (so `--increment 2` and a
+    YAML `increment: 2` are the same increment), else the raw string."""
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _increments(rest):
+    """The sprint's declared increments, each with its task count and how far it has
+    settled — the driver's position in the sprint. `current` is the increment the
+    stored stage plan belongs to; `next` is the first increment that is not fully
+    completed, i.e. where the loop goes when this one closes."""
+    args = common.base_parser("pipeline increments").parse_args(rest)
+    sprint = common.load_yaml(common.resolve_path(args.config, "sprint", None))
+    doc = _load_state(args)
+    task_states = doc.get("task_states") or {}
+    tasks = [t for t in (sprint.get("tasks") or []) if isinstance(t, dict) and t.get("id")]
+
+    out = []
+    for number in _declared_increments(sprint):
+        members = [t for t in tasks if _as_increment(t.get("increment")) == _as_increment(number)]
+        statuses = [_effective_status(t["id"], t.get("status"), task_states) for t in members]
+        out.append({
+            "increment": number,
+            "tasks": len(members),
+            "completed": sum(1 for s in statuses if s in _COMPLETED),
+            "done": all(s in _COMPLETED for s in statuses) if statuses else False,
+        })
+    common.emit({
+        "increments": out,
+        "current": (doc.get("stages") or {}).get("increment"),
+        "next": next((i["increment"] for i in out if not i["done"]), None),
     }, args.format)
     return 0
 
@@ -219,16 +304,18 @@ def _elapsed_s(ts):
 
 
 def _next(rest):
-    """Return the current stage's dispatch frontier + settlement signals.
+    """Return the current sub-layer's dispatch frontier + settlement signals.
 
-    ``dispatch`` is the set of pending current-stage tasks to start now (capped to
+    ``dispatch`` is the set of pending current-sub-layer tasks to start now (capped to
     free slots); ``ready`` is the overflow that will dispatch as slots free.
-    ``terminal.stage_done`` is true when nothing in the stage is still pending or
-    in-flight (the controller then runs end_of_stage); ``terminal.sprint_done`` adds
-    "and this is the last stage". ``terminal.halt`` is set only when something is
-    structurally wrong (stages not computed, or an out-of-range current).
-    ``in_flight`` entries carry the dispatch that started them and its age, so a task
-    whose agent was never actually spawned stops looking like a slow one."""
+    ``terminal.stage_done`` is true when nothing in the sub-layer is still pending or
+    in-flight (the driver then runs the batch merge); ``terminal.increment_done`` adds
+    "and this is the increment's last sub-layer" (the driver then runs the boundary
+    checks); ``terminal.sprint_done`` adds "and no later increment is declared".
+    ``terminal.halt`` is set only when something is structurally wrong (stages not
+    computed, or an out-of-range current). ``in_flight`` entries carry the dispatch
+    that started them and its age, so a task whose agent was never actually spawned
+    stops looking like a slow one."""
     args = common.base_parser("pipeline next").parse_args(rest)
 
     sprint = common.load_yaml(common.resolve_path(args.config, "sprint", None))
@@ -236,9 +323,9 @@ def _next(rest):
         common.resolve_path(args.config, "pipeline_state", None), optional=True
     )
     cfg = common.config_doc(args.config)
-    parallel = cfg.get("parallel") or {}
-    cap = int(parallel.get("max_concurrent_tasks") or 4)
-    worktree_base = parallel.get("worktree_base") or ".wf/transient/worktrees"
+    cap = int((cfg.get("driver") or {}).get("max_parallel") or 4)
+    worktree_base = (cfg.get("parallel") or {}).get("worktree_base") \
+        or ".wf/transient/worktrees"
     sprint_id = state.get("sprint_id") or sprint.get("sprint_id") or "sprint"
 
     tasks_by_id = {
@@ -284,14 +371,19 @@ def _next(rest):
     ]
     ready = pending[slots:]
 
-    # The stage is settled (leave running_stage) once nothing is pending or running.
-    # approved tasks (awaiting the batch merge), parked design-issue, escalated and
-    # blocked tasks do NOT hold the stage open — end_of_stage merges the approved set,
-    # resolves design issues, and propagates blocks before advancing.
+    # The sub-layer is settled once nothing is pending or running. approved tasks
+    # (awaiting the batch merge), parked design-issue, escalated and blocked tasks do
+    # NOT hold it open — the boundary merges the approved set, resolves design issues,
+    # and propagates blocks before advancing.
     stage_done = not (dispatch or ready or in_flight)
-    sprint_done = stage_done and cur >= total
+    increment_done = stage_done and cur >= total
+    increment = stages.get("increment")
+    later = [n for n in _declared_increments(sprint)
+             if _increment_key(n) > _increment_key(increment)]
+    sprint_done = increment_done and not later
 
     out = {
+        "increment": increment,
         "stage": {"index": cur, "total": total, "tasks": stage_ids},
         "dispatch": dispatch,
         "ready": ready,
@@ -300,7 +392,8 @@ def _next(rest):
         "repairing": repairing,
         "escalated": escalated,
         "blocked": blocked,
-        "terminal": {"stage_done": stage_done, "sprint_done": sprint_done, "halt": None},
+        "terminal": {"stage_done": stage_done, "increment_done": increment_done,
+                     "sprint_done": sprint_done, "halt": None},
     }
     common.emit(out, args.format)
     return 0
@@ -308,10 +401,12 @@ def _next(rest):
 
 def _halt_frontier(reason):
     return {
+        "increment": None,
         "stage": None,
         "dispatch": [], "ready": [], "in_flight": [],
         "repairing": [], "escalated": [], "blocked": [],
-        "terminal": {"stage_done": False, "sprint_done": False, "halt": {"reason": reason}},
+        "terminal": {"stage_done": False, "increment_done": False, "sprint_done": False,
+                     "halt": {"reason": reason}},
     }
 
 
@@ -330,13 +425,18 @@ def _load_state(args) -> dict:
 
 def _write_yaml(path: Path, doc) -> None:
     """Atomic YAML write: render to a sibling temp file, then os-replace it in.
-    Concurrent readers (and parallel-worktree appenders) never see a partial
-    write."""
+    Concurrent readers (and parallel-worktree appenders) never see a partial write.
+    A render identical to what is already on disk is not written at all — a no-op
+    rewrite churns mtimes and diffs for nothing (L-106)."""
     import yaml as _yaml
 
+    rendered = _yaml.safe_dump(doc, sort_keys=False, default_flow_style=False,
+                               allow_unicode=True)
+    if path.exists() and path.read_text() == rendered:
+        return
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(_yaml.safe_dump(doc, sort_keys=False, default_flow_style=False))
+    tmp.write_text(rendered)
     tmp.replace(path)
 
 
@@ -617,13 +717,14 @@ def _reclaim_stale(rest):
 def _record_design_issue(rest):
     p = common.base_parser("pipeline record-design-issue")
     p.add_argument("di_id")
-    # A stage-boundary DI is task-less — it names no sprint task, so --task is optional.
-    # Omit it and NO task is parked: there is nothing to park, and a phantom task_states
-    # entry is exactly the synthetic-task trap a task-less DI exists to avoid.
+    # An increment-boundary DI is task-less — it names no sprint task, so --task is
+    # optional. Omit it and NO task is parked: there is nothing to park, and a phantom
+    # task_states entry is exactly the synthetic-task trap a task-less DI exists to avoid.
     p.add_argument("--task", default=None)
     p.add_argument("--severity", required=True)
-    # Build/review/stage-repair raise a BARE issue — no fix_kind. wf-spec-fix classifies it
-    # and writes the kind back to the host artifact; this run-state twin only tracks status.
+    # Build/review/stage-repair raise a BARE issue — no fix_kind. The design role's repair
+    # mode classifies it and writes the kind back to the host artifact; this run-state
+    # twin only tracks status.
     p.add_argument("--fix_kind", default=None)
     args = p.parse_args(rest)
 
@@ -870,16 +971,23 @@ def _archive_history(rest):
 
 # ── The close-time drain ─────────────────────────────────────────────────────
 #
-# The merge record (which tasks completed, what they cover/serve) is the drain signal
-# for the working state: complete-sprint trims shipped ids from the design backlog,
-# drains learnings whose last serving design just emptied, sweeps the slice's
-# superseded SYS-TC tags, and appends a drain report for wf-sa's proof gate
-# (capabilities never drain here — that takes the adequacy judgment).
+# Two signals close a sprint's working set. The slice's `**Serves:**` header names
+# what the sprint set out to serve; the merge record (which tasks completed, and what
+# they cover) says what actually shipped. A learning drains when every task covering
+# it merged. A capability does NOT drain here — that takes the adequacy judgment,
+# which arrives as its own artifact and drives `drain-capability`.
 
-_BACKLOG_BULLET_RE = re.compile(r"^- \*\*((?:REQ|SYS-TC)-\d+)\*\*")
-_BACKLOG_LABEL_RE = re.compile(r"^\*\*(Component requirements|System test cases|Supersedes):\*\*")
 _DRIVER_ID_RE = re.compile(r"\b(?:CAP|L)-\d+\b")
-_ID_LANES = ("Component requirements", "System test cases")
+_LIST_ITEM_RE = re.compile(r"^(\s*)-\s")
+_ENTRY_ID_RE = re.compile(r"^\s*(?:-\s+)?id:\s*[\"']?([\w.-]+)")
+_ADEQUACY_HEAD_RE = re.compile(r"^#\s*Adequacy:\s*(CAP-\d+)\s*[—\-–:]+\s*(\w+)", re.MULTILINE)
+
+
+def _covers_of(task):
+    cov = task.get("covers")
+    if cov is None:
+        return []
+    return [str(c) for c in (cov if isinstance(cov, list) else [cov])]
 
 
 def _completed_tasks(sprint_doc, task_states):
@@ -888,104 +996,84 @@ def _completed_tasks(sprint_doc, task_states):
             if _effective_status(t["id"], t.get("status"), task_states) in _COMPLETED]
 
 
-def _shipped_ids(completed):
-    """(req+systc id set, {systc id: {description, covers}}) from the merged tasks."""
-    ids, scenarios = set(), {}
+def _shipped_scenarios(completed):
+    """{systc id: {description, covers}} from the merged tasks — the scenario register
+    this sprint added, and the evidence the adequacy review reads."""
+    scenarios = {}
     for t in completed:
-        cov = t.get("covers")
-        ids.update([cov] if isinstance(cov, str) else (cov or []))
         for st in t.get("system_tests") or []:
             if isinstance(st, dict) and st.get("id"):
-                ids.add(st["id"])
                 scenarios[st["id"]] = {"description": st.get("description", ""),
                                        "covers": list(st.get("covers") or [])}
-    return ids, scenarios
+    return scenarios
 
 
-def _split_backlog(text):
-    """(preamble_lines, blocks) — a block starts at a `## ` heading and carries its
-    header line, body lines, and the driver ids of its `— serves` header."""
-    preamble, blocks, cur = [], [], None
-    for line in text.splitlines():
-        if line.startswith("## "):
-            cur = {"header": line, "lines": [], "serves": _DRIVER_ID_RE.findall(line)}
-            blocks.append(cur)
-        elif cur is None:
-            preamble.append(line)
-        else:
-            cur["lines"].append(line)
-    return preamble, blocks
-
-
-def _trim_block(block, shipped):
-    """Remove shipped id bullets (bullet line + indented continuations) from the block's
-    requirement/system-test lanes. Returns (kept_lines, trimmed_ids, remaining_ids) —
-    Supersedes bullets are neither trimmed nor counted as remaining work."""
-    kept, trimmed, remaining = [], [], []
-    label, skipping = None, False
-    for line in block["lines"]:
-        m = _BACKLOG_LABEL_RE.match(line)
-        if m:
-            label, skipping = m.group(1), False
-            kept.append(line)
+def _drop_yaml_entries(text, ids):
+    """Remove the list entries whose ``id:`` is in ``ids``, editing the file as TEXT.
+    Round-tripping through PyYAML would strip the header comments these durable files
+    carry and normalise their unicode, so the drain rewrites lines instead (L-106).
+    Returns (new_text, dropped_ids)."""
+    lines = text.splitlines(keepends=True)
+    out, dropped, i = [], [], 0
+    while i < len(lines):
+        m = _LIST_ITEM_RE.match(lines[i])
+        if not m:
+            out.append(lines[i])
+            i += 1
             continue
-        b = _BACKLOG_BULLET_RE.match(line)
-        if b and label in _ID_LANES:
-            if b.group(1) in shipped:
-                trimmed.append(b.group(1))
-                skipping = True
+        indent, block, pending, j = len(m.group(1)), [lines[i]], [], i + 1
+        while j < len(lines):
+            nxt = lines[j]
+            if not nxt.strip():
+                pending.append(nxt)
+                j += 1
                 continue
-            remaining.append(b.group(1))
-            skipping = False
-        elif skipping and (line.startswith((" ", "\t"))):
-            continue  # a trimmed bullet's wrapped continuation goes with it
+            if len(nxt) - len(nxt.lstrip()) <= indent:
+                break
+            block.extend(pending)
+            pending = []
+            block.append(nxt)
+            j += 1
+        entry_id = next((mm.group(1) for mm in
+                         (_ENTRY_ID_RE.match(b) for b in block) if mm), None)
+        if entry_id in ids:
+            dropped.append(entry_id)
         else:
-            skipping = False
-        kept.append(line)
-    return kept, trimmed, remaining
+            out.extend(block)
+        out.extend(pending)
+        i = j
+    return "".join(out), dropped
 
 
-def _block_title(block):
-    return block["header"].lstrip("# ").split("— serves")[0].strip()
+def _drain_entries(path, ids):
+    """Drop ``ids`` from a durable list file in place; returns the ids actually removed.
+    A no-op leaves the file untouched (L-106)."""
+    text = path.read_text()
+    new_text, dropped = _drop_yaml_entries(text, set(ids))
+    if dropped and new_text != text:
+        path.write_text(new_text)
+    return dropped
 
 
-def _trim_backlog(path, shipped):
-    """Trim shipped ids; drop emptied blocks. Returns the drain facts."""
-    preamble, blocks = _split_backlog(path.read_text())
-    out_lines = list(preamble)
-    emptied, partial, emptied_serves = [], [], []
-    for block in blocks:
-        kept, trimmed, remaining = _trim_block(block, shipped)
-        if trimmed and not remaining:
-            emptied.append(_block_title(block))
-            emptied_serves.extend(block["serves"])
-            continue  # the whole block drains
-        if trimmed:
-            partial.append({"design": _block_title(block),
-                            "shipped": sorted(trimmed), "remaining": sorted(remaining)})
-        out_lines.append(block["header"])
-        out_lines.extend(kept)
-    path.write_text("\n".join(out_lines) + "\n")
-    surviving = "\n".join(out_lines)
-    return emptied, partial, emptied_serves, surviving
-
-
-def _drain_learnings(path, drained_ids):
-    doc = common.load_yaml(path)
-    entries = doc.get("learnings") or []
-    doc["learnings"] = [e for e in entries
-                        if not (isinstance(e, dict) and e.get("id") in drained_ids)]
-    _write_yaml(path, doc)
+def _slice_serves(args, paths):
+    """The CAP/L ids on the slice's `**Serves:**` header — what this sprint set out
+    to serve. [] when no slice is on disk."""
+    if not paths.get("design_slice"):
+        return []
+    sp = common.resolve_path(args.config, "design_slice", None)
+    return slice_checks.serves_ids(sp.read_text()) if sp.exists() else []
 
 
 def _superseded_sys_tc_survivors(slice_text, args):
-    """The slice's superseded SYS-TC ids still tagged in the test tree — the build was
-    required to remove them; a survivor is a finding for the next slice."""
-    m = re.search(r"^##\s+Supersedes\s*$(.*?)(?=^##\s|\Z)", slice_text,
-                  re.MULTILINE | re.DOTALL)
-    ids = re.findall(r"^- \*\*(SYS-TC-\d+)\*\*", m.group(1), re.MULTILINE) if m else []
+    """Every SYS-TC id the slice's Supersessions section retires that is STILL tagged in
+    the test tree — the build was required to remove it; a survivor is a finding for the
+    next slice. Retiring a shipped scenario is above the escalation gate, so this only
+    ever fires on a slice written after a human ruled on one."""
+    ids = re.findall(r"\bSYS-TC-\d+\b",
+                     slice_checks.section(slice_text, "Supersessions"))
     if not ids:
         return []
+    ids = list(dict.fromkeys(ids))
     cfg_tests = (common.config_doc(args.config).get("paths") or {}).get("tests")
     roots = [cfg_tests] if isinstance(cfg_tests, str) else list(cfg_tests or [])
     root_dir = common.project_root(args.config)
@@ -998,12 +1086,16 @@ def _superseded_sys_tc_survivors(slice_text, args):
 
 
 def _drain_working_set(args, doc, sprint_doc, paths):
-    """Run the close-time drain; returns the drain summary (empty when no merge
-    record exists — nothing shipped, nothing to drain)."""
+    """Run the close-time drain; returns the drain summary (empty when no sprint is on
+    disk — nothing shipped, nothing to drain)."""
     if not sprint_doc:
         return {}
-    completed = _completed_tasks(sprint_doc, doc.get("task_states") or {})
-    shipped, scenarios = _shipped_ids(completed)
+    task_states = doc.get("task_states") or {}
+    tasks = [t for t in (sprint_doc.get("tasks") or []) if isinstance(t, dict) and t.get("id")]
+    completed = _completed_tasks(sprint_doc, task_states)
+    completed_ids = {t["id"] for t in completed}
+    scenarios = _shipped_scenarios(completed)
+    served = _slice_serves(args, paths)
 
     survivors = []
     if paths.get("design_slice"):
@@ -1011,40 +1103,42 @@ def _drain_working_set(args, doc, sprint_doc, paths):
         if sp.exists():
             survivors = _superseded_sys_tc_survivors(sp.read_text(), args)
 
-    emptied, partial, emptied_serves, surviving = [], [], [], ""
-    if paths.get("design_backlog"):
-        bp = common.resolve_path(args.config, "design_backlog", None)
-        if bp.exists() and shipped:
-            emptied, partial, emptied_serves, surviving = _trim_backlog(bp, shipped)
-
-    def unserved(prefix):
-        seen, out = set(), []
-        for did in emptied_serves:
-            if did.startswith(prefix) and did not in seen:
-                seen.add(did)
-                if not re.search(rf"\b{re.escape(did)}\b", surviving):
-                    out.append(did)
-        return out
-
-    drained_learnings = unserved("L-")
+    # A learning drains when the sprint served it AND every task covering it merged.
+    # Partial ship is not proof, and a served id no task covered was never built.
+    drained_learnings, partially_served = [], []
+    for ident in served:
+        if not ident.startswith("L-"):
+            continue
+        owners = [t for t in tasks if ident in _covers_of(t)]
+        if not owners:
+            partially_served.append({"id": ident, "reason": "no task covered it"})
+        elif all(t["id"] in completed_ids for t in owners):
+            drained_learnings.append(ident)
+        else:
+            partially_served.append({
+                "id": ident,
+                "reason": "unmerged tasks: " + ", ".join(
+                    sorted(t["id"] for t in owners if t["id"] not in completed_ids)),
+            })
     if drained_learnings and paths.get("learnings"):
         lp = common.resolve_path(args.config, "learnings", None)
-        if lp.exists():
-            _drain_learnings(lp, set(drained_learnings))
-        else:
-            drained_learnings = []
+        drained_learnings = _drain_entries(lp, drained_learnings) if lp.exists() else []
 
+    # Capabilities never drain on the merge record: the close-time adequacy review is
+    # the only thing that can. They leave here as candidates, with the scenarios this
+    # sprint shipped for them.
     candidates = [{"capability": cid,
                    "shipped_scenarios": [{"id": sid, **info}
                                          for sid, info in sorted(scenarios.items())
                                          if cid in info["covers"]]}
-                  for cid in unserved("CAP-")]
+                  for cid in served if cid.startswith("CAP-")]
 
     return {
-        "emptied_designs": emptied,
-        "partially_shipped": partial,
-        "proof_gate_candidates": candidates,
+        "served": served,
+        "merged_tasks": sorted(completed_ids),
+        "adequacy_candidates": candidates,
         "learnings_drained": drained_learnings,
+        "learnings_retained": partially_served,
         "superseded_survivors": survivors,
     }
 
@@ -1059,20 +1153,73 @@ def _append_drain_report(args, paths, sprint_id, drain):
     return str(rp)
 
 
+def _drain_capability(rest):
+    """Drain one capability on a close-time adequacy verdict. The verdict is READ FROM
+    THE DIGEST wf-adequacy left on disk — never from an agent's prose — and only
+    ``adequate`` drains: the capability is snapshotted into paths.archive and removed
+    from paths.capabilities. Any other verdict mutates nothing and exits 1."""
+    p = common.base_parser("pipeline drain-capability")
+    p.add_argument("capability")
+    p.add_argument("--verdict", help="path to the adequacy digest (default: the newest "
+                                     "adequacy-<cap>-*.md under paths.drill_cache)")
+    args = p.parse_args(rest)
+
+    path = Path(args.verdict) if args.verdict else _newest_adequacy_digest(args)
+    if path is None or not path.is_file():
+        common.die(f"no adequacy digest for {args.capability}"
+                   + (f" at {path}" if path else " under paths.drill_cache"))
+    head = _ADEQUACY_HEAD_RE.search(path.read_text(errors="replace"))
+    if not head:
+        common.die(f"{path} carries no '# Adequacy: <CAP-id> — <verdict>' heading")
+    reviewed, verdict = head.group(1), head.group(2).lower()
+    if reviewed != args.capability:
+        common.die(f"{path} reviews {reviewed}, not {args.capability}")
+
+    result = {"capability": args.capability, "verdict": verdict, "digest": str(path)}
+    if verdict != "adequate":
+        result["drained"] = False
+        common.emit(result, args.format)
+        return 1
+
+    cap_path = common.resolve_path(args.config, "capabilities", None)
+    if not cap_path.exists():
+        common.die(f"capabilities file not found: {cap_path}")
+    paths = common.config_doc(args.config).get("paths") or {}
+    if paths.get("archive"):
+        root = common.resolve_path(args.config, "archive", None)
+        result["archived"] = str(archive.snapshot(root, "capabilities", cap_path, move=False))
+    dropped = _drain_entries(cap_path, [args.capability])
+    if not dropped:
+        common.die(f"{args.capability} is not open in {cap_path}")
+    result["drained"] = True
+    common.emit(result, args.format)
+    return 0
+
+
+def _newest_adequacy_digest(args):
+    """The most recent ``adequacy-<cap>-<utc>.md`` under paths.drill_cache — the
+    stamped filename orders them, so the latest review wins."""
+    rel = (common.config_doc(args.config).get("paths") or {}).get("drill_cache")
+    if not rel:
+        return None
+    cache = (common.project_root(args.config) / rel).resolve()
+    hits = sorted(cache.glob(f"adequacy-{args.capability}-*.md")) if cache.is_dir() else []
+    return hits[-1] if hits else None
+
+
 def _complete_sprint(rest):
     """Close the sprint and reset the pipeline for the next one. Run during ship, before
     the push, so its archive snapshots and working-set trims commit into the PR.
 
-    The drain: from the merge record (completed tasks' covers/system_tests/serves),
-    trim shipped ids from paths.design_backlog (dropping emptied design blocks), drain
-    learnings whose last serving design emptied, sweep the slice's superseded SYS-TC
-    ids for surviving tags, and append the drain report (paths.drain_report) that hands
-    wf-sa its capability proof-gate candidates. Capabilities are NOT drained here —
-    only the adequacy judgment drains a capability.
+    The drain: from the slice's `**Serves:**` header and the merge record (which tasks
+    completed, and what they cover), drain every learning whose covering tasks all
+    merged, sweep the slice's superseded SYS-TC ids for surviving tags, and append the
+    drain report (paths.drain_report) the ship step folds into the PR body. Capabilities
+    are NOT drained here — only an adequacy verdict drains one (`drain-capability`).
 
     When paths.archive is set, snapshot the working set into paths.archive/<sprint_id>/:
-    backlog + learnings + final run state are copied (backlog/learnings pre-trim), and
-    the sprint, design-slice, design-issues, and spec-decisions files are moved out
+    learnings + capabilities + the final run state are copied (learnings pre-drain), and
+    the sprint, design-slice, design-issues, and decision-report files are moved out
     (drained). The archive is a write-only maintainer sink; no role reads it. Then reset
     pipeline_state to a bare ``idle``. When paths.archive is unset the working-set slots
     are simply cleared — the drain itself runs either way.
@@ -1089,9 +1236,9 @@ def _complete_sprint(rest):
     archived = {}
     root = common.resolve_path(args.config, "archive", None) if paths.get("archive") else None
 
-    # Pre-trim snapshots: the archive keeps the backlog/learnings as the sprint left them.
+    # Pre-drain snapshots: the archive keeps the durable files as the sprint left them.
     if root:
-        for key in ("design_backlog", "learnings"):
+        for key in ("learnings", "capabilities"):
             if paths.get(key):
                 p = common.resolve_path(args.config, key, None)
                 if p.exists():
@@ -1101,34 +1248,23 @@ def _complete_sprint(rest):
     report_path = _append_drain_report(args, paths, sprint_id, drain)
 
     if root:
-        # sprint + slice + design-issues + spec-decisions drain out of the working set;
+        # sprint + slice + design-issues + decision report drain out of the working set;
         # the final run state is a snapshot.
         if sprint_path.exists():
             archived["sprint"] = str(archive.snapshot(root, sprint_id, sprint_path, move=True))
-        if paths.get("design_slice"):
-            sp = common.resolve_path(args.config, "design_slice", None)
-            if sp.exists():
-                archived["slice"] = str(archive.snapshot(root, sprint_id, sp, move=True))
-        # The host design-issues file is per-sprint working state (the fix agents' prose
-        # record). Its run-state twin (pipeline_state.design_issues) resets with the state
-        # below; drain the file too, or resolved DIs accumulate across sprints.
-        if paths.get("design_issues"):
-            dip = common.resolve_path(args.config, "design_issues", None)
-            if dip.exists():
-                archived["design_issues"] = str(archive.snapshot(root, sprint_id, dip, move=True))
-        # The spec-fix decision report is per-sprint working state — folded into the PR body
-        # at ship, then drained here so it does not carry into the next sprint's report.
-        if paths.get("spec_decisions"):
-            sdp = common.resolve_path(args.config, "spec_decisions", None)
-            if sdp.exists():
-                archived["spec_decisions"] = str(archive.snapshot(root, sprint_id, sdp, move=True))
+        for key, label in (("design_slice", "slice"), ("design_issues", "design_issues"),
+                           ("spec_decisions", "spec_decisions")):
+            if paths.get(key):
+                p = common.resolve_path(args.config, key, None)
+                if p.exists():
+                    archived[label] = str(archive.snapshot(root, sprint_id, p, move=True))
         if _state_path(args).exists():
             archived["pipeline_state"] = str(archive.snapshot(root, sprint_id, _state_path(args), move=False))
     else:
         # no archive configured — clear the active working-set slots
         if sprint_path.exists():
             sprint_path.unlink()
-        for key in ("design_issues", "spec_decisions"):
+        for key in ("design_slice", "design_issues", "spec_decisions"):
             if paths.get(key):
                 p = common.resolve_path(args.config, key, None)
                 if p.exists():
@@ -1146,7 +1282,8 @@ def _complete_sprint(rest):
 
 
 COMMANDS = {
-    # stage computation + frontier
+    # increment + sub-layer computation, and the frontier
+    ("pipeline", "increments"): _increments,
     ("pipeline", "compute-stages"): _compute_stages,
     ("pipeline", "next"): _next,
     # reads
@@ -1175,4 +1312,5 @@ COMMANDS = {
     # sprint lifecycle
     ("pipeline", "archive-history"): _archive_history,
     ("pipeline", "complete-sprint"): _complete_sprint,
+    ("pipeline", "drain-capability"): _drain_capability,
 }
