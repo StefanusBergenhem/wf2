@@ -289,6 +289,16 @@ class EndToEndTest(support.TempProject):
         # every task worktree is cleaned up
         self.assertFalse(list(self.cfg.worktree_base.glob("s1-*")))
 
+        # the run narrates itself: a dispatch writes nothing to the terminal, so without
+        # this a live run and a hung one look identical
+        for expected in ("wf loop starting", "sprint s1", "designing",
+                         "increment 1", "sub-layer 1", "closeout",
+                         "wf-designer (originate)", "wf-build · T1",
+                         "T1 merged", "shipped s1"):
+            self.assertIn(expected, done.stdout, done.stdout)
+        # verb-level detail is --verbose only
+        self.assertNotIn("wf pipeline next", done.stdout)
+
     def merge_on_the_forge(self, branch):
         """What a human merging the sprint's PR does: the branch lands in the base on
         the remote, and the local repo only learns about it on the next fetch."""

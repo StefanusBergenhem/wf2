@@ -13,8 +13,11 @@ import re
 
 import adequacy
 import config  # noqa: F401 — importing it puts the CLI package on sys.path
+import dispatch
 import gitops
 import issues
+import procs
+import progress
 import slice as slice_reader
 import yaml
 from runtime import Halt, Pause
@@ -44,29 +47,62 @@ def sprint_start(rt, resume: bool = False) -> None:
         branch = f"{gitops.SPRINT_PREFIX}{sprint_id}"
     _clean_tree_gate(rt)
     base = rt.git.stack_tip()
+    # The branch is cut BEFORE the position is recorded. The reverse order leaves a
+    # window where the state file names a branch that git never got, and a resume then
+    # re-enters a phase past sprint_start and builds the whole sprint on whatever HEAD
+    # happens to be. Failing before the write costs only a sprint ordinal.
+    rt.git.start_branch(branch, base)
     if not (resume and rt.state.sprint_id):
         rt.state.start_sprint(sprint_id, branch)
     rt.state.save()
-    rt.git.start_branch(branch, base)
     _carry_telemetry(rt, sprint_id)
     rt.tele.event("sprint_start", sprint=sprint_id, branch=branch, base=base)
-    rt.log(f"sprint {sprint_id} on {branch} (base {base})")
+    rt.report.phase(f"sprint {sprint_id} · branch {branch} · base {base}")
 
-    # resume hygiene: drop handoffs whose consumer can never return, and free the
-    # slots an interrupted run left occupied.
-    rt.cli.raw("orchestrate", "sweep-transients", "--config", rt.cfg.config_path,
-               mutating=True)
-    rt.cli.mutate("pipeline", "reclaim-stale")
+    resume_hygiene(rt)
     rt.cli.mutate("pipeline", "transition", "--to", "preparing",
                   "--reason", f"driver sprint {sprint_id}", "--sprint-id", sprint_id)
 
-    rt.agents.launch("wf-discover", {"mode": "refresh"}, mode="refresh")
+    launched = rt.agents.launch("wf-discover", {"mode": "refresh"}, mode="refresh")
     brief = rt.cfg.path_opt("discover_brief")
     if not rt.dry_run and (not brief or not brief.exists()):
+        dispatch.check_launch(launched)
         raise Halt("no_discover_brief",
                    f"wf-discover left no brief at {brief} — the design role cannot "
                    f"ground without it")
     rt.state.enter("designing")
+
+
+def resume_hygiene(rt) -> None:
+    """Drop handoffs whose consumer can never return, and free the slots an interrupted
+    run left occupied. Runs on EVERY re-entry, not only the one through sprint_start: an
+    interruption inside the increment loop is precisely where a task is left holding a
+    slot no one will ever release, and that re-entry never passes through sprint_start."""
+    rt.report.line("resume hygiene — sweeping transients, reclaiming stale slots",
+                   indent=1)
+    rt.cli.raw("orchestrate", "sweep-transients", "--config", rt.cfg.config_path,
+               mutating=True)
+    rt.cli.mutate("pipeline", "reclaim-stale")
+
+
+def verify_position(rt) -> None:
+    """A resumed run must stand where its state file says it does. Re-entering a phase
+    past sprint_start cuts no branch, so a recorded branch git does not have is a
+    fiction — and every commit, worktree and merge would land on whatever HEAD happens
+    to be instead. Halts with the two ways out rather than guessing which was meant."""
+    branch = rt.state.sprint_branch
+    if not branch or rt.dry_run:
+        return
+    if not rt.git.branch_exists(branch):
+        raise Halt("sprint_branch_missing",
+                   f"the state file resumes sprint {rt.state.sprint_id} on {branch}, "
+                   f"but git has no such branch — nothing this run built would land on "
+                   f"it. Either re-create it (git checkout -b {branch} <base>) to carry "
+                   f"on, or delete {rt.cfg.state_file} to start a fresh sprint")
+    if rt.git.current_branch() != branch:
+        rt.report.line(f"checking out {branch} — HEAD was on "
+                       f"{rt.git.current_branch()}", indent=1)
+        rt.git.checkout(branch)
 
 
 def _clean_tree_gate(rt) -> None:
@@ -104,11 +140,12 @@ def designing(rt) -> dict:
     """Dispatch the design role and gate its slice. Returns the slice-check payload
     (its serves header and increment list drive the rest of the sprint)."""
     rt.state.enter("designing")
-    rt.agents.launch("wf-designer", {"Mode": "originate"}, mode="originate")
+    rt.report.phase("designing — the design role cuts the slice")
+    launched = rt.agents.launch("wf-designer", {"Mode": "originate"}, mode="originate")
     _escalation_gate(rt)
     if rt.dry_run:
         raise Pause("dry_run", "planned dispatches printed; nothing was launched")
-    return slice_gate(rt)
+    return slice_gate(rt, launched)
 
 
 def resume_ruling(rt) -> dict:
@@ -119,22 +156,25 @@ def resume_ruling(rt) -> dict:
     decision_prep = rt.cfg.path_opt("decision_prep")
     halted_in = ""
     if decision_prep and decision_prep.exists():
+        rt.report.phase(f"resuming a halted run · ruling brief {decision_prep}")
         if not ruling_present(decision_prep):
             rt.tele.event("stop", reason="escalation", sprint=rt.state.sprint_id,
                           detail="the ruling section is still empty")
             raise Pause("escalation", f"{decision_prep} carries no ruling yet")
         halted_in = halt_mode(decision_prep)
         di_id = brief_di_id(decision_prep)
-        rt.agents.launch("wf-designer", {"Mode": "resume"}, mode="resume")
+        launched = rt.agents.launch("wf-designer", {"Mode": "resume"}, mode="resume")
         _escalation_gate(rt)
         _close_resolved_twins(rt, di_id)
+    else:
+        launched = None
     if halted_in == "repair" or (not halted_in
                                  and rt.state.resume_phase == "increment_loop"):
         rt.state.resume_phase = None
         rt.state.enter("increment_loop")
         return {}
     rt.state.resume_phase = None
-    return slice_gate(rt)
+    return slice_gate(rt, launched)
 
 
 def ruling_present(path) -> bool:
@@ -181,23 +221,32 @@ def _prose(body: str) -> str:
     return re.sub(r"<!--.*?-->", "", body, flags=re.DOTALL).strip()
 
 
-def slice_gate(rt) -> dict:
+def slice_gate(rt, launched=None) -> dict:
     """The mechanical gate between design and build: a slice on disk that passes
     `wf slice check`. A red gate routes to the design role's repair mode."""
     slice_path = rt.cfg.path("design_slice")
     if not slice_path.exists():
+        # "no slice" only means "nothing is in scope" if the role actually ran and
+        # decided so; a refused launch leaves the same empty disk for a different reason
+        dispatch.check_launch(launched)
         raise Pause("work_exhaustion",
                     "the design role wrote no slice — nothing open and unparked is "
                     "in scope")
 
-    for _ in range(SLICE_GATE_ATTEMPTS):
+    for attempt in range(1, SLICE_GATE_ATTEMPTS + 1):
         check = rt.cli.read("slice", "check")
         if check.ok:
+            rt.report.line(f"slice check green · serves "
+                           f"{', '.join(str(s) for s in check.data.get('serves') or []) or '—'}",
+                           symbol=progress.OK, indent=1)
             rt.state.enter("increment_loop")
             return check.data
         findings = "; ".join(
             f"{e.get('code')}: {e.get('msg')}" for e in (check.data.get("errors") or [])
             if isinstance(e, dict))
+        rt.report.line(f"slice check red ({attempt}/{SLICE_GATE_ATTEMPTS}) — "
+                       f"back to the design role: {findings or 'no findings emitted'}",
+                       symbol=progress.BAD, indent=1)
         issues.record(rt, f"`wf slice check` is red — {findings or 'no findings emitted'}",
                       scope="slice")
         item = issues.open_entries(rt)[0]
@@ -223,9 +272,10 @@ def closeout(rt) -> None:
     steps = _closeout_steps(rt)
     rt.cli.mutate("pipeline", "transition", "--to", "end_of_sprint")
     served = _served_ids(rt)
+    rt.report.phase(f"closeout · {' → '.join(steps)}")
     for step in steps:
         if step in rt.state.closeout_done:
-            rt.log(f"closeout: {step} already ran this sprint — skipping")
+            rt.report.line(f"{step} already ran this sprint — skipping", indent=1)
             continue
         if step == SHIP_STEP:
             ship(rt)          # terminal: it resets the state for the next sprint
@@ -233,9 +283,12 @@ def closeout(rt) -> None:
         if step == ADEQUACY_STEP:
             adequacy_pass(rt, served)
         else:
-            rt.agents.launch(step,
-                             {"mode": step, "sprint_branch": rt.state.sprint_branch},
-                             mode=step)
+            # A step is banked as done below, and ship is terminal — so a step whose
+            # launch was refused must stop the close, not be marked run. The pause keeps
+            # the banked list, so a resume re-runs only what is still missing.
+            dispatch.check_launch(rt.agents.launch(
+                step, {"mode": step, "sprint_branch": rt.state.sprint_branch},
+                mode=step))
         rt.state.step_done(step)
 
 
@@ -278,9 +331,14 @@ def adequacy_pass(rt, served) -> None:
     """The close-time gate: for every capability the slice served, ask whether the
     shipped scenario register now covers its WHOLE promise, then drain or park on the
     digest the reviewer left — never on what it said."""
-    for cap in [s for s in served if str(s).startswith("CAP-")]:
+    candidates = [s for s in served if str(s).startswith("CAP-")]
+    rt.report.line(f"adequacy · {', '.join(candidates) or 'no capability served'}",
+                   indent=1)
+    for cap in candidates:
         entry = _capability_entry(rt, cap)
-        rt.agents.launch("wf-adequacy", {
+        # a refused launch leaves no digest, which reads as "inadequate" and pushes the
+        # capability one step closer to being parked — on no evidence at all
+        dispatch.check_launch(rt.agents.launch("wf-adequacy", {
             "Question": adequacy.FULL_PROMISE,
             "Capability": cap,
             "Statement": entry.get("statement", ""),
@@ -288,12 +346,16 @@ def adequacy_pass(rt, served) -> None:
             "Claimed scenarios": ", ".join(_scenarios_for(rt, cap)) or "none in this slice",
             "Candidate shipped scenarios": "the [SYS-TC:] tags in the test tree "
                                            "(paths.tests) — derive them yourself",
-        }, mode=adequacy.FULL_PROMISE, task_id=cap)
+        }, mode=adequacy.FULL_PROMISE, task_id=cap))
 
         result = rt.cli.mutate("pipeline", "drain-capability", cap)
         drained = bool(result.ok and result.data.get("drained"))
         rt.tele.event("adequacy", capability=cap, sprint=rt.state.sprint_id,
                       verdict=result.data.get("verdict"), drained=drained)
+        rt.report.line(
+            f"{cap} · verdict {result.data.get('verdict') or 'unreadable'} · "
+            f"{'drained' if drained else 'stays open'}",
+            symbol=progress.OK if drained else progress.BAD, indent=2)
         if drained:
             continue
         # inadequate: the residuals are the next design's input, so they go back onto
@@ -352,6 +414,7 @@ def ship(rt) -> None:
     decisions = decision_log(rt)
     title = _title(rt)
 
+    rt.report.line("closing the sprint — archive + drain", indent=1)
     closed = rt.cli.mutate("pipeline", "complete-sprint")
     if not closed.ok:
         raise Halt("complete_sprint", closed.stderr.strip() or "the close verb failed")
@@ -370,9 +433,13 @@ def ship(rt) -> None:
                                  "telemetry")]
         + [".wf/config.yaml"],
         f"sprint close: archive + drain {sprint_id}")
-    rt.git.push(branch)
-    base = rt.git.pr_base(branch)
-    rc, out = rt.git.pr_create(base, branch, f"{sprint_id}: {title}", body_path)
+    with rt.report.step(f"publishing {branch} (push + PR)",
+                        budget_s=procs.NETWORK_TIMEOUT_S) as step:
+        rt.git.push(branch)
+        base = rt.git.pr_base(branch)
+        rc, out = rt.git.pr_create(base, branch, f"{sprint_id}: {title}", body_path)
+        step.ok = rc == 0
+        step.note = f"PR onto {base}" if step.ok else f"rc={rc}"
     if rc != 0:
         raise Halt("ship_failed",
                    f"{sprint_id} is closed and committed on {branch}, but publishing "

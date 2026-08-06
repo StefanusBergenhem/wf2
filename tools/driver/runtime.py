@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+import progress
+
 
 class Halt(Exception):
     def __init__(self, reason: str, detail: str = ""):
@@ -36,10 +38,13 @@ class Runtime:
     git: object
     agents: object
     dry_run: bool = False
+    # The run's commentary. Defaults to a live one: a driver that goes dark is exactly
+    # the failure this exists to prevent, so silence is opted into, never defaulted to.
+    report: object = field(default_factory=progress.Reporter)
     # task id → the worktree the frontier named for it, so the merge step removes the
     # tree the CLI actually created rather than one it re-derives. In-memory only: a
     # restarted driver falls back to the derived path, and a stale tree is recreated.
     worktrees: dict = field(default_factory=dict)
 
     def log(self, message: str) -> None:
-        print(f"[wf-driver] {message}", flush=True)
+        self.report.line(message)

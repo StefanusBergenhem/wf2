@@ -49,9 +49,15 @@ mkdir -p "$WF_DIR"
 # tier every role gets by default; AGENT_CMD_STRONG is the stronger tier the template's
 # agent_cmd_overrides pins for the judgment roles. `{prompt}` is the DRIVER's
 # substitution — it must reach the config verbatim.
+#
+# The claude tier streams (`--output-format stream-json --verbose`) so the dispatch log
+# under <paths.transient>/driver-logs/ fills as the role works. Plain `-p` writes
+# nothing until the process exits, which leaves an hour-long dispatch with an empty log
+# and no way to tell a working role from a wedged one. The driver never reads the log,
+# so the format is free to be whatever a human can follow: `tail -f … | jq`.
 case "$TARGET" in
-    claude)   AGENT_CMD='claude -p --dangerously-skip-permissions --model sonnet "{prompt}"'
-              AGENT_CMD_STRONG='claude -p --dangerously-skip-permissions --model opus "{prompt}"' ;;
+    claude)   AGENT_CMD='claude -p --output-format stream-json --verbose --dangerously-skip-permissions --model sonnet "{prompt}"'
+              AGENT_CMD_STRONG='claude -p --output-format stream-json --verbose --dangerously-skip-permissions --model opus "{prompt}"' ;;
     # TODO: opencode/pi model flags are unverified — both tiers render the harness
     # default; pin models in agent_cmd/agent_cmd_overrides after the first run.
     opencode) AGENT_CMD='opencode run "{prompt}"'

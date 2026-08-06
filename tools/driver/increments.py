@@ -15,8 +15,10 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import config  # noqa: F401 — importing it puts the CLI package on sys.path
+import dispatch
 import issues
 import procs
+import progress
 import slice as slice_reader  # the CLI's slice parser — one reader, not a copy
 import stoprules
 import yaml
@@ -45,6 +47,8 @@ _CHECKPOINT_RE = re.compile(
 
 def run_increment_loop(rt, numbers) -> None:
     """Run each declared increment in order, resuming at the one the state names."""
+    rt.report.line(f"increments to build: "
+                   f"{', '.join(str(n) for n in numbers) or 'none declared'}")
     for number in numbers:
         if number < rt.state.increment:
             continue
@@ -57,11 +61,14 @@ def run_increment_loop(rt, numbers) -> None:
 
 
 def run_increment(rt, number) -> None:
+    rt.report.phase(f"increment {number} · authoring contracts")
     prepare_contracts(rt, number)
     rt.cli.mutate("pipeline", "transition", "--to", "running_stage",
                   "--reason", f"increment {number}")
     force = False
-    for _ in range(MAX_INCREMENT_ROUNDS):
+    for round_no in range(1, MAX_INCREMENT_ROUNDS + 1):
+        rt.report.phase(f"increment {number} · building"
+                        + (f" · rework round {round_no}" if round_no > 1 else ""))
         args = ["pipeline", "compute-stages", "--increment", str(number)]
         if force:
             args.append("--force")
@@ -73,6 +80,8 @@ def run_increment(rt, number) -> None:
                        f"increment {number} layered into nothing — every one of its "
                        f"tasks is already terminal in the run state. The Tech Lead "
                        f"may have reused a task id an earlier increment merged.")
+        stages = res.data.get("stages") or []
+        rt.report.line(f"layered into {len(stages)} sub-layer(s)", indent=1)
         sublayer_loop(rt, number)
         if boundary(rt, number) == "done":
             rt.tele.event("increment_done", sprint=rt.state.sprint_id,
@@ -86,16 +95,18 @@ def prepare_contracts(rt, number) -> None:
     """Get a green ``sprint check`` for this increment: dispatch the Tech Lead, and
     route every rejection through the design role's repair mode."""
     needs_tl = not _has_increment(rt, number)
+    launched = None
     for _ in range(CONTRACT_PREP_ATTEMPTS + 1):
         if needs_tl:
             # The run state keys task states by id across the whole sprint, so an id an
             # earlier increment already merged would come back pre-completed. Name them
             # from the sprint file — the durable record, so a restart names them too.
             used = ", ".join(_task_ids_so_far(rt)) or "none yet"
-            rt.agents.launch("wf-tl",
-                             {"Increment": number, "sprint_id": rt.state.sprint_id,
-                              "task ids already used this sprint": used},
-                             increment=number)
+            launched = rt.agents.launch(
+                "wf-tl",
+                {"Increment": number, "sprint_id": rt.state.sprint_id,
+                 "task ids already used this sprint": used},
+                increment=number)
             needs_tl = False
         item = _first_open_issue(rt)
         if item:
@@ -106,10 +117,15 @@ def prepare_contracts(rt, number) -> None:
             needs_tl = slice_scoped or not _has_increment(rt, number)
             continue
         if not _has_increment(rt, number):
+            # "left no tasks" is a statement about the Tech Lead's judgement; it is only
+            # true if the Tech Lead ran at all
+            dispatch.check_launch(launched)
             raise Halt("tl_no_contracts",
                        f"the Tech Lead left no tasks for increment {number} and "
                        f"raised no design issue")
         if _contracts_green(rt):
+            rt.report.line("sprint check green — contracts ready",
+                           symbol=progress.OK, indent=1)
             return
         issues.record(rt, _gate_summary(rt, "sprint check"), scope="slice")
         item = _first_open_issue(rt)
@@ -198,6 +214,7 @@ def sublayer_loop(rt, number) -> None:
 
         index = int((data.get("stage") or {}).get("index") or 1)
         if index not in started:
+            rt.report.line(f"sub-layer {index}", symbol=progress.RUN, indent=1)
             rt.cli.mutate("pipeline", "stage-start", "--stage", str(index))
             started.add(index)
 
@@ -205,6 +222,8 @@ def sublayer_loop(rt, number) -> None:
             _run_frontier(rt, data, number)
             continue
         if data.get("repairing"):
+            rt.report.line(f"sub-layer {index} is repairing — resolving open design "
+                           f"issues", indent=1)
             if _resolve_open_issues(rt):
                 # a follow-up task or a re-cut changed the graph: re-layer before asking
                 # for the frontier again, or the new work is never dispatched
@@ -216,6 +235,7 @@ def sublayer_loop(rt, number) -> None:
         rt.cli.mutate("pipeline", "propagate-blocks")
         if _merge_batch(rt, data.get("approved") or []):
             continue  # a conflict parked a task: let the frontier re-settle first
+        rt.report.line(f"sub-layer {index} done", symbol=progress.OK, indent=1)
         rt.cli.mutate("pipeline", "stage-summary", "--stage", str(index))
         rt.cli.mutate("pipeline", "stage-end", "--stage", str(index))
         if rt.cfg.history_cap:
@@ -232,6 +252,10 @@ def _run_frontier(rt, data, number) -> None:
         raise Halt("stalled_frontier",
                    "the sub-layer has pending work but nothing dispatchable")
     workers = max(1, min(int(rt.cfg.driver("max_parallel")), len(entries)))
+    rt.report.line(
+        f"dispatching {len(entries)} task(s) "
+        f"({', '.join(str(e.get('task_id')) for e in entries)}) "
+        f"· {workers} in parallel", indent=2)
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = [pool.submit(_run_task, rt, entry, number) for entry in entries]
         for future in futures:
@@ -247,6 +271,8 @@ def _run_task(rt, entry, number) -> None:
     contract = worktree / rt.cfg.rel("current_task")
     written = rt.cli.mutate("sprint", "task", task_id, "--write", str(contract))
     if not written.ok:
+        rt.report.line(f"task {task_id} blocked — no build envelope could be written",
+                       symbol=progress.BAD, indent=2)
         rt.cli.mutate("pipeline", "block-task", task_id,
                       "--reason", "the build envelope could not be written")
         return
@@ -255,16 +281,23 @@ def _run_task(rt, entry, number) -> None:
         attempt = _attempt(rt, task_id)
         rt.cli.mutate("pipeline", "dispatch", "--agent", "wf-build",
                       "--task", task_id, "--attempt", str(attempt))
-        rt.agents.launch("wf-build",
-                         {"task_id": task_id, "worktree": str(worktree),
-                          "contract": rt.cfg.rel("current_task"), "attempt": attempt},
-                         cwd=worktree, task_id=task_id, increment=number)
+        launched = rt.agents.launch(
+            "wf-build",
+            {"task_id": task_id, "worktree": str(worktree),
+             "contract": rt.cfg.rel("current_task"), "attempt": attempt},
+            cwd=worktree, task_id=task_id, increment=number)
         verdict = _inspect(rt, "inspect-build-return", worktree, task_id)
         kind = verdict.get("verdict")
+        rt.report.line(f"task {task_id} · build (attempt {attempt}) → {kind}",
+                       symbol=progress.OK if kind == "ready_for_review" else progress.BAD,
+                       indent=2)
         if kind == "design_issue":
             issues.promote(rt, worktree, verdict.get("di_id"), task_id)
             return
         if kind != "ready_for_review":
+            # blocking the task would record a verdict about work that was never done —
+            # and with a refused harness every task in the frontier blocks the same way
+            dispatch.check_launch(launched)
             rt.cli.mutate("pipeline", "block-task", task_id,
                           "--reason", f"build returned {kind}")
             return
@@ -272,6 +305,8 @@ def _run_task(rt, entry, number) -> None:
                                 number)
         if outcome != "rejected":
             return
+    rt.report.line(f"task {task_id} blocked — review rejected every allowed attempt",
+                   symbol=progress.BAD, indent=2)
     rt.cli.mutate("pipeline", "block-task", task_id,
                   "--reason", "review rejected the build at every allowed attempt")
 
@@ -283,18 +318,23 @@ def _review_chain(rt, worktree, task_id, build_sha, number) -> str:
     passes = rt.cfg.review_passes
     for _ in range(len(passes) * rt.cfg.max_attempts + 1):
         if index >= len(passes):
+            rt.report.line(f"task {task_id} approved by every review pass",
+                           symbol=progress.OK, indent=2)
             rt.cli.mutate("pipeline", "approve-task", task_id, "--commit", build_sha)
             return "approved"
         agent = passes[index]
         rt.cli.mutate("pipeline", "dispatch", "--agent", agent, "--task", task_id,
                       "--attempt", str(_attempt(rt, task_id)), "--pass", str(index))
-        rt.agents.launch(agent,
-                         {"mode": "review", "task_id": task_id,
-                          "worktree": str(worktree),
-                          "sprint_branch": rt.state.sprint_branch, "pass": agent},
-                         cwd=worktree, task_id=task_id, increment=number)
+        launched = rt.agents.launch(
+            agent,
+            {"mode": "review", "task_id": task_id, "worktree": str(worktree),
+             "sprint_branch": rt.state.sprint_branch, "pass": agent},
+            cwd=worktree, task_id=task_id, increment=number)
         verdict = _inspect(rt, "inspect-review-return", worktree, task_id, build_sha)
         kind = verdict.get("verdict")
+        rt.report.line(f"task {task_id} · {agent} → {kind}",
+                       symbol=progress.OK if kind == "approved" else progress.BAD,
+                       indent=2)
         if kind == "approved":
             index += 1
             continue
@@ -313,9 +353,11 @@ def _review_chain(rt, worktree, task_id, build_sha, number) -> str:
             if build_verdict.get("verdict") == "design_issue":
                 issues.promote(rt, worktree, build_verdict.get("di_id"), task_id)
                 return "design_issue"
+            dispatch.check_launch(launched)
             rt.cli.mutate("pipeline", "block-task", task_id,
                           "--reason", "the review left no readable verdict")
             return "blocked"
+        dispatch.check_launch(launched)
         rt.cli.mutate("pipeline", "block-task", task_id,
                       "--reason", f"review returned {kind}")
         return "blocked"
@@ -351,6 +393,9 @@ def _merge_batch(rt, approved) -> bool:
     merge and records a design issue for the repair ladder."""
     if not approved:
         return False
+    rt.report.line(f"merging {len(approved)} approved task(s) into "
+                   f"{rt.state.sprint_branch}: "
+                   f"{', '.join(str(t) for t in approved)}", indent=2)
     rt.git.checkout(rt.state.sprint_branch)
     conflicted = False
     for task_id in approved:
@@ -366,9 +411,14 @@ def _merge_batch(rt, approved) -> bool:
             rt.tele.event("merge", task=task_id, sprint=rt.state.sprint_id,
                           merge_commit=merge_sha,
                           conflict_repaired=(not result.ok) or None)
+            rt.report.line(f"{task_id} merged"
+                           + (" (conflict repaired)" if not result.ok else ""),
+                           symbol=progress.OK, indent=3)
             continue
         conflicted = True
         files = ", ".join(result.files) or "unknown paths"
+        rt.report.line(f"{task_id} conflicted in {files} — merge left unapplied",
+                       symbol=progress.BAD, indent=3)
         issues.record(rt, f"merging {branch} into {rt.state.sprint_branch} conflicted "
                           f"in {files} — two parallel tasks changed the same lines and "
                           f"the merge repair could not resolve them; the merge was "
@@ -399,6 +449,9 @@ def _repair_merge(rt, task_id, branch, result) -> str:
                 and rt.git.is_merged_into(branch, rt.state.sprint_branch))
     if resolved:
         return rt.git.head_sha()
+    # No check_launch here, deliberately: this is the one site where a non-zero exit is
+    # already load-bearing — it IS the "did not resolve" signal, and the merge is aborted
+    # and handed to the repair ladder either way.
     rt.git.merge_abort()
     return ""
 
@@ -411,14 +464,21 @@ def _worktree_of(rt, task_id) -> Path:
 def boundary(rt, number) -> str:
     """The increment boundary: heavy checks, design-issue repair, and the stop
     signals a running sprint honours. Returns 'done' or 'rework'."""
+    rt.report.phase(f"increment {number} boundary")
     command = rt.cfg.command("stage_check")
     if command:
         attempts = 0
+        timeout = int(rt.cfg.driver("command_timeout_s"))
         while True:
-            done = procs.run(command, timeout=int(rt.cfg.driver("command_timeout_s")),
-                             cwd=rt.cfg.root, shell=True,
-                             stdout_path=rt.cfg.path("transient") /
-                             f"stage-check-{rt.state.sprint_id}-{number}.log")
+            log_path = (rt.cfg.path("transient")
+                        / f"stage-check-{rt.state.sprint_id}-{number}.log")
+            # Its output goes to the log, so — like a dispatch — the step line and its
+            # heartbeat are the only sign the gate is running rather than wedged.
+            with rt.report.step(f"stage check · {command}", budget_s=timeout) as step:
+                done = procs.run(command, timeout=timeout,
+                                 cwd=rt.cfg.root, shell=True, stdout_path=log_path)
+                step.ok = done.rc == 0
+                step.note = "" if step.ok else f"rc={done.rc} · log {log_path}"
             rt.tele.event("stage_check", increment=number, rc=done.rc,
                           duration_s=done.duration_s, started_at=done.started_at,
                           ended_at=done.ended_at, sprint=rt.state.sprint_id)
@@ -429,12 +489,15 @@ def boundary(rt, number) -> str:
                 raise Halt("stage_check_red",
                            f"increment {number}'s heavy checks stayed red after "
                            f"{STAGE_REPAIR_ATTEMPTS} repair rounds")
-            rt.agents.launch("wf-stage-repair",
-                             {"mode": "repair",
-                              "sprint_branch": rt.state.sprint_branch,
-                              "Increment": number,
-                              "Checkpoint": checkpoint(rt, number)},
-                             increment=number, mode="repair")
+            rt.report.line(f"stage check red — repair round "
+                           f"{attempts}/{STAGE_REPAIR_ATTEMPTS}", indent=1)
+            # a refused launch would otherwise burn a repair round on nothing, three
+            # times over, and end at a stage_check_red halt blaming the checks
+            dispatch.check_launch(rt.agents.launch(
+                "wf-stage-repair",
+                {"mode": "repair", "sprint_branch": rt.state.sprint_branch,
+                 "Increment": number, "Checkpoint": checkpoint(rt, number)},
+                increment=number, mode="repair"))
             if issues.open_entries(rt):
                 _resolve_open_issues(rt)
                 return "rework"
@@ -448,6 +511,8 @@ def boundary(rt, number) -> str:
         rt.state.save()
         rt.tele.event("stop_pending", reason=stop.reason, detail=stop.detail,
                       sprint=rt.state.sprint_id)
+        rt.report.line(f"stop pending ({stop.reason}) — this sprint ships, then the "
+                       f"loop exits: {stop.detail}", indent=1)
     return "done"
 
 

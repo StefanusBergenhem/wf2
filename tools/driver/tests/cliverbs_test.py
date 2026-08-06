@@ -5,12 +5,14 @@ wf2-source-only — never rendered into an install target.
 """
 from __future__ import annotations
 
+import io
 import unittest
 
 import support  # noqa: F401
 
 import cliverbs
 import config as driver_config
+import progress
 
 
 class CliverbsTest(support.TempProject):
@@ -48,6 +50,21 @@ class CliverbsTest(support.TempProject):
         res = self.cli.read("pipeline", "current-phase")
         self.assertIn("pipeline", res.argv)
         self.assertIn("--format", res.argv)
+
+    def test_a_verbose_reporter_prints_every_verb_and_its_exit_code(self):
+        out = io.StringIO()
+        cli = cliverbs.Cli(self.cfg, report=progress.Reporter(
+            out=out, heartbeat_s=None, verbose=True))
+        cli.read("pipeline", "current-phase")
+        self.assertIn("wf pipeline current-phase", out.getvalue())
+        self.assertIn("rc=", out.getvalue())
+
+    def test_verbs_are_silent_without_verbose(self):
+        out = io.StringIO()
+        cli = cliverbs.Cli(self.cfg, report=progress.Reporter(out=out,
+                                                             heartbeat_s=None))
+        cli.read("pipeline", "current-phase")
+        self.assertEqual(out.getvalue(), "")
 
 
 if __name__ == "__main__":

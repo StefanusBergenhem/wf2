@@ -14,6 +14,7 @@ import support  # noqa: F401
 import config as driver_config
 import dispatch as driver_dispatch
 import events as driver_events
+import runtime as driver_runtime
 
 
 class PromptTest(support.TempProject):
@@ -147,6 +148,56 @@ class LaunchTest(support.TempProject):
         d = driver_dispatch.Dispatcher(cfg, driver_events.Telemetry(cfg))
         self.assertEqual(d.launch("wf-build", {}).exit_code, 0)
         self.assertTrue(self.marker.exists())
+
+
+class CheckLaunchTest(support.TempProject):
+    """The blame helper: called where a role left nothing to route on, it decides whether
+    the caller may draw a conclusion about the WORK at all."""
+
+    def launched(self, rc, body=None):
+        log = self.root / "role.log"
+        if body is not None:
+            log.write_text(body)
+        return driver_dispatch.Launched("wf-tl", rc, 0, False, log, "cmd", {})
+
+    def test_a_clean_exit_lets_the_caller_draw_its_own_conclusion(self):
+        driver_dispatch.check_launch(self.launched(0, "fine"))       # no raise
+        driver_dispatch.check_launch(None)                           # nothing dispatched
+
+    def test_a_failed_launch_pauses_and_quotes_the_harness(self):
+        with self.assertRaises(driver_runtime.Pause) as caught:
+            driver_dispatch.check_launch(
+                self.launched(1, "starting\n\nYou've hit your session limit\n"))
+        self.assertEqual(caught.exception.reason, "launch_failed")
+        self.assertIn("session limit", caught.exception.detail)
+        self.assertIn("wf-tl exited 1", caught.exception.detail)
+
+    def test_a_failed_launch_with_no_log_still_pauses(self):
+        with self.assertRaises(driver_runtime.Pause):
+            driver_dispatch.check_launch(self.launched(1))           # log never created
+
+    def test_a_timeout_says_so_and_names_the_budget_to_raise(self):
+        timed_out = driver_dispatch.Launched("wf-designer", 124, 7200, True,
+                                             self.root / "role.log", "cmd", {})
+        with self.assertRaises(driver_runtime.Pause) as caught:
+            driver_dispatch.check_launch(timed_out)
+        self.assertEqual(caught.exception.reason, "launch_timeout")
+        self.assertIn("agent_timeout_s", caught.exception.detail)
+        self.assertIn("2h00m", caught.exception.detail)
+        self.assertNotIn("never ran", caught.exception.detail)
+
+    def test_the_quoted_line_is_bounded(self):
+        long_line = "x" * 5000
+        self.assertEqual(len(driver_dispatch.last_line(
+            self.write_log(long_line))), 200)
+
+    def test_last_line_of_a_missing_log_is_empty(self):
+        self.assertEqual(driver_dispatch.last_line(self.root / "nope.log"), "")
+
+    def write_log(self, body):
+        path = self.root / "role.log"
+        path.write_text(body)
+        return path
 
 
 if __name__ == "__main__":

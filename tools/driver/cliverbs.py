@@ -14,6 +14,7 @@ import threading
 from dataclasses import dataclass, field
 
 import procs
+import progress
 
 
 @dataclass
@@ -29,10 +30,12 @@ class Result:
 
 
 class Cli:
-    def __init__(self, cfg, dry_run: bool = False, timeout: int = procs.CLI_TIMEOUT_S):
+    def __init__(self, cfg, dry_run: bool = False, timeout: int = procs.CLI_TIMEOUT_S,
+                 report=None):
         self.cfg = cfg
         self.dry_run = dry_run
         self.timeout = timeout
+        self.report = report if report is not None else progress.silent()
         self.lock = threading.Lock()
         self.planned: list = []
 
@@ -68,6 +71,9 @@ class Cli:
         if decorate:
             argv += ["--config", self.cfg.config_path, "--format", "json"]
         done = procs.run(argv, timeout=timeout or self.timeout, cwd=self.cfg.root)
+        self.report.detail(
+            f"wf {' '.join(str(a) for a in args)} → rc={done.rc}"
+            f" ({progress.duration(done.duration_s)})", indent=2)
         data = {}
         if done.stdout.strip():
             try:

@@ -81,6 +81,42 @@ class IncrementTest(support.TempProject):
         responses.update(overrides or {})
         return fakes.FakeCli(responses)
 
+    # ── a launch the harness refused ─────────────────────────────────────────
+
+    def test_a_refused_tl_launch_is_not_read_as_the_tl_leaving_no_tasks(self):
+        """What the dems run actually halted on: a session limit killed wf-tl in four
+        seconds and the driver blamed the Tech Lead's judgement for the empty file."""
+        cli = self.happy_cli({("pipeline", "increments"): (2, {})})
+        agents = fakes.FakeAgents(self.cfg)
+        agents.refuse("wf-tl")
+        rt = self.rt(cli, agents=agents)
+        with self.assertRaises(driver_runtime.Pause) as caught:
+            increments.prepare_contracts(rt, 1)
+        self.assertEqual(caught.exception.reason, "launch_failed")
+        self.assertIn("session limit", caught.exception.detail)
+        self.assertIn("wf-tl", caught.exception.detail)
+
+    def test_a_bad_tl_exit_that_still_wrote_contracts_carries_on(self):
+        cli = self.happy_cli()
+        agents = fakes.FakeAgents(self.cfg)
+        agents.exit_codes["wf-tl"] = 1
+        rt = self.rt(cli, agents=agents)
+        increments.prepare_contracts(rt, 1)          # green gate, so the exit is noise
+        self.assertEqual(agents.roles(), ["wf-tl"])
+
+    def test_a_refused_build_launch_pauses_instead_of_blocking_the_task(self):
+        """With a refused harness every task in the frontier blocks identically, and the
+        sub-layer then halts on `stalled_frontier` — a verdict about work never done."""
+        cli = self.happy_cli({("orchestrate", "inspect-build-return"):
+                              {"verdict": "no_readable_return"}})
+        agents = fakes.FakeAgents(self.cfg)
+        agents.refuse("wf-build")
+        rt = self.rt(cli, agents=agents, git=fakes.FakeGit())
+        with self.assertRaises(driver_runtime.Pause) as caught:
+            increments.run_increment(rt, 1)
+        self.assertEqual(caught.exception.reason, "launch_failed")
+        self.assertNotIn("pipeline block-task", cli.verbs())
+
     # ── the happy path ───────────────────────────────────────────────────────
 
     def test_one_task_runs_build_review_merge_and_completes_the_increment(self):

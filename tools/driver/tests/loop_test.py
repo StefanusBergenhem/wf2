@@ -185,6 +185,33 @@ class LoopTest(support.TempProject):
         self.assertNotIn("wf-designer", agents.roles())
         self.assertIn("wf-retrospective", agents.roles())
 
+    def test_a_restart_reclaims_the_slots_the_dead_run_was_holding(self):
+        """The hygiene lives inside sprint_start, which a mid-sprint resume never passes
+        through — so an interruption in the increment loop (a session limit, a ^C) came
+        back with its tasks still holding slots nobody would ever release."""
+        agents = self.agents_that_design()
+        rt = self.rt(agents=agents)
+        self.write_slice()
+        rt.state.start_sprint("s1", "sprint/s1")
+        rt.state.phase = "closeout"
+        rt.state.save()
+        loop.run_loop(rt, once=True)
+        verbs = rt.cli.verbs()
+        self.assertIn("pipeline reclaim-stale", verbs)
+        self.assertIn("orchestrate sweep-transients", verbs)
+
+    def test_a_restart_onto_a_branch_git_lacks_halts_before_any_dispatch(self):
+        agents = self.agents_that_design()
+        git = fakes.FakeGit(absent=["sprint/s1"])
+        rt = self.rt(agents=agents, git=git)
+        self.write_slice()
+        rt.state.start_sprint("s1", "sprint/s1")
+        rt.state.phase = "increment_loop"
+        rt.state.save()
+        self.assertEqual(loop.run_loop(rt, once=True), 1)
+        self.assertEqual(rt.state.stop_reason, "sprint_branch_missing")
+        self.assertEqual(agents.roles(), [])
+
     def test_awaiting_ruling_without_a_ruling_stays_paused(self):
         agents = self.agents_that_design()
         rt = self.rt(agents=agents)

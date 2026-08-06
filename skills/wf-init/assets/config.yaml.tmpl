@@ -139,8 +139,14 @@ driver:
                               # increment boundary; {branch} is substituted. Output
                               # containing CHANGES_REQUESTED stops the loop after the
                               # sprint in flight ships. Empty skips the check.
-  agent_timeout_s: 7200       # driver: hard bound on ONE role dispatch. Never a harness
+  agent_timeout_s: 14400      # driver: hard bound on ONE role dispatch. Never a harness
                               # default — an unbounded wait strands the whole loop (L-090).
+                              # Sized off the longest role observed on a real repo: an
+                              # originate design run took 61 min. The bound exists to
+                              # catch a WEDGED role, and a wedged one is now visible
+                              # live (the dispatch heartbeat prints elapsed/budget), so
+                              # the headroom costs nothing while a bound that clips a
+                              # nearly-finished role throws the whole run away.
   command_timeout_s: 3600     # driver: hard bound on a project command it shells out to
                               # (commands.stage_check, driver.review_state_cmd).
 

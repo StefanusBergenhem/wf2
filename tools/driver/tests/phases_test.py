@@ -154,6 +154,90 @@ class PhaseTest(support.TempProject):
             phases.designing(rt)
         self.assertEqual(caught.exception.reason, "work_exhaustion")
 
+    # ── a launch the harness refused ─────────────────────────────────────────
+
+    def test_a_refused_design_launch_is_not_read_as_an_empty_work_set(self):
+        """No slice on disk means "nothing is in scope" only if the role ran and decided
+        so. A session limit leaves the same empty disk for the opposite reason."""
+        agents = fakes.FakeAgents(self.cfg)
+        agents.refuse("wf-designer")
+        rt = self.rt(agents=agents)
+        with self.assertRaises(driver_runtime.Pause) as caught:
+            phases.designing(rt)
+        self.assertEqual(caught.exception.reason, "launch_failed")
+        self.assertIn("session limit", caught.exception.detail)
+        self.assertIn("wf-designer", caught.exception.detail)
+
+    def test_a_bad_exit_that_still_wrote_the_slice_carries_on(self):
+        """The exit code alone proves nothing — the real run that exposed this had a
+        designer exit 1 having already written a slice that passed its gate."""
+        cli = fakes.FakeCli({("slice", "check"): SLICE_OK})
+        agents = fakes.FakeAgents(self.cfg)
+        agents.exit_codes["wf-designer"] = 1
+        agents.on("wf-designer", lambda *a: self.write_slice())
+        rt = self.rt(cli=cli, agents=agents)
+        self.assertEqual(phases.designing(rt), SLICE_OK)
+        self.assertEqual(rt.state.phase, "increment_loop")
+
+    def test_a_refused_discover_launch_is_not_read_as_a_missing_brief(self):
+        agents = fakes.FakeAgents(self.cfg)
+        agents.refuse("wf-discover")
+        rt = self.rt(agents=agents)
+        with self.assertRaises(driver_runtime.Pause) as caught:
+            phases.sprint_start(rt)
+        self.assertEqual(caught.exception.reason, "launch_failed")
+
+    def test_a_refused_closeout_launch_stops_the_close_and_is_not_banked(self):
+        agents = fakes.FakeAgents(self.cfg)
+        agents.refuse("wf-retrospective")
+        rt = self.rt(agents=agents)
+        rt.state.start_sprint("s1", "sprint/s1")
+        with self.assertRaises(driver_runtime.Pause) as caught:
+            phases.closeout(rt)
+        self.assertEqual(caught.exception.reason, "launch_failed")
+        self.assertNotIn("wf-retrospective", rt.state.closeout_done)
+
+    # ── resuming into a position git does not have ───────────────────────────
+
+    def test_a_resume_onto_a_branch_git_lacks_halts_before_anything_runs(self):
+        """The dems failure: a dry run's state file resumed a real run into `designing`,
+        so no branch was ever cut and a whole sprint was built on main."""
+        git = fakes.FakeGit(absent=["sprint/s1"])
+        rt = self.rt(git=git)
+        rt.state.start_sprint("s1", "sprint/s1")
+        with self.assertRaises(driver_runtime.Halt) as caught:
+            phases.verify_position(rt)
+        self.assertEqual(caught.exception.reason, "sprint_branch_missing")
+        self.assertIn("sprint/s1", caught.exception.detail)
+        self.assertIn("git checkout -b", caught.exception.detail)
+        self.assertIn(str(self.cfg.state_file), caught.exception.detail)
+
+    def test_a_resume_with_head_elsewhere_checks_the_sprint_branch_out(self):
+        git = fakes.FakeGit()
+        rt = self.rt(git=git)
+        rt.state.start_sprint("s1", "sprint/s1")
+        phases.verify_position(rt)
+        self.assertEqual(git.current_branch(), "sprint/s1")
+
+    def test_verify_position_is_a_no_op_before_a_sprint_exists(self):
+        git = fakes.FakeGit(absent=["sprint/s1"])
+        rt = self.rt(git=git)
+        phases.verify_position(rt)          # no sprint_branch recorded yet
+        self.assertEqual(git.branches, [])
+
+    def test_the_branch_is_cut_before_the_position_is_recorded(self):
+        """Recording first leaves a window where the state file names a branch git never
+        got — which is exactly the position a resume then trusts."""
+        git = fakes.FakeGit(stack=["sprint/s1"], sprint_id="s2")
+        order = []
+        git.start_branch = lambda name, base: order.append("git")
+        rt = self.rt(git=git)
+        rt.state.save = lambda: order.append("state")
+        self.cfg.path("discover_brief").parent.mkdir(parents=True, exist_ok=True)
+        self.cfg.path("discover_brief").write_text("brief\n")
+        phases.sprint_start(rt)
+        self.assertEqual(order[:2], ["git", "state"])
+
     def test_a_red_slice_check_routes_to_designer_repair_then_proceeds(self):
         cli = fakes.FakeCli({("slice", "check"): [
             (1, {"verdict": "fail", "errors": [{"code": "A9", "msg": "bad"}],

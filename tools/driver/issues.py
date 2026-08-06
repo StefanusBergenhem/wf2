@@ -12,6 +12,8 @@ from __future__ import annotations
 import re
 import threading
 
+import dispatch
+import progress
 import yaml
 from runtime import Halt, Pause
 
@@ -80,6 +82,8 @@ def record(rt, summary: str, *, task_id=None, severity: str = "high",
             item["scope"] = scope
         doc.setdefault("issues", []).append(item)
         _write(rt, doc)
+    rt.report.line(f"design issue {di_id} raised: {summary[:160]}",
+                   symbol=progress.BAD, indent=1)
     mirror(rt, item)
     return di_id
 
@@ -126,7 +130,8 @@ def repair(rt, item: dict) -> str:
         params["task_id"] = str(item["task_id"])
     rt.tele.event("repair", role="wf-designer", mode="repair", di_id=di_id,
                   task=item.get("task_id"), sprint=rt.state.sprint_id)
-    rt.agents.launch("wf-designer", params, mode="repair", task_id=item.get("task_id"))
+    launched = rt.agents.launch("wf-designer", params, mode="repair",
+                                task_id=item.get("task_id"))
 
     decision_prep = rt.cfg.path_opt("decision_prep")
     if decision_prep and decision_prep.exists():
@@ -139,13 +144,20 @@ def repair(rt, item: dict) -> str:
 
     after = entry(rt, di_id)
     if after is None:
+        dispatch.check_launch(launched)
         raise Halt("design_issue_missing",
                    f"{di_id} is no longer in {rt.cfg.path('design_issues')}")
     if str(after.get("status")) != "resolved":
+        # an untouched issue is what BOTH a refused launch and a genuine "I cannot fix
+        # this" leave behind; only the exit code tells them apart
+        dispatch.check_launch(launched)
         raise Halt("design_issue_unresolved",
                    f"{di_id} came back {after.get('status')} — a human ruling is needed")
     rt.cli.mutate("pipeline", "resolve-design-issue", di_id)
-    return str(after.get("fix_kind") or "")
+    fix_kind = str(after.get("fix_kind") or "")
+    rt.report.line(f"{di_id} resolved · fix {fix_kind or 'unnamed'}",
+                   symbol=progress.OK, indent=1)
+    return fix_kind
 
 
 def is_slice_scoped(item: dict) -> bool:

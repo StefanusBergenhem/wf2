@@ -9,12 +9,33 @@ script does it.
 python3 .wf/tools/driver/wf-driver              # run continuously
 python3 .wf/tools/driver/wf-driver --once       # exactly one sprint (bring-up)
 python3 .wf/tools/driver/wf-driver --dry-run    # print the planned dispatches only
+python3 .wf/tools/driver/wf-driver --verbose    # also print every `wf` verb and its rc
+python3 .wf/tools/driver/wf-driver --quiet      # drop the still-alive heartbeat
 python3 .wf/tools/driver/wf-driver --config path/to/.wf/config.yaml --max-sprints 3
 ```
 
 Exit code `0` = a clean stop (a stop rule, or the sprint limit). `1` = a halt: the
-loop hit something it must not decide on its own. Both leave the position on disk;
-re-running resumes it.
+loop hit something it must not decide on its own. `130` = interrupted. All three
+leave the position on disk; re-running resumes it.
+
+## Following a run
+
+A dispatch writes nothing to the terminal — its output goes to a log the driver
+never reads — so the loop narrates itself instead (`progress.py`). Every line carries
+elapsed-since-start; `──` marks a position in the phase machine, `▶`/`✔`/`✖` open and
+close something long-running, and `·` is a heartbeat saying it is still alive:
+
+```
+[wf-driver 0:02:11] ── designing — the design role cuts the slice
+[wf-driver 0:02:11]   ▶ wf-designer (originate)
+[wf-driver 0:03:11]     · wf-designer (originate) still running — 1m00s / 2h00m budget
+[wf-driver 0:14:52]   ✔ wf-designer (originate) — 12m41s
+[wf-driver 0:14:53]   ✔ slice check green · serves CAP-004
+```
+
+The heartbeat's budget is the timeout that will kill the dispatch
+(`driver.agent_timeout_s`), so a wedged role is visible long before it is reaped.
+`^C` prints what was in flight and how long it had been running, then exits `130`.
 
 ## The process contract
 
@@ -98,6 +119,31 @@ derives from local state. When the stack is empty the next sprint branches from
 | manual stop | `driver.stop_file` exists | seen at an increment boundary: finish the sprint, ship, exit |
 | stack depth | unmerged sprint branches ≥ `driver.max_unmerged_sprints` | pause until PRs merge |
 | request-changes | `driver.review_state_cmd` output contains `CHANGES_REQUESTED` | same as manual stop |
+| launch failed | a role exited non-zero **and** left nothing to route on | pause, quoting the harness's own last log line; re-run to continue from the same position |
+
+## Resuming
+
+The position is on disk (`driver.state_file`), so re-running after any interruption —
+`^C`, a crash, a session limit — re-enters at the recorded phase. Two things make that
+safe, and both run on **every** re-entry past `sprint_start`, which is where they were
+missing:
+
+- **The position is verified against git.** A recorded `sprint_branch` git does not have
+  is a fiction, and every commit, worktree and merge would silently land on whatever
+  HEAD happens to be. That halts as `sprint_branch_missing`, naming both ways out.
+  Correspondingly, `sprint_start` cuts the branch *before* recording the position, so
+  the window that produces such a state never opens.
+- **The hygiene runs.** `sweep-transients` and `pipeline reclaim-stale` used to live
+  only inside `sprint_start` — but an interruption inside the increment loop is exactly
+  where a task is left holding a slot no one will release, and that re-entry never
+  passes through `sprint_start`.
+
+**A non-zero exit is not, on its own, a failure** and is deliberately never checked as
+one: a role can exit badly having already written a perfectly good artifact. It is
+consulted only where the caller has established that the role produced *nothing* — there
+it is the difference between "the Tech Lead decomposed nothing" and "the Tech Lead never
+ran". The one exception is `_repair_merge`, where a non-zero exit already *is* the
+"did not resolve" signal.
 
 ## Config keys
 
@@ -113,6 +159,25 @@ defaults of its own; a missing key is a named, fatal error.
 - `driver.agent_timeout_s`, `driver.command_timeout_s` — hard bounds on a role
   dispatch and on a project command (new). Every other subprocess is bounded by the
   constants in `procs.py`; nothing runs unbounded (L-090).
+
+## Timeouts
+
+| what | bound | where |
+|---|---|---|
+| one role dispatch | `driver.agent_timeout_s` | config |
+| `commands.stage_check`, `driver.review_state_cmd` | `driver.command_timeout_s` | config |
+| a `wf` verb | `procs.CLI_TIMEOUT_S` (300s) | constant |
+| git plumbing / commit+merge / push+`gh` | `procs.GIT_TIMEOUT_S` (120s), `GIT_WRITE_TIMEOUT_S` (900s), `NETWORK_TIMEOUT_S` (600s) | constants |
+
+Every command runs in **its own process group**. A role is launched through a shell, so
+the agent is a grandchild — killing only the direct child leaves the agent alive, still
+holding its worktree and still writing into a repo the driver has already given up on
+and moved past. Hitting the bound (or a `^C` on the way through) sends SIGTERM to the
+group, then SIGKILL, then sweeps the group again for grandchildren that outlived their
+parent, and reaps the pipes.
+
+A dispatch killed at its bound pauses as `launch_timeout` naming the budget to raise —
+distinct from `launch_failed`, so "it needed longer" is never reported as "it never ran".
 - also consumed: `paths.*`, `project.base_branch`, `parallel.worktree_base`,
   `review.passes` / `review.max_attempts`, `closeout`, `limits.*`,
   `commands.stage_check`, `orchestrate.history_cap`.
@@ -131,6 +196,7 @@ defaults of its own; a missing key is a named, fatal error.
 | `gitops.py` | branches, worktrees, merges, stack derivation, push/PR |
 | `dispatch.py` | prompt construction and the launch template |
 | `cliverbs.py` | the `wf` CLI wrapper (mutations serialized) |
+| `progress.py` | the run's commentary: step lines, heartbeat, in-flight on `^C` |
 | `config.py`, `state.py`, `events.py`, `procs.py`, `runtime.py` | config, state file, telemetry rows, bounded subprocesses, the injected bundle |
 
 ## Decisions worth knowing

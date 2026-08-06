@@ -68,8 +68,12 @@ class FakeGit:
     (``dirty=[]`` is the pristine tree, which a real run essentially never has)."""
 
     def __init__(self, *, clean=True, stack=None, sprint_id="s1", base="main",
-                 dirty=None, fetch_ok=True, telemetry=TELEMETRY_PATH):
+                 dirty=None, fetch_ok=True, telemetry=TELEMETRY_PATH, absent=None):
         self.telemetry = telemetry
+        # Branches git does NOT have. Real-world default is empty: a resumed run's sprint
+        # branch is there, because a real sprint_start cut it. `absent=["sprint/s1"]`
+        # models the one case where it is not — a position recorded but never reached.
+        self.absent = set(absent or ())
         if dirty is None:
             dirty = [telemetry] if clean else [telemetry, "src/left-over.go"]
         self.dirty = list(dirty)
@@ -103,6 +107,9 @@ class FakeGit:
 
     def current_branch(self):
         return self.branches[-1] if self.branches else self.base
+
+    def branch_exists(self, name):
+        return name not in self.absent
 
     def next_sprint_id(self):
         return self._sprint_id
@@ -186,11 +193,18 @@ class FakeAgents:
         self.launches = []
         self.effects = {}
         self.exit_codes = {}
+        self.logs = {}
         self.dry_run = False
         self.planned = []
 
     def on(self, role, fn):
         self.effects.setdefault(role, []).append(fn)
+
+    def refuse(self, role, log="You've hit your session limit · resets 3:20pm", rc=1):
+        """A harness that never ran the role: a non-zero exit, no artifacts, and its
+        reason printed to the dispatch log in place of the work."""
+        self.exit_codes[role] = rc
+        self.logs[role] = log
 
     def launch(self, role, params, *, cwd=None, task_id=None, increment=None,
                mode=None):
@@ -202,8 +216,12 @@ class FakeAgents:
             fn = queue.pop(0) if len(queue) > 1 else queue[0]
             fn(self, role, params, task_id)
         rc = self.exit_codes.get(role, 0)
-        return driver_dispatch.Launched(role, rc, 0, False, Path("/dev/null"), "fake",
-                                        params)
+        log_path = Path("/dev/null")
+        if role in self.logs:
+            log_path = self.cfg.path("transient") / f"{role}-fake.log"
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            log_path.write_text(self.logs[role])
+        return driver_dispatch.Launched(role, rc, 0, False, log_path, "fake", params)
 
     def roles(self):
         return [x["role"] for x in self.launches]
@@ -246,8 +264,13 @@ def raise_design_issue(cfg, di_id="DI-9", task_id=None, summary="cannot be built
     return effect
 
 
-def runtime(cfg, cli=None, git=None, agents=None, state=None, telemetry=None):
+def runtime(cfg, cli=None, git=None, agents=None, state=None, telemetry=None,
+            report=None):
+    """The runtime under test. Its reporter writes nowhere unless a test asks for one:
+    the driver's own default is a live reporter (going dark is the failure it exists to
+    prevent), which would otherwise spray the suite's output."""
     import events
+    import progress
     import state as driver_state
     return driver_runtime.Runtime(
         cfg=cfg,
@@ -256,4 +279,5 @@ def runtime(cfg, cli=None, git=None, agents=None, state=None, telemetry=None):
         cli=cli or FakeCli(),
         git=git or FakeGit(),
         agents=agents or FakeAgents(cfg),
+        report=report or progress.silent(),
     )
