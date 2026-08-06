@@ -212,6 +212,29 @@ class LoopTest(support.TempProject):
         self.assertEqual(rt.state.stop_reason, "sprint_branch_missing")
         self.assertEqual(agents.roles(), [])
 
+    def test_a_red_slice_gate_on_resume_halts_carrying_its_findings(self):
+        """The halt named the slice and nothing else, so the operator had to re-run the
+        gate by hand to learn what was wrong — and in the case that produced this test
+        the slice was not at fault at all (the ADR scan was walking the live worktrees).
+        A halt that cannot be acted on is the loop going dark at the one moment it
+        mattered."""
+        agents = self.agents_that_design()
+        cli = self.full_cli()
+        cli.responses[("slice", "check")] = (1, {
+            "verdict": "fail",
+            "errors": [{"code": "A5", "msg": "slice: ADR-023 is defined in more than "
+                                             "one ADR set"}]})
+        rt = self.rt(cli=cli, agents=agents)
+        self.write_slice()
+        rt.state.start_sprint("s1", "sprint/s1")
+        rt.state.phase = "increment_loop"
+        rt.state.save()
+        self.assertEqual(loop.run_loop(rt, once=True), 1)
+        self.assertEqual(rt.state.stop_reason, "slice_check_red")
+        detail = [r for r in self.rows() if r["event"] == "halt"][-1]["detail"]
+        self.assertIn("A5", detail)
+        self.assertIn("more than one ADR set", detail)
+
     def test_awaiting_ruling_without_a_ruling_stays_paused(self):
         agents = self.agents_that_design()
         rt = self.rt(agents=agents)

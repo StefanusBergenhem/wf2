@@ -185,12 +185,17 @@ def _contracts_green(rt) -> bool:
     return rt.cli.read("sprint", "check").ok
 
 
-def _gate_summary(rt, gate: str) -> str:
-    res = rt.cli.read(*gate.split())
-    errors = res.data.get("errors") or []
+def gate_findings(data) -> str:
+    """The findings a gate's JSON carries, as one line — what a halt or a repair
+    dispatch has to name for its reader to act on it."""
+    errors = (data or {}).get("errors") or []
     lines = [f"{e.get('code')}: {e.get('msg')}" if isinstance(e, dict) else str(e)
              for e in errors]
-    return f"`wf {gate}` is red — " + ("; ".join(lines) or "no findings emitted")
+    return "; ".join(lines) or "no findings emitted"
+
+
+def _gate_summary(rt, gate: str) -> str:
+    return f"`wf {gate}` is red — " + gate_findings(rt.cli.read(*gate.split()).data)
 
 
 def _first_open_issue(rt):

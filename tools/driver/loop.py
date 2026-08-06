@@ -111,8 +111,12 @@ def run_sprint(rt) -> None:
 def _increment_numbers(rt) -> list:
     check = rt.cli.read("slice", "check")
     if not check.ok:
+        # Carrying the findings, not just the verdict: the operator's next move depends
+        # entirely on WHICH check went red, and a bare "the slice cannot be built" blames
+        # the slice even when the gate itself is what broke.
         raise Halt("slice_check_red",
-                   "the slice on disk no longer passes its gate — it cannot be built")
+                   f"the slice on disk no longer passes its gate — it cannot be built: "
+                   f"{increments.gate_findings(check.data)}")
     return [int(item["n"]) for item in (check.data.get("increments") or [])]
 
 
