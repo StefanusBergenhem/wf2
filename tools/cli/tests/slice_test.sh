@@ -25,6 +25,7 @@ version: 1
 paths:
   design_slice: ".wf/design-slice.md"
   architecture: ".wf/architecture.md"
+  transient: ".wf/transient"
   discover_model: ".wf/transient/discover/model.json"
 limits:
   increments_per_sprint: 4
@@ -529,6 +530,22 @@ OUT="$(wf slice check --format json)"; RC=$?
 [ "$RC" -eq 0 ] && ok "spec-id shorthand before an ADR is not a path citation" || bad "shorthand exit" "rc=$RC $OUT"
 [ "$(jget "$OUT" "any(f['code']=='A4' for f in d['errors'])")" = "False" ] \
   && ok "no A4 on a CAP-id/ADR two-id shorthand" || bad "shorthand A4" "$OUT"
+
+# The transient tree is derived and disposable, and it holds the per-task worktrees —
+# each a whole checkout, carrying its own copy of every ADR. A scan that walks into it
+# finds the repo N+1 times over and reports the repo colliding with itself. Observed on
+# a dems resume: two live worktrees turned every cited ADR into an A5 and halted the
+# driver with slice_check_red on a slice that had passed at sprint start.
+mkdir -p "$PROJ/.wf/transient/worktrees/s1-T1/.wf/adrs"
+cp "$PROJ/.wf/adrs/ADR-013.md" "$PROJ/.wf/transient/worktrees/s1-T1/.wf/adrs/ADR-013.md"
+cite "bound by ADR-013"
+OUT="$(wf slice check --format json)"; RC=$?
+[ "$RC" -eq 0 ] && ok "a worktree's ADR copy is not a second ADR set" || bad "adr worktree exit" "rc=$RC $OUT"
+[ "$(jget "$OUT" "any(f['code']=='A5' for f in d['errors'])")" = "False" ] \
+  && ok "no A5 from the transient tree's copy of the repo" || bad "adr worktree A5" "$OUT"
+[ "$(jget "$OUT" "any('transient' in s for s in d['adr_sets'])")" = "False" ] \
+  && ok "adr_sets never reports a path inside transient" || bad "adr worktree sets" "$OUT"
+rm -rf "$PROJ/.wf/transient/worktrees"
 
 # missing slice file -> mechanical failure (exit 2)
 rm -f "$SLICE"

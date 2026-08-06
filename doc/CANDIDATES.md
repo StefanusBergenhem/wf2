@@ -507,3 +507,31 @@ none of which would have caught the one member that had no stateable rule. **Act
 wf2-side half rather than a fifth point-fix** — an adversarial spec-layer reviewer subsumes both
 residual members without needing a heuristic that can tell "the task creates this type" from
 "this type does not exist." Cf. **C37**, **C13** (pinning a dependency's existing interface).
+
+---
+
+## C39 — Tree-derivation scans must prune the transient tree
+
+**Date:** 2026-08-06
+**Context:** dogfood run 2 (first parallel driver run). `wf slice check`'s `adr_index`
+did an `rglob("ADR-*.md")` over the whole repo with a `_SKIP_DIRS` set that deliberately
+does **not** skip `.wf` (the canonical ADR home is `.wf/adrs`). It therefore walked into
+`.wf/transient/worktrees/`, where each per-task worktree is a **whole checkout carrying
+its own copy of every ADR** — so every cited ADR came back defined in three "ADR sets"
+and A5-collided with itself. On a resume with two live worktrees the driver halted with
+`slice_check_red: the slice on disk no longer passes its gate`, on a slice that had been
+green at sprint start. Only reachable once worktrees can be alive at slice-check time —
+i.e. the continuous loop's resume path, which is why it never surfaced before.
+Fixed for `adr_index` (prunes `paths.transient`).
+
+**The general shape:** any derivation that walks the repo tree is now walking N+1 copies
+of it whenever tasks are in flight. Audited at fix time: `impact.py`'s two scans skip
+`.wf` wholesale (safe); `pipeline.py`/`adequacy.py` glob a named cache dir, not the tree.
+The one remaining exposure is `impact.py:89`, which globs **config-authored** `add`
+patterns against the repo root — a rule written as `**/*.yaml` would match inside every
+live worktree.
+
+**Trigger to act:** an `impact` rule is authored with a `**` pattern, or any new
+tree-walking derivation is added. The fix is the same three lines each time; the real
+candidate is whether tree-walking derivations should share one pruned walker instead of
+each re-deriving the skip set.

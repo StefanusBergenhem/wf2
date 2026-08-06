@@ -338,13 +338,26 @@ def _adr_title(path):
     return heading
 
 
-def adr_index(root):
+def adr_index(root, transient=None):
     """{ADR-NNN: [(relpath, title)]} over every ADR-shaped file in the tree, not just
-    paths.adrs — a legacy repo can hold a second, id-colliding ADR set."""
+    paths.adrs — a legacy repo can hold a second, id-colliding ADR set.
+
+    `transient` (paths.transient) is pruned: it is derived and disposable, and it holds
+    the per-task worktrees — each a whole checkout carrying its own copy of every ADR.
+    Walking it finds the repo N+1 times over and reports the repo as colliding with
+    itself."""
+    skip_rel = None
+    if transient:
+        try:
+            skip_rel = (root / transient).resolve().relative_to(root.resolve()).parts
+        except ValueError:      # configured outside the repo — nothing to prune
+            skip_rel = None
     index = {}
     for path in sorted(root.rglob("ADR-*.md")):
         rel = path.relative_to(root)
         if any(seg in _SKIP_DIRS for seg in rel.parts):
+            continue
+        if skip_rel and rel.parts[:len(skip_rel)] == skip_rel:
             continue
         m = _ADR_FILE_RE.match(path.name)
         if m:
@@ -418,7 +431,8 @@ def _check(rest):
     errors += [{"code": "A12", "msg": m}
                for m in architecture_findings(text, architecture_text(args.config),
                                               repo_ids, model_present)]
-    index = adr_index(common.project_root(args.config))
+    index = adr_index(common.project_root(args.config),
+                      (common.config_doc(args.config).get("paths") or {}).get("transient"))
     adr_errors, citations = adr_citations(text, index)
     errors += adr_errors
     adr_sets = sorted({str(Path(p).parent) for defs in index.values() for p, _ in defs})
