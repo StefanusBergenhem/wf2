@@ -7,6 +7,7 @@ on-disk artifacts, never from parsing an agent's prose — compliance by mechani
   inspect-build-return   Build Return Protocol detector
   inspect-review-return  Review Return Protocol detector
   preserve-uncommitted   commit uncommitted work before re-dispatch
+  consume-marker         retire a presence marker its reader has now consumed
   sweep-transients       session-start broom (resume safety)
 
 Unlike the query verbs (which route through common.emit), every verb here prints
@@ -582,9 +583,62 @@ def _sweep_transients(rest):
     return 0
 
 
+# ===========================================================================
+# 5. consume-marker
+# ===========================================================================
+
+# The presence markers the build→review chain routes on. Each is written by one role
+# and read by exactly one dispatch, so the driver clears it the moment that dispatch
+# returns: a marker still on disk at the next inspection is read as a fresh verdict
+# about work it never saw.
+_CONSUMABLE_MARKERS = ("feedback", "review_ready")
+_CONSUMED_SUFFIX = ".consumed"
+
+
+def _consume_marker(rest):
+    if len(rest) < 2 or not rest[0] or not rest[1]:
+        return _err("usage: consume-marker <worktree-path> <marker>")
+    worktree_path = Path(rest[0])
+    marker = rest[1]
+
+    if marker not in _CONSUMABLE_MARKERS:
+        return _err(f"error: unknown marker: {marker} "
+                    f"(expected {' or '.join(_CONSUMABLE_MARKERS)})")
+    if not worktree_path.is_dir():
+        return _err(f"error: worktree path not found: {rest[0]}")
+
+    config_file = worktree_path / ".wf" / "config.yaml"
+    try:
+        config_doc = _load_yaml_file(config_file)
+    except _MalformedYAML as exc:
+        return _err(f"error: parse {config_file}: {exc}")
+
+    # No default to fall back on, unlike the inspectors: moving a file is destructive
+    # enough that guessing where it lives is worse than refusing.
+    rel = _config_path_value(config_doc, marker)
+    if not rel:
+        return _err(f"error: paths.{marker} is not configured in {config_file}")
+
+    path = worktree_path / rel
+    if not path.is_file():
+        print("absent")
+        return 0
+
+    # Moved aside, not unlinked: a rejection is the only readable account of why a
+    # build was sent back, and a human reads it off the task that ran out of attempts.
+    # `replace` overwrites a prior round's residue rather than failing on it.
+    try:
+        path.replace(path.with_name(path.name + _CONSUMED_SUFFIX))
+    except OSError as exc:
+        return _err(f"error: could not move {path}: {exc}", 1)
+    print(f"consumed {rel}")
+    return 0
+
+
 COMMANDS = {
     ("orchestrate", "inspect-build-return"): _inspect_build_return,
     ("orchestrate", "inspect-review-return"): _inspect_review_return,
     ("orchestrate", "preserve-uncommitted"): _preserve_uncommitted,
     ("orchestrate", "sweep-transients"): _sweep_transients,
+    ("orchestrate", "consume-marker"): _consume_marker,
 }

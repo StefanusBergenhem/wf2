@@ -281,6 +281,7 @@ def _run_task(rt, entry, number) -> None:
         attempt = _attempt(rt, task_id)
         rt.cli.mutate("pipeline", "dispatch", "--agent", "wf-build",
                       "--task", task_id, "--attempt", str(attempt))
+        _consume(rt, worktree, "review_ready")
         launched = rt.agents.launch(
             "wf-build",
             {"task_id": task_id, "worktree": str(worktree),
@@ -291,6 +292,9 @@ def _run_task(rt, entry, number) -> None:
         rt.report.line(f"task {task_id} · build (attempt {attempt}) → {kind}",
                        symbol=progress.OK if kind == "ready_for_review" else progress.BAD,
                        indent=2)
+        if kind in ("ready_for_review", "design_issue"):
+            # this dispatch was the rejection's reader, and it has answered
+            _consume(rt, worktree, "feedback")
         if kind == "design_issue":
             issues.promote(rt, worktree, verdict.get("di_id"), task_id)
             return
@@ -364,6 +368,24 @@ def _review_chain(rt, worktree, task_id, build_sha, number) -> str:
     rt.cli.mutate("pipeline", "block-task", task_id,
                   "--reason", "the review chain did not settle")
     return "blocked"
+
+
+def _consume(rt, worktree, marker) -> None:
+    """Retire a presence marker the dispatch that reads it has now returned.
+
+    The inspectors route on presence alone, so a marker left on disk is inspected
+    again as a verdict about work it never saw: a stale `feedback` re-rejects a build
+    however the review judged it, until the attempt cap blocks an approved task, and a
+    stale `review_ready` passes off a build that produced nothing as ready. The build
+    role deletes neither — a routing decision the loop depends on is the loop's to
+    make."""
+    res = rt.cli.raw("orchestrate", "consume-marker", str(worktree), marker,
+                     mutating=True)
+    if not res.ok:
+        rt.report.line(f"could not retire the {marker} marker in {worktree} — "
+                       f"{res.stderr.strip() or 'no reason given'}; the next "
+                       f"inspection may read it as a fresh verdict",
+                       symbol=progress.BAD, indent=2)
 
 
 def _inspect(rt, verb, worktree, task_id, *extra) -> dict:

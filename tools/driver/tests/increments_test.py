@@ -170,6 +170,75 @@ class IncrementTest(support.TempProject):
                          ["wf-tl", "wf-build", "wf-review", "wf-build", "wf-review"])
         self.assertIn("pipeline reject-task", cli.verbs())
 
+    # ── return markers ───────────────────────────────────────────────────────
+    # `feedback` and `review_ready` are presence markers: the inspectors route on the
+    # file being there, nothing else. Each is read by exactly one dispatch, so the
+    # driver retires it at that dispatch's boundary — a marker that outlives its
+    # reader is inspected again as a verdict on work it never saw.
+
+    def worktree(self, task_id="T1"):
+        return (self.root / f".wf/transient/worktrees/s1-{task_id}").resolve()
+
+    def consume_call(self, marker, task_id="T1"):
+        return ["orchestrate", "consume-marker", str(self.worktree(task_id)), marker]
+
+    def snapshot_at(self, agents, cli, role):
+        """The CLI calls made up to the moment `role` was launched, one entry per
+        launch — so an ordering claim is checked against the interleaving, not the
+        final call list."""
+        seen = []
+        agents.on(role, lambda *a: seen.append(list(cli.calls)))
+        return seen
+
+    def test_the_build_must_re_earn_its_review_ready_marker(self):
+        """A leftover review_ready makes a build that produced nothing — halted, or
+        killed mid-handoff — inspect as ready for review."""
+        cli = self.happy_cli()
+        agents = fakes.FakeAgents(self.cfg)
+        at_build = self.snapshot_at(agents, cli, "wf-build")
+        rt = self.rt(cli, agents=agents)
+        increments.run_increment(rt, 1)
+        self.assertIn(self.consume_call("review_ready"), at_build[0])
+
+    def test_the_feedback_marker_is_retired_once_the_build_has_read_it(self):
+        """The live dems failure: the build fixed the rejection but left feedback.yaml
+        behind, so the next review came back `rejected` however it had judged — twice
+        over an approval commit — and the attempt cap would have blocked an approved
+        task. The marker must survive until the build it addresses has launched, and be
+        gone before the review that judges the fix."""
+        cli = self.happy_cli({
+            ("orchestrate", "inspect-review-return"): [
+                {"task_id": "T1", "verdict": "rejected",
+                 "artifact": ".wf/transient/feedback.yaml"},
+                REVIEW_OK,
+            ],
+        })
+        agents = fakes.FakeAgents(self.cfg)
+        at_build = self.snapshot_at(agents, cli, "wf-build")
+        at_review = self.snapshot_at(agents, cli, "wf-review")
+        rt = self.rt(cli, agents=agents)
+        increments.run_increment(rt, 1)
+
+        call = self.consume_call("feedback")
+        # build 1 reads no feedback; build 2 is the fix dispatch and must still find the
+        # rejection the review just wrote — one retirement each, at the build's return
+        self.assertEqual([s.count(call) for s in at_build], [0, 1])
+        self.assertEqual([s.count(call) for s in at_review], [1, 2])
+
+    def test_a_build_that_returned_nothing_keeps_its_feedback(self):
+        """No return artifact means the build never got far enough to act on the
+        rejection — retiring it would send the next attempt in as a fresh build."""
+        cli = self.happy_cli({
+            ("orchestrate", "inspect-build-return"): {
+                "task_id": "T1", "verdict": "escalate_no_artifacts"},
+            ("pipeline", "next"): [frontier(dispatch=["T1"]),
+                                   frontier(stage_done=True, increment_done=True)],
+        })
+        rt = self.rt(cli)
+        increments.run_increment(rt, 1)
+        self.assertNotIn(self.consume_call("feedback"), cli.calls)
+        self.assertIn(self.consume_call("review_ready"), cli.calls)
+
     def test_a_build_design_issue_parks_the_task_without_review(self):
         cli = self.happy_cli({
             ("orchestrate", "inspect-build-return"): {
@@ -190,6 +259,9 @@ class IncrementTest(support.TempProject):
         increments.run_increment(rt, 1)
         self.assertNotIn("wf-review", agents.roles())
         self.assertIn("wf-designer", agents.roles())
+        # the build read its feedback and answered with a design issue — the rejection
+        # is spent either way, and the re-cut's build must not re-enter fix mode on it
+        self.assertIn(self.consume_call("feedback"), cli.calls)
         self.assertEqual(next(x for x in agents.launches
                               if x["role"] == "wf-designer")["mode"], "repair")
         verbs = cli.verbs()

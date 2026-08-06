@@ -123,8 +123,8 @@ task's work, not this task's diff) is defective — do not retry or work around 
 task, and a `summary` of what is unbuildable and why — when the defect is in already-merged
 code, name which merged behaviour violates which acceptance criterion.
 
-Remove any stale `paths.review_ready`, then HALT and report. The return inspector reads
-the open entry and parks the task — you never go on to review.
+Then HALT and report. The return inspector reads the open entry and parks the task —
+you never go on to review.
 
 ## Step 4 — Gate
 
@@ -168,8 +168,8 @@ you cannot fix without restructuring beyond the contract is a design issue (Step
 1. Read `FEEDBACK` — address only its listed failures, each with the minimal change. Do
    not rewrite, and do not touch anything it does not name.
 2. If a fix reveals a contract problem (Step 3b criteria), write the design issue and HALT.
-3. Re-run the gate (Step 4) and the verification checklist, re-commit, delete
-   `FEEDBACK`, then write `paths.review_ready` — in that order.
+3. Re-run the gate (Step 4) and the verification checklist, re-commit, then write
+   `paths.review_ready` — in that order.
 
 ## Halt conditions
 

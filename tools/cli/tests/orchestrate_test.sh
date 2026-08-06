@@ -317,6 +317,97 @@ SW="$(wf orchestrate sweep-transients --config "$P/.wf/config.yaml" --dry-run)"
 [ "$(jget "$SW" "len(d['pruned'])")" = "1" ] && grep -q "DI-1" "$P/.wf/transient/design-issues.yaml" \
     && ok "sweep-di: --dry-run leaves a mixed file unrewritten" || bad "sweep-di dry-run mixed" "$SW"
 
+# ── consume-marker ───────────────────────────────────────────────────────────
+# A presence marker is written by one role and read by exactly one dispatch. The
+# driver clears it at the consumption point, so a marker can never be read a second
+# time as a fresh verdict. Moved aside rather than unlinked: a rejected build's
+# feedback is the only readable account of why, and a human reads it off a blocked
+# task. Its path is resolved from the WORKTREE's own config, like the inspectors.
+
+mkrepo_cfg() {  # → repo dir with a .wf/config.yaml naming both markers
+    local r; r="$(mkrepo)"
+    cat > "$r/.wf/config.yaml" <<'YAML'
+version: 1
+paths:
+  feedback: ".wf/transient/feedback.yaml"
+  review_ready: ".wf/transient/review-ready.yaml"
+YAML
+    echo "$r"
+}
+
+R="$(mkrepo_cfg)"
+[ "$(wf orchestrate consume-marker "$R" feedback)" = "absent" ] \
+    && ok "consume: no marker on disk → absent" || bad "consume absent" ""
+
+printf 'task_id: T1\nfailures: []\n' > "$R/.wf/transient/feedback.yaml"
+OUTC="$(wf orchestrate consume-marker "$R" feedback)"
+[ "${OUTC%% *}" = "consumed" ] && [ ! -f "$R/.wf/transient/feedback.yaml" ] \
+    && [ -f "$R/.wf/transient/feedback.yaml.consumed" ] \
+    && ok "consume: feedback → moved aside, no longer a marker" || bad "consume feedback" "$OUTC"
+grep -q "task_id: T1" "$R/.wf/transient/feedback.yaml.consumed" \
+    && ok "consume: the rejection stays readable for a human" || bad "consume content" ""
+
+: > "$R/.wf/transient/review-ready.yaml"
+wf orchestrate consume-marker "$R" review_ready >/dev/null
+[ ! -f "$R/.wf/transient/review-ready.yaml" ] \
+    && [ -f "$R/.wf/transient/review-ready.yaml.consumed" ] \
+    && ok "consume: review_ready → moved aside" || bad "consume review_ready" ""
+
+# A second rejection overwrites the first's residue rather than failing on it.
+printf 'task_id: T1\nfailures: [second]\n' > "$R/.wf/transient/feedback.yaml"
+OUTC="$(wf orchestrate consume-marker "$R" feedback)"; RCC=$?
+[ "$RCC" -eq 0 ] && grep -q second "$R/.wf/transient/feedback.yaml.consumed" \
+    && ok "consume: a later marker replaces the prior residue" || bad "consume overwrite" "$OUTC rc=$RCC"
+
+# The residue must be inert: the inspectors key on the exact configured path.
+R="$(mkrepo_cfg)"; BUILD="$(gitc "$R" "T1 build: done")"
+: > "$R/.wf/transient/review-ready.yaml"
+printf 'task_id: T1\n' > "$R/.wf/transient/feedback.yaml"
+wf orchestrate consume-marker "$R" feedback >/dev/null
+gitc "$R" "T1 review: approved" >/dev/null
+[ "$(jget "$(wf orchestrate inspect-review-return "$R" T1 "$BUILD")" "d['verdict']")" = "approved" ] \
+    && ok "consume: consumed residue is inert to inspect-review-return" || bad "consume inert" ""
+
+# THE REGRESSION (observed live in dems, task T1): the build fixes the rejection but
+# leaves feedback.yaml behind, the review then approves — and the approval commit is
+# never even looked at, because feedback presence is the first branch of the cascade.
+# Every later attempt re-rejects an approved build until the attempt cap blocks it.
+R="$(mkrepo_cfg)"; BUILD="$(gitc "$R" "T1 build: done")"
+: > "$R/.wf/transient/review-ready.yaml"
+printf 'task_id: T1\n' > "$R/.wf/transient/feedback.yaml"
+gitc "$R" "T1 review: approved" >/dev/null
+[ "$(jget "$(wf orchestrate inspect-review-return "$R" T1 "$BUILD")" "d['verdict']")" = "rejected" ] \
+    && ok "regression: an unconsumed marker re-rejects an approved build" || bad "regression stale" ""
+wf orchestrate consume-marker "$R" feedback >/dev/null
+[ "$(jget "$(wf orchestrate inspect-review-return "$R" T1 "$BUILD")" "d['verdict']")" = "approved" ] \
+    && ok "regression: consuming it lets the approval be read" || bad "regression consumed" ""
+
+# Guards. An unknown marker name is never a licence to move an arbitrary config path,
+# and an unconfigured marker is an error rather than a silently restated default.
+R="$(mkrepo_cfg)"
+wf orchestrate consume-marker "$R" current_task >/dev/null 2>&1
+[ $? -eq 2 ] && ok "consume: unknown marker name → exit 2" || bad "consume unknown" ""
+wf orchestrate consume-marker "$R/nope" feedback >/dev/null 2>&1
+[ $? -eq 2 ] && ok "consume: missing worktree → exit 2" || bad "consume no-worktree" ""
+R="$(mkrepo)"   # no .wf/config.yaml at all
+printf 'task_id: T1\n' > "$R/.wf/transient/feedback.yaml"
+wf orchestrate consume-marker "$R" feedback >/dev/null 2>&1
+[ $? -eq 2 ] && [ -f "$R/.wf/transient/feedback.yaml" ] \
+    && ok "consume: unconfigured marker → exit 2, file untouched" || bad "consume unconfigured" ""
+
+# Worktree discipline: the path comes from the worktree's OWN config, not a default.
+R="$(mkrepo)"
+mkdir -p "$R/.wf/elsewhere"
+cat > "$R/.wf/config.yaml" <<'YAML'
+version: 1
+paths:
+  feedback: ".wf/elsewhere/rejected.yaml"
+YAML
+printf 'task_id: T1\n' > "$R/.wf/elsewhere/rejected.yaml"
+wf orchestrate consume-marker "$R" feedback >/dev/null
+[ ! -f "$R/.wf/elsewhere/rejected.yaml" ] && [ -f "$R/.wf/elsewhere/rejected.yaml.consumed" ] \
+    && ok "consume: resolves the worktree's own configured path" || bad "consume own-config" ""
+
 echo ""
 echo "  orchestrate helpers: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
