@@ -363,6 +363,17 @@ TSJ="$(wf "$PROJ_M" pipeline task-state T2 --format json)"
 [ "$(jget "$TSJ" "d['attempt_counter']")" = "1" ] && ok "reject-task bumps attempt_counter" || bad "reject attempt" "$TSJ"
 [ "$(jget "$TSJ" "d['pass_index']")" = "0" ] && ok "reject-task resets pass_index to 0" || bad "reject pass_index" "$TSJ"
 
+# retry-task → building, attempt++ — a build that returned no artifact at all spends an
+# attempt and goes back in; nothing about the task is decided yet, so it is not blocked
+RTC="$(wf "$PROJ_M" pipeline retry-task T2 --reason "build returned escalate_no_artifacts" --format json)"
+[ "$(jget "$RTC" "d.get('ok') is True and d.get('event')=='task_retried'")" = "True" ] \
+    && ok "retry-task emits a success confirmation (L-059)" || bad "retry confirm" "$RTC"
+TSR="$(wf "$PROJ_M" pipeline task-state T2 --format json)"
+[ "$(jget "$TSR" "d['state']")" = "building" ] && ok "retry-task → building" || bad "retry state" "$TSR"
+[ "$(jget "$TSR" "d['attempt_counter']")" = "2" ] && ok "retry-task bumps attempt_counter" || bad "retry attempt" "$TSR"
+[ "$(jget "$(wf "$PROJ_M" pipeline blocked-tasks --format json)" "any(t['task_id']=='T2' for t in d['tasks'])")" = "False" ] \
+    && ok "retry-task does not block the task" || bad "retry blocked" ""
+
 # block-task → blocked
 BLC="$(wf "$PROJ_M" pipeline block-task T3 --reason "manual" --format json)"
 [ "$(jget "$BLC" "d.get('ok') is True and d.get('event')=='task_blocked' and d.get('status')=='blocked'")" = "True" ] \

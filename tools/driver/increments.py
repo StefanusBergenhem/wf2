@@ -282,6 +282,7 @@ def _run_task(rt, entry, number) -> None:
                       "--reason", "the build envelope could not be written")
         return
 
+    spent = "review rejected the build"
     for _ in range(rt.cfg.max_attempts):
         attempt = _attempt(rt, task_id)
         rt.cli.mutate("pipeline", "dispatch", "--agent", "wf-build",
@@ -307,17 +308,22 @@ def _run_task(rt, entry, number) -> None:
             # blocking the task would record a verdict about work that was never done —
             # and with a refused harness every task in the frontier blocks the same way
             dispatch.check_launch(launched)
-            rt.cli.mutate("pipeline", "block-task", task_id,
-                          "--reason", f"build returned {kind}")
-            return
+            # A dispatch that wrote nothing is an agent that mis-stepped (a backgrounded
+            # gate, a session that ended mid-turn), not a task that cannot be built. It
+            # spends an attempt and goes back in — blocking on the first one throws away
+            # the work in the worktree and dooms every dependent task with it.
+            spent = f"the build returned {kind}"
+            rt.cli.mutate("pipeline", "retry-task", task_id, "--reason", spent)
+            continue
         outcome = _review_chain(rt, worktree, task_id, verdict.get("build_commit_sha"),
                                 number)
         if outcome != "rejected":
             return
-    rt.report.line(f"task {task_id} blocked — review rejected every allowed attempt",
+        spent = "review rejected the build"
+    rt.report.line(f"task {task_id} blocked — {spent} at every allowed attempt",
                    symbol=progress.BAD, indent=2)
     rt.cli.mutate("pipeline", "block-task", task_id,
-                  "--reason", "review rejected the build at every allowed attempt")
+                  "--reason", f"{spent} at every allowed attempt")
 
 
 def _review_chain(rt, worktree, task_id, build_sha, number) -> str:
@@ -492,6 +498,7 @@ def boundary(rt, number) -> str:
     """The increment boundary: heavy checks, design-issue repair, and the stop
     signals a running sprint honours. Returns 'done' or 'rework'."""
     rt.report.phase(f"increment {number} boundary")
+    _blocked_gate(rt, number)
     command = rt.cfg.command("stage_check")
     if command:
         attempts = 0
@@ -541,6 +548,27 @@ def boundary(rt, number) -> str:
         rt.report.line(f"stop pending ({stop.reason}) — this sprint ships, then the "
                        f"loop exits: {stop.detail}", indent=1)
     return "done"
+
+
+def _blocked_gate(rt, number) -> None:
+    """Stop on a task that never landed. A blocked task cannot be reopened inside the
+    sprint, and ``propagate-blocks`` dooms everything depending on it — which is why the
+    sub-layers after one close empty in a second. Nothing further down the loop reads
+    that state, so without this the increment closes, the sprint ships, and the PR is
+    missing the work with nothing saying so. Ahead of the heavy checks: a stage gate over
+    a tree that is missing part of the increment proves nothing and costs an hour."""
+    tasks = [t for t in (rt.cli.read("pipeline", "blocked-tasks").data or {}).get("tasks")
+             or [] if isinstance(t, dict)]
+    if not tasks:
+        return
+    named = "; ".join(
+        f"{t.get('task_id')} ({t.get('reason') or 'blocked by ' + str(t.get('blocked_by'))})"
+        for t in tasks)
+    raise Halt("tasks_blocked",
+               f"increment {number} cannot close — {len(tasks)} task(s) never landed and "
+               f"every task depending on them was blocked with them: {named}. Their "
+               f"worktrees still hold whatever was built; clear the block in "
+               f"{rt.cfg.rel('pipeline_state')} once the cause is fixed")
 
 
 def _resolve_open_issues(rt) -> bool:

@@ -271,16 +271,36 @@ class IncrementTest(support.TempProject):
         host = self.cfg.path("design_issues").read_text()
         self.assertIn("DI-1", host)
 
-    def test_no_build_artifacts_blocks_the_task(self):
+    def test_no_build_artifacts_blocks_the_task_only_once_the_budget_is_spent(self):
         cli = self.happy_cli({
             ("orchestrate", "inspect-build-return"): {
                 "task_id": "T1", "verdict": "escalate_no_artifacts"},
             ("pipeline", "next"): [frontier(dispatch=["T1"]),
                                    frontier(stage_done=True, increment_done=True)],
         })
-        rt = self.rt(cli)
+        agents = fakes.FakeAgents(self.cfg)
+        rt = self.rt(cli, agents=agents)
         increments.run_increment(rt, 1)
+        self.assertEqual(agents.roles().count("wf-build"), self.cfg.max_attempts)
         self.assertIn("pipeline block-task", cli.verbs())
+
+    def test_a_build_that_returned_nothing_is_sent_back_in_before_it_blocks(self):
+        """The live dems failure: the build agent backgrounded its gate, ended its
+        headless session waiting to be woken, and exited 0 with nothing written — after
+        20 minutes of real work left uncommitted in the worktree. One no-artifact return
+        is an agent that mis-stepped, not a task that cannot be built, so it spends an
+        attempt and goes back in; blocking it on the first one doomed every dependent
+        task through `propagate-blocks`."""
+        cli = self.happy_cli({
+            ("orchestrate", "inspect-build-return"): [
+                {"task_id": "T1", "verdict": "escalate_no_artifacts"}, BUILD_OK],
+        })
+        agents = fakes.FakeAgents(self.cfg)
+        rt = self.rt(cli, agents=agents)
+        increments.run_increment(rt, 1)
+        self.assertEqual(agents.roles().count("wf-build"), 2)
+        self.assertIn("pipeline retry-task", cli.verbs())
+        self.assertNotIn("pipeline block-task", cli.verbs())
 
     # ── merges ───────────────────────────────────────────────────────────────
 
@@ -356,6 +376,33 @@ class IncrementTest(support.TempProject):
         self.assertEqual(
             increments.checkpoint(rt, 1),
             "after this increment, a patch round-trips — observed by the e2e suite")
+
+    def test_a_blocked_task_stops_the_increment_before_its_heavy_checks(self):
+        """A blocked task can never run again this sprint, and `propagate-blocks` dooms
+        every task depending on it — which is why the sub-layers after it close empty in
+        a second. Nothing else reads that state, so without this gate the increment
+        reports done and the sprint ships a PR with the work silently missing. It fires
+        ahead of the stage check: a heavy gate over a tree that is missing a third of the
+        increment proves nothing and costs an hour."""
+        ran = self.root / "stage-check-ran"
+        cfg = driver_config.load(str(support.write_config(
+            self.root, stage_check=f"touch {ran}")))
+        self.cfg = cfg
+        cli = self.happy_cli({
+            ("pipeline", "blocked-tasks"): {
+                "count": 2,
+                "tasks": [{"task_id": "T3",
+                           "reason": "build returned escalate_no_artifacts"},
+                          {"task_id": "T4", "blocked_by": "T3"}]},
+        })
+        rt = self.rt(cli)
+        with self.assertRaises(driver_runtime.Halt) as caught:
+            increments.run_increment(rt, 1)
+        self.assertEqual(caught.exception.reason, "tasks_blocked")
+        self.assertIn("T3", caught.exception.detail)
+        self.assertIn("escalate_no_artifacts", caught.exception.detail)
+        self.assertIn("T4", caught.exception.detail)
+        self.assertFalse(ran.exists())
 
     def test_a_green_stage_check_closes_the_increment(self):
         cfg = driver_config.load(str(support.write_config(

@@ -694,6 +694,31 @@ def _reject_task(rest):
     return 0
 
 
+def _retry_task(rest):
+    """Send a task back to build after a dispatch that left no artifact to route on.
+    The attempt is spent — an agent that mis-steps every attempt is not converging — but
+    nothing about the task is decided, so it returns to building rather than blocked.
+    Distinct from reject-task, which carries a review's findings for the build to fix."""
+    p = common.base_parser("pipeline retry-task")
+    p.add_argument("task_id")
+    p.add_argument("--reason", required=True)
+    args = p.parse_args(rest)
+
+    doc = _load_state(args)
+    ts = doc.setdefault("task_states", {}).setdefault(args.task_id, {})
+    ts["attempt_counter"] = int(ts.get("attempt_counter", 0)) + 1
+    ts["status"] = "building"
+    ts["pass_index"] = 0
+    doc.setdefault("history", []).append({
+        "ts": _now(), "event": "task_retried", "task_id": args.task_id,
+        "reason": args.reason, "next_attempt": ts["attempt_counter"],
+    })
+    _save_state(args, doc)
+    common.emit({"ok": True, "event": "task_retried", "task_id": args.task_id,
+                 "status": "building", "attempt": ts["attempt_counter"]}, args.format)
+    return 0
+
+
 def _block_task(rest):
     p = common.base_parser("pipeline block-task")
     p.add_argument("task_id")
@@ -1503,6 +1528,7 @@ COMMANDS = {
     ("pipeline", "complete-task"): _complete_task,
     ("pipeline", "approve-task"): _approve_task,
     ("pipeline", "reject-task"): _reject_task,
+    ("pipeline", "retry-task"): _retry_task,
     ("pipeline", "block-task"): _block_task,
     ("pipeline", "reclaim-stale"): _reclaim_stale,
     ("pipeline", "record-design-issue"): _record_design_issue,

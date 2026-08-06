@@ -535,3 +535,19 @@ live worktree.
 tree-walking derivation is added. The fix is the same three lines each time; the real
 candidate is whether tree-walking derivations should share one pruned walker instead of
 each re-deriving the skip set.
+
+## C40 — No `unblock-task` verb: recovering a blocked task is a hand-edit
+
+**Date:** 2026-08-06
+**Context:** dogfood run 2. A blocked task now halts the increment boundary
+(`tasks_blocked`) instead of letting the sprint ship a PR with the work silently missing.
+But there is no verb that reverses `block-task`: `propagate-blocks` writes `blocked_tasks`
+plus a `blocked` status into every dependent's `task_states`, and the operator's only way
+back is editing `.wf/transient/pipeline-state.yaml` by hand — which the runbook now tells
+them to do. `reclaim-stale` is the near neighbour (it resets orphaned in-flight slots to
+pending) but deliberately ignores terminal statuses.
+
+**Trigger to act:** the second time a run halts `tasks_blocked` and a human hand-edits the
+state file. Then `wf pipeline unblock-task <id> [--cascade]` — clear the entry, reset the
+status to pending, and drop the dependents `propagate-blocks` doomed — is ~20 lines and
+removes the only hand-edit the runbook asks for.

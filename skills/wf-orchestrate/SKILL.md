@@ -222,7 +222,7 @@ python3 <paths.tools>/cli/wf orchestrate inspect-build-return <worktree> <task-i
 |:--|:--|
 | `ready_for_review` | dispatch `review.passes[0]` (Review envelope); `wf pipeline dispatch --agent <pass> --task <id> --attempt <n> --pass 0`. |
 | `design_issue` | park, don't review — record it (Design issues, below); the verdict carries `di_id`. |
-| `escalate_no_artifacts` | escalate; `wf pipeline block-task <id> --reason <…>`. |
+| `escalate_no_artifacts` | the agent wrote nothing to route on — spend an attempt and re-dispatch it: `wf pipeline retry-task <id> --reason <…>`. Only once `review.max_attempts` is spent, `wf pipeline block-task <id> --reason <…>`. |
 
 Keep the verdict's `build_commit_sha` for this task — the review protocol below and
 `approve-task`/`complete-task` all take it. It is the build's committed tip, and this
