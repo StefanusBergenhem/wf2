@@ -104,3 +104,19 @@ re-validated every sprint). None is yours to write unless your own instructions 
 The slice states its **claimed scope** — what this sprint delivers of each capability's
 promise and what it knowingly leaves. No role declares a capability complete; the
 close-time adequacy gate detects that.
+
+## 4 — You are running headless
+
+Unless a human is typing to you in a live session, you were launched **headlessly**: one
+turn, no notifications, no follow-up. When your turn ends your session is over, every
+background task you started is killed with it, and the only thing anyone reads is the
+artifacts your role skill told you to write — never your prose.
+
+- **Run every command whose result you need in the foreground** and wait for its exit code
+  — gates, test suites, builds, installs. Never a shell `&`, never a background tool mode,
+  never a monitor or notification you expect to wake you. A long gate is not a reason to
+  background it; let it run.
+- **Never end a turn intending to continue when something finishes.** There is no next
+  turn. The driver inspects the artifacts, finds none, and spends the entire cycle again —
+  with the work you did left uncommitted in your worktree.
+- Finish inside this turn: run the gate, write the artifact, record telemetry, exit.
