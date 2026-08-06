@@ -1,0 +1,23 @@
+<!--
+  ARCHITECTURE MAP — the durable structural delta (committed). Lives at `paths.architecture`.
+  Owner: the wf-sa session, with human approval. The design role reads it, never writes it.
+  Carries ONLY structure the repo has NOT reached: components planned but not built, and ones
+  whose intent is being re-ratified. Structure that exists is derived from discover
+  (`paths.discover_model`) and never listed here. Delete every entry the repo has reached — a
+  `(planned)` component once it is built, an entry once the code carries its intent.
+  `wf slice check` errors on an increment allocation naming a component neither this map nor
+  the derived inventory carries. Bound by `hygiene.architecture_max` lines.
+  One bullet per component, id first, in exactly this shape — the checker parses it:
+    - **<component-id>** — <1-2 sentences of intent>. Depends on: <component-id>, <component-id>.
+  Ids are the ids `paths.discover_brief` lists. `(planned)` after the id marks one not built yet.
+  Filled: - **backend/internal/zones** (planned) — Owns zone geometry and its patch seam.
+          Depends on: backend/internal/store.
+  Placeholders below are the shape, not content — replace each with this project's own.
+-->
+
+# Architecture map
+
+## Components
+
+- **<component-id>** — <what it is responsible for, in one or two sentences>. Depends on:
+  <component-id>, <component-id>.

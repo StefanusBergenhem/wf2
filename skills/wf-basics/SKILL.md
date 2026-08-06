@@ -96,9 +96,10 @@ another sends the next role at the wrong altitude.
   parallel worktrees and merge together.
 - **Task** — one contract, one build agent, one review chain.
 
-Two artifacts carry direction across sprints: `paths.charter` (where the system is going)
-and `paths.plan` (the next few milestones, re-validated every sprint). Neither is yours to
-write unless your own instructions say so.
+Three artifacts carry direction across sprints: `paths.charter` (where the system is
+going), `paths.architecture` (the structure the repo has not reached yet — what exists is
+derived from discover, never listed there), and `paths.plan` (the next few milestones,
+re-validated every sprint). None is yours to write unless your own instructions say so.
 
 The slice states its **claimed scope** — what this sprint delivers of each capability's
 promise and what it knowingly leaves. No role declares a capability complete; the

@@ -1,6 +1,12 @@
 # wf2 loop redesign — continuous iterative delivery
 
 **Status:** accepted 2026-07-31 (Stefanus + Claude interview, 19 decisions).
+**Amended 2026-08-05 (D20):** the SA session keeps component-level architecture
+authority via a durable, human-ratified **architecture map** (`paths.architecture`);
+the designer is mechanically hard-bound to it (slice-check) and structure changes are
+escalation criterion 5. Rationale: the dems evidence convicted upfront *requirement
+wording*, not component/dependency thinking — full design autonomy was an
+over-correction that removed the human's structural control.
 **Supersedes:** the waterfall design→drain shape (design backlog, wf-orchestrate
 skill, wf-spec-fix, EARS/REQ layer, human-gated per-design SA sessions).
 **Governing ruling:** this is a considered end-state redesign, not incremental
@@ -71,6 +77,7 @@ stack is manual and exceptional. The driver never rewrites the stack.
 |---|---|---|---|
 | `paths.capabilities` | PO session | no | user-voice needs; open work-set; drains on adequacy proof |
 | `paths.charter` | SA session | **new** | direction: target shape (fat-marker), ranked forces, domain language, sequencing rationale, no-go zones |
+| `paths.architecture` | SA session | **new (D20)** | component-level structure DELTA (planned/changing only — existing derives from discover): per-component id, 1–2 sentence intent, depends-on, `(planned)` marker; designer hard-bound (slice-check A12: allocation must be in repo ∪ map); drains as built |
 | `paths.adrs` | SA session (designer drafts) | no | irreversible decisions; constraint lines |
 | `AGENTS.md` tree | retro proposals, human applies | no | local commands/gotchas/conventions |
 | `paths.plan` | **wf-designer** | **new** | rolling plan: next few milestones and why |
@@ -133,7 +140,9 @@ recommendation) and the driver pauses:
 2. a capability recast — resolving something would change *what the user
    needs*, not how it is met;
 3. supersession of a shipped SYS-TC scenario;
-4. charter contradiction — the right design would violate the charter.
+4. charter contradiction — the right design would violate the charter;
+5. an architecture change (D20) — the right design needs a component, a
+   split/merge, or a dependency edge the architecture map does not carry.
 
 Everything below the gate is decided autonomously and logged in the sprint's
 decision report (shipped in the PR body): component-level supersessions,
@@ -181,7 +190,9 @@ sprint (one loop iteration, one branch, one PR)
 
 An **increment** is a design milestone: goal, component allocation, end-to-end
 flow (wiring included), and an **observable checkpoint** ("after this, X
-demonstrably works"). The TL is dispatched once per increment when its turn
+demonstrably works"). Allocations are bound to the architecture map (D20): a
+component the map does not carry fails `slice check` (A12) — structure comes
+from the SA session, never from the designer. The TL is dispatched once per increment when its turn
 comes. **The sprint's contract file is cumulative:** each increment's TL
 *appends* its tasks (every task carries `increment:`) and never rewrites or
 removes earlier increments' entries — merged increments are facts; a slice
@@ -366,6 +377,7 @@ middleman.
 ```yaml
 paths:
   charter: ".wf/charter.md"          # designer reads; SA session writes
+  architecture: ".wf/architecture.md" # designer hard-bound; SA session writes (D20)
   plan:    ".wf/plan.md"             # designer writes; PR reviewers read
 driver:
   agent_cmd: "..."                   # driver: launch template

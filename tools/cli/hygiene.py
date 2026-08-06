@@ -53,7 +53,7 @@ _RATIO_MIN_LINES = 50
 # each is fixable inside the diff that introduced it. file-length is deliberately
 # absent (splitting is planning work); warn-severity rules never gate.
 _RATCHET_RULES = {"func-length", "comment-block", "spec-narrative", "agents-md-length",
-                  "charter-length", "plan-length"}
+                  "charter-length", "plan-length", "architecture-length"}
 
 
 def _cfg(config):
@@ -62,21 +62,22 @@ def _cfg(config):
         common.die("no hygiene block in config — add one (see the config template)")
     missing = [k for k in ("file_warn", "file_error", "func_error", "comment_block_max",
                            "comment_ratio_warn", "agents_md_max", "charter_max",
-                           "plan_max") if k not in h]
+                           "plan_max", "architecture_max") if k not in h]
     if missing:
         common.die(f"hygiene config missing: {', '.join(missing)}")
     return h
 
 
 def _doc_caps(config, cfg):
-    """{relpath: (rule, cap)} for the two governed planning docs. The charter is read
-    at every design session and the plan rides in every sprint PR, so both are bounded
-    by line count exactly as an AGENTS.md is — they are not project source, so nothing
-    else in this linter applies to them."""
+    """{relpath: (rule, cap)} for the governed planning docs. The charter and the
+    architecture map are read at every design session and the plan rides in every sprint
+    PR, so each is bounded by line count exactly as an AGENTS.md is — they are not project
+    source, so nothing else in this linter applies to them."""
     paths = common.config_doc(config).get("paths") or {}
     out = {}
     for key, rule, cap_key in (("charter", "charter-length", "charter_max"),
-                               ("plan", "plan-length", "plan_max")):
+                               ("plan", "plan-length", "plan_max"),
+                               ("architecture", "architecture-length", "architecture_max")):
         rel = paths.get(key)
         if rel:
             out[str(rel)] = (rule, int(cfg[cap_key]), key)

@@ -53,6 +53,16 @@ Most documents are transient handovers between roles. The durable set is small:
   cannot report. One file, authored only in an SA session (the designer reads it, never
   writes it), held under `hygiene.charter_max`, and drained element by element as the repo
   reaches what it describes.
+- **Architecture map** — the component-level structure the human ratifies in SA sessions:
+  each component/subsystem as one entry (id, a **1–2 sentence intent**, depends-on edges,
+  `(planned)` when not yet built). This is the deliberate middle line drawn from the dems
+  evidence: detailed requirement wording authored upfront was the defect source and left
+  the session, but component/dependency thinking was not — so structure authority stays
+  human. The map is a **delta**, never an inventory (the governor: existing structure
+  derives from discover). The designer is **hard-bound** to it mechanically (`wf slice
+  check` rejects an allocation naming a component in neither the repo nor the map);
+  needing new structure is an escalation, never an invention. Same drain and cap
+  discipline as the charter (`hygiene.architecture_max`).
 - **Rolling plan** — the one durable file the autonomous designer writes: the next few
   milestones and why they come next, at **milestone altitude only** — no requirements, no
   component detail — under `hygiene.plan_max`. It is re-validated at every sprint start

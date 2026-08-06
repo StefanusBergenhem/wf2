@@ -21,11 +21,16 @@
   the parser read. A10 speaks only for cases it recognised, so a slice whose case
   syntax drifted yields zero scenarios and would otherwise pass in silence. L-ids
   are exempt.
+- **A12** — every component an increment's ``- **Allocation:**`` line names is one the repo
+  already carries (discover's derived model at ``paths.discover_model``) or the architecture
+  map at ``paths.architecture`` names (the planned delta). A component in neither is an
+  architecture change, which is the SA session's call, not the design's.
 
 Exits non-zero on any error finding.
 """
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -45,6 +50,16 @@ _SERVES_RE = re.compile(r"^\s*\*\*Serves:\*\*\s*(.*)$", re.MULTILINE)
 _DRIVER_ID_RE = re.compile(r"\b(?:CAP|L)-\d+\b")
 _INCREMENT_HEAD_RE = re.compile(r"^###\s+Increment\s+(\d+)\b(.*)$", re.MULTILINE)
 _TC_HEAD_RE = re.compile(r"-\s+\*\*(SYS-TC-\d+):\*\*\s*(.*)")
+_COMPONENTS_HEADER = "Components"
+_ALLOCATION_RE = re.compile(r"^\s*-\s+\*\*Allocation:\*\*\s*(.*)$")
+_COMPONENT_RE = re.compile(r"^\s*-\s+\*\*([^*]+)\*\*")
+# An allocation entry reads "<component> — <what it must do>"; take the em dash, the en
+# dash and a spaced hyphen for that separator, so a keyboard substitution still parses.
+_ENTRY_SPLIT_RE = re.compile(r"\s+[—–-]\s+")
+# A `(planned)` state marker, or the guidance parenthetical an author wraps onto the
+# allocation line — neither is part of the component id.
+_TRAILING_PAREN_RE = re.compile(r"\s*\([^()]*\)\s*$")
+_PLACEHOLDER_RE = re.compile(r"^<.*>$")
 
 
 def section(text, header):
@@ -101,6 +116,124 @@ def increment_section(text, number):
         nxt = _INCREMENT_HEAD_RE.search(rest, m.end() - m.start())
         return (rest[: nxt.start()] if nxt else rest).strip("\n")
     return ""
+
+
+def unwrap_bullets(text):
+    """Logical lines: each bullet (and each `**Covers:**` line) joined with the wrapped
+    continuation lines beneath it. Every bullet pattern reads to end-of-line, so an
+    author's line break would cut the text there and drop whatever followed — silently,
+    since a continuation line matches no pattern of its own."""
+    out = []
+    for raw in text.splitlines():
+        stripped = raw.strip()
+        if not stripped:
+            out.append("")
+            continue
+        opens = stripped.startswith("- ") or "**Covers:**" in stripped
+        if opens or not out or not out[-1].strip():
+            out.append(raw)
+        else:
+            out[-1] = f"{out[-1].rstrip()} {stripped}"
+    return out
+
+
+def _component_id(raw):
+    """One component id as written: emphasis, backticks and a trailing path separator
+    stripped, a trailing marker or parenthetical dropped. '' for a template placeholder —
+    an unauthored map names no component."""
+    cid = _TRAILING_PAREN_RE.sub("", raw.strip().strip("`*").strip()).strip().strip("/")
+    return "" if _PLACEHOLDER_RE.match(cid) else cid
+
+
+def architecture_components(text):
+    """The component ids the architecture map's `## Components` section carries — one per
+    `- **<id>**` bullet, `(planned)` entries included. Deduped, in file order."""
+    out = []
+    for line in section(text, _COMPONENTS_HEADER).splitlines():
+        m = _COMPONENT_RE.match(line)
+        cid = _component_id(m.group(1)) if m else ""
+        if cid and cid not in out:
+            out.append(cid)
+    return out
+
+
+def allocated_components(text):
+    """[(increment number, component id)] over every increment's `- **Allocation:**`
+    line: entries are `;`-separated and the id is what precedes the first dash."""
+    out = []
+    for n, _ in increments(text):
+        for line in unwrap_bullets(increment_section(text, n)):
+            m = _ALLOCATION_RE.match(line)
+            if not m:
+                continue
+            for entry in m.group(1).split(";"):
+                cid = _component_id(_ENTRY_SPLIT_RE.split(entry.strip(), 1)[0])
+                if cid and (n, cid) not in out:
+                    out.append((n, cid))
+    return out
+
+
+def _config_file(config, key):
+    """The file `paths.<key>` names — None when the key is unset or nothing is there."""
+    rel = (common.config_doc(config).get("paths") or {}).get(key)
+    path = (common.project_root(config) / rel) if rel else None
+    return path if path and path.is_file() else None
+
+
+def architecture_text(config):
+    """The architecture map's contents — '' when `paths.architecture` is unset or the file
+    is absent. The map holds only the planned delta, so an empty one is a legitimate state."""
+    path = _config_file(config, "architecture")
+    return path.read_text() if path else ""
+
+
+def repo_components(config):
+    """(ids, present) from discover's model at `paths.discover_model` — the derived half of
+    A12's inventory, re-read from the toolchain every sprint instead of stored. Both the
+    `id` the brief prints and the repo-relative `path` count: an allocation may name
+    either. `present` is False for an absent, unreadable or empty model."""
+    path = _config_file(config, "discover_model")
+    try:
+        model = json.loads(path.read_text()) if path else None
+    except (ValueError, OSError):
+        model = None
+    nodes = (model or {}).get("nodes")
+    if not isinstance(nodes, dict) or not nodes:
+        return set(), False
+    ids = set()
+    for node in nodes.values():
+        for key in ("id", "path"):
+            value = (node or {}).get(key)
+            if isinstance(value, str) and value.strip():
+                ids.add(value.strip().strip("/"))
+    return ids, True
+
+
+def architecture_findings(text, arch_text, repo_ids, model_present):
+    """The A12 findings: an increment allocating a component neither the repo nor the
+    architecture map carries. A slice with no allocation is silent — there is nothing to
+    bind. Nothing unresolved ever passes for want of the derived inventory: with the model
+    missing, an unresolved component names the run that would settle it."""
+    allocated = allocated_components(text)
+    if not allocated:
+        return []
+    carried = set(architecture_components(arch_text))
+    unresolved = [(n, cid) for n, cid in allocated
+                  if cid not in carried and cid not in repo_ids]
+    if not unresolved:
+        return []
+    if not model_present:
+        named = ", ".join(sorted({cid for _, cid in unresolved}))
+        return [f"slice: the increments allocate components the architecture map "
+                f"(paths.architecture) does not name ({named}) and the derived component "
+                f"inventory (paths.discover_model) is absent, so whether they exist cannot "
+                f"be told — run wf-discover, then re-check"]
+    return [f"slice: increment {n} allocates '{cid}', which neither the repo (per "
+            f"paths.discover_model) nor the architecture map (paths.architecture) carries "
+            f"— allocate only components one of them names; a new component, a split or "
+            f"merge, or a new dependency edge is an architecture change and routes through "
+            f"an SA session (escalation criterion 5)"
+            for n, cid in unresolved]
 
 
 def missing_narrative(text):
@@ -281,6 +414,10 @@ def _check(rest):
                for m in increment_findings(text, limit(args.config, "increments_per_sprint"))]
     errors += [{"code": "A10", "msg": m} for m in testcase_covers_findings(text)]
     errors += [{"code": "A11", "msg": m} for m in serves_coverage_findings(text)]
+    repo_ids, model_present = repo_components(args.config)
+    errors += [{"code": "A12", "msg": m}
+               for m in architecture_findings(text, architecture_text(args.config),
+                                              repo_ids, model_present)]
     index = adr_index(common.project_root(args.config))
     adr_errors, citations = adr_citations(text, index)
     errors += adr_errors

@@ -269,24 +269,10 @@ def _truncated(desc):
     return bool(words) and words[-1].lower() in _DANGLING_TAIL
 
 
-def _unwrap_bullets(text):
-    """Logical lines: each bullet (and each `**Covers:**` line) joined with the
-    wrapped continuation lines beneath it. The case-title and Given/When/Then
-    patterns both match to end-of-line, so an author's line break would cut the
-    text there and the build would stamp the fragment onto the [SYS-TC:] tag —
-    silently, whenever the cut lands on a word `_truncated` does not flag."""
-    out = []
-    for raw in text.splitlines():
-        stripped = raw.strip()
-        if not stripped:
-            out.append("")
-            continue
-        opens = stripped.startswith("- ") or "**Covers:**" in stripped
-        if opens or not out or not out[-1].strip():
-            out.append(raw)
-        else:
-            out[-1] = f"{out[-1].rstrip()} {stripped}"
-    return out
+# Wrapped case titles and Given/When/Then lines must be joined before they are read: a
+# line break would otherwise stamp the fragment onto the [SYS-TC:] tag, silently whenever
+# the cut lands on a word `_truncated` does not flag.
+_unwrap_bullets = slice_checks.unwrap_bullets
 
 
 def _slice_system_testcases(text):

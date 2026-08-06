@@ -15,6 +15,8 @@ section below. No mode named → run **originate**.
 Resolve every path and limit from `.wf/config.yaml`:
 
 - `paths.charter` — direction. **Read-only for you in every mode.**
+- `paths.architecture` — the planned structure the repo has not reached yet. **Read-only
+  for you in every mode.**
 - `paths.plan` — the rolling plan. The one durable file you write.
 - `paths.capabilities`, `paths.learnings` — the open work-set.
 - `paths.adrs`, `paths.discover_brief`, `paths.drill_cache`, `paths.tests`
@@ -24,9 +26,19 @@ Resolve every path and limit from `.wf/config.yaml`:
 - `limits.increments_per_sprint`, `hygiene.plan_max`, `id_counters.sys_tc`
 - `paths.tools`, `paths.telemetry` — the telemetry recorder and its sink.
 
+## Scouting & the drill-cache
+
+When you need **depth** the brief does not carry (how a seam works, what a change
+would break), do not read source yourself, reading source code will eat up your context window and split your focus. First check `paths.drill_cache` for an existing
+digest that answers your question — the cache is shared across planning roles, so a
+question scouted once is reused. If none answers it, dispatch the **`wf-drill`** agent
+with your one question and the target component or path; it scouts read-only and
+appends its digest to `paths.drill_cache`. The cache is transient and machine-owned — if a
+digest looks stale against the current tree, re-drill rather than trust it.
+
 ## The escalation gate — all modes
 
-Four decisions are the human's. When one arises, **stop designing at that point**, write
+Five decisions are the human's. When one arises, **stop designing at that point**, write
 `paths.decision_prep` (below), and report with outcome `escalated`. Leave everything else
 you have written on disk — `resume` continues from where you stopped.
 
@@ -37,6 +49,9 @@ you have written on disk — `resume` continues from where you stopped.
 3. **Shipped-scenario supersession** — the design invalidates a `SYS-TC-<n>` scenario that
    is already shipped (it appears in the system-test register).
 4. **Charter contradiction** — the design you judge right would violate `paths.charter`.
+5. **Architecture change** — the design you judge right needs a component that neither the
+   repo nor `paths.architecture` carries, or a split, a merge, or a dependency edge that
+   changes the shape of what exists.
 
 Everything below the gate you decide yourself and record in the slice's **Decision log**:
 component-level supersessions (shipped behaviour with no SYS-TC id), NFR and authz
@@ -53,7 +68,7 @@ resume_at: <the phase or step you stopped at>
 di_id: <the design-issue id — repair mode only, else omit>
 
 ## D-1 — <what is being decided>
-**Criterion:** adr-threshold | capability-recast | shipped-scenario-supersession | charter-contradiction
+**Criterion:** adr-threshold | capability-recast | shipped-scenario-supersession | charter-contradiction | architecture-change
 **Background:** <2–4 paragraphs — the forces, what it costs to get wrong, why the obvious
 answer is not simply right. Cite `file:line` and the drill digests you grounded in.>
 **Options:** <one paragraph each — what it does to the architecture, what it buys, what it
@@ -68,8 +83,9 @@ costs, what it forecloses. Every option gets its honest best case.>
 
 ### Phase 1 — Ground
 
-1. Read `paths.charter`, `paths.plan`, `paths.capabilities`, `paths.learnings`, and
-   `paths.discover_brief`. **HALT if the brief is absent** unless the repo is greenfield.
+1. Read `paths.charter`, `paths.architecture`, `paths.plan`, `paths.capabilities`,
+   `paths.learnings`, and `paths.discover_brief`. **HALT if the brief is absent** unless
+   the repo is greenfield.
 2. **Skip every capability its entry marks parked** — it is waiting on a PO session to
    re-word a promise nobody could prove, and designing against it burns the sprint.
 3. **Derive the system-test register** — the end-to-end behaviour already provably shipped:
@@ -93,8 +109,7 @@ costs, what it forecloses. Every option gets its honest best case.>
    Phase 2.** Check `paths.drill_cache` first; if no digest answers your question, dispatch
    the **`wf-drill`** agent with one question and one target component or path. Skipping
    this designs from the brief's one-liners, and the increments allocate work to components
-   whose real seams you never read. Genuinely greenfield scope is exempt — say which items
-   you exempted and why.
+   whose real seams you never read. Genuinely greenfield scope is exempt.
 
 ### Phase 2 — Revise the plan (mandatory)
 
@@ -131,6 +146,10 @@ Write `paths.design_slice` from `assets/slice.md.tmpl`. Section by section:
   components change and what each must do), the end-to-end flow through them with wiring,
   and an **observable checkpoint** ("after this, X demonstrably works"). Count within
   `limits.increments_per_sprint`.
+  - **Allocate only components the repo already carries or `paths.architecture` names** —
+    write each one by the id `paths.discover_brief` gives it. Needing one in neither is
+    escalation criterion 5, never an invention: `wf slice check` (A12) rejects a slice that
+    allocates a component neither source carries.
   - **Pilot then fleet.** When an increment's allocation holds N structurally identical
     items (the same change to many handlers, migrations, adapters), cut a **pilot**
     increment that takes one item end-to-end first, then a fleet increment for the rest.
@@ -243,8 +262,10 @@ Classify by the first rung that holds, and fix at that layer only:
 - **Slice defect** — the increment cannot be specified within the slice's allocation. →
   **Re-cut the remainder only.** Increments whose tasks have merged are facts: never reopen
   them, never renumber them. Re-cut the undispatched increments so every blocker is
-  answered, re-run Phase 4's soundness walk and Phase 5's adequacy gate over the changed
-  part, and re-run `wf slice check`. `fix_kind: slice_recut`.
+  answered, allocating only components the repo or `paths.architecture` carries — a re-cut
+  that needs one in neither is escalation criterion 5. Then re-run Phase 4's soundness walk and
+  Phase 5's adequacy gate over the changed part, and re-run `wf slice check`.
+  `fix_kind: slice_recut`.
 - **Anything that trips the escalation gate** → write `paths.decision_prep` (with
   `di_id:` and `resume_at:`), leave the entry `status: open`, and report `escalated`.
 

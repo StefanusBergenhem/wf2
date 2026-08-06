@@ -24,6 +24,7 @@ version: 1
 paths:
   charter: ".wf/charter.md"
   plan: ".wf/plan.md"
+  architecture: ".wf/architecture.md"
 hygiene:
   file_warn: 20
   file_error: 40
@@ -33,6 +34,7 @@ hygiene:
   agents_md_max: 10
   charter_max: 8
   plan_max: 5
+  architecture_max: 6
 YAML
 git -C "$PROJ" init -q; git -C "$PROJ" config user.email t@t; git -C "$PROJ" config user.name t
 
@@ -257,14 +259,17 @@ OUT="$( cd "$OTHER" && "$PYTHON" "$WF" hygiene check --diff-base HEAD --format j
 # the governed planning docs: paths.charter and paths.plan carry their own line caps
 # ---------------------------------------------------------------------------
 
-CHART="$PROJ/.wf/charter.md"; PLAN="$PROJ/.wf/plan.md"
+CHART="$PROJ/.wf/charter.md"; PLAN="$PROJ/.wf/plan.md"; ARCH="$PROJ/.wf/architecture.md"
 for i in $(seq 1 4); do echo "- direction $i"; done > "$CHART"      # under charter_max(8)
 for i in $(seq 1 3); do echo "- milestone $i"; done > "$PLAN"       # under plan_max(5)
+for i in $(seq 1 4); do echo "- **pkg/c$i** — does a thing."; done > "$ARCH"  # under architecture_max(6)
 git -C "$PROJ" add -A -f; git -C "$PROJ" commit -qm docs
 
 OUT="$(wf hygiene check --format json)"
 [ "$(jget "$OUT" "any(f['file']=='.wf/charter.md' for f in d['findings'])")" = "False" ] \
   && ok "docs: a charter under the cap is clean" || bad "charter clean" "$OUT"
+[ "$(jget "$OUT" "any(f['file']=='.wf/architecture.md' for f in d['findings'])")" = "False" ] \
+  && ok "docs: an architecture map under the cap is clean" || bad "architecture clean" "$OUT"
 
 for i in $(seq 1 12); do echo "- direction $i"; done > "$CHART"      # over charter_max(8)
 OUT="$(wf hygiene check --format json)"
@@ -278,6 +283,13 @@ OUT="$(wf hygiene check --format json)"
 [ "$(has "$OUT" plan-length .wf/plan.md)" = "True" ] \
   && ok "docs: a plan over hygiene.plan_max is flagged" || bad "plan cap" "$OUT"
 
+for i in $(seq 1 11); do echo "- **pkg/c$i** — does a thing."; done > "$ARCH"  # over architecture_max(6)
+OUT="$(wf hygiene check --format json)"
+[ "$(has "$OUT" architecture-length .wf/architecture.md)" = "True" ] \
+  && ok "docs: an architecture map over hygiene.architecture_max is flagged" || bad "architecture cap" "$OUT"
+[ "$(jget "$OUT" "any('architecture_max' in f['msg'] for f in d['findings'] if f['rule']=='architecture-length')")" = "True" ] \
+  && ok "docs: the architecture finding names the knob" || bad "architecture msg" "$OUT"
+
 # the length rule is the ONLY rule these files get — a long bullet run is not a
 # comment block, and a CAP id in the prose is not spec-narrative
 cat > "$CHART" <<'MD'
@@ -288,7 +300,8 @@ OUT="$(wf hygiene check --format json)"
 [ "$(jget "$OUT" "any(f['file']=='.wf/charter.md' for f in d['findings'])")" = "False" ] \
   && ok "docs: no source rule is applied to a planning doc" || bad "charter rules" "$OUT"
 
-# ratchet: growing the charter past its cap fails the gate
+# ratchet: growing a governed doc past its cap fails the gate
+for i in $(seq 1 4); do echo "- **pkg/c$i** — does a thing."; done > "$ARCH"
 git -C "$PROJ" add -A -f; git -C "$PROJ" commit -qm docs2
 for i in $(seq 1 12); do echo "- direction $i"; done > "$CHART"
 OUT="$(wf hygiene check --diff-base HEAD --format json)" && bad "ratchet: over-cap charter should exit 1" "$OUT" \
@@ -296,6 +309,13 @@ OUT="$(wf hygiene check --diff-base HEAD --format json)" && bad "ratchet: over-c
 [ "$(jget "$OUT" "d['regressions'][0]['rule']")" = "charter-length" ] \
   && ok "ratchet: the regression names charter-length" || bad "ratchet charter rule" "$OUT"
 git -C "$PROJ" checkout -q .wf/charter.md
+
+for i in $(seq 1 11); do echo "- **pkg/c$i** — does a thing."; done > "$ARCH"
+OUT="$(wf hygiene check --diff-base HEAD --format json)" && bad "ratchet: over-cap architecture map should exit 1" "$OUT" \
+  || ok "ratchet: an architecture map grown past its cap exits 1"
+[ "$(jget "$OUT" "d['regressions'][0]['rule']")" = "architecture-length" ] \
+  && ok "ratchet: the regression names architecture-length" || bad "ratchet architecture rule" "$OUT"
+git -C "$PROJ" checkout -q .wf/architecture.md
 
 # an unset paths.charter simply governs nothing — the caps are not hard-coded paths
 cat > "$PROJ/.wf/config-nodocs.yaml" <<'YAML'
@@ -310,11 +330,14 @@ hygiene:
   agents_md_max: 10
   charter_max: 8
   plan_max: 5
+  architecture_max: 6
 YAML
 for i in $(seq 1 12); do echo "- direction $i"; done > "$CHART"
 OUT="$( cd "$PROJ" && "$PYTHON" "$WF" hygiene check --format json --config "$PROJ/.wf/config-nodocs.yaml" )"
 [ "$(jget "$OUT" "any(f['rule']=='charter-length' for f in d['findings'])")" = "False" ] \
   && ok "docs: with paths.charter unset, nothing is governed" || bad "charter unset" "$OUT"
+[ "$(jget "$OUT" "any(f['rule']=='architecture-length' for f in d['findings'])")" = "False" ] \
+  && ok "docs: with paths.architecture unset, nothing is governed" || bad "architecture unset" "$OUT"
 git -C "$PROJ" checkout -q .wf/charter.md
 
 # a hygiene block missing the new caps is a mechanical failure, not a silent default
@@ -333,6 +356,25 @@ if ( cd "$PROJ" && "$PYTHON" "$WF" hygiene check --config "$PROJ/.wf/config-oldc
   bad "hygiene: a config without charter_max/plan_max should fail" "exited 0"
 else
   ok "hygiene: charter_max/plan_max are required config, not defaults"
+fi
+
+cat > "$PROJ/.wf/config-noarch.yaml" <<'YAML'
+version: 1
+paths: {}
+hygiene:
+  file_warn: 20
+  file_error: 40
+  func_error: 10
+  comment_block_max: 4
+  comment_ratio_warn: 0.4
+  agents_md_max: 10
+  charter_max: 8
+  plan_max: 5
+YAML
+if ( cd "$PROJ" && "$PYTHON" "$WF" hygiene check --config "$PROJ/.wf/config-noarch.yaml" >/dev/null 2>&1 ); then
+  bad "hygiene: a config without architecture_max should fail" "exited 0"
+else
+  ok "hygiene: architecture_max is required config, not a default"
 fi
 
 echo

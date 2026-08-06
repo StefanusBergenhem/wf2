@@ -24,11 +24,15 @@ cat > "$PROJ/.wf/config.yaml" <<'YAML'
 version: 1
 paths:
   design_slice: ".wf/design-slice.md"
+  architecture: ".wf/architecture.md"
+  discover_model: ".wf/transient/discover/model.json"
 limits:
   increments_per_sprint: 4
   tasks_per_increment: 10
 YAML
 SLICE="$PROJ/.wf/design-slice.md"
+ARCH="$PROJ/.wf/architecture.md"
+MODEL="$PROJ/.wf/transient/discover/model.json"
 wf() { "$PYTHON" "$WF" "$@" --config "$PROJ/.wf/config.yaml"; }
 
 # The canonical shape every passing slice carries: a Serves header, a narrative, the
@@ -331,6 +335,133 @@ PY
 OUT="$(wf slice check --format json)"
 [ "$(jget "$OUT" "[f['msg'].split()[1] for f in d['errors'] if f['code']=='A11']")" = "['CAP-25']" ] \
   && ok "A11 names only the uncovered CAP" || bad "A11-partial" "$OUT"
+
+# ---------------------------------------------------------------------------
+# A12 — every allocated component is one the repo already carries (discover's derived
+# model) or the architecture map names (the planned delta)
+# ---------------------------------------------------------------------------
+
+# The derived half: a minimal model.json in the real shape spine.py `merge` writes — nodes
+# keyed by `<lang>:<id>`, each carrying the brief's `id` and the repo-relative `path`.
+write_model() { mkdir -p "$(dirname "$MODEL")"; "$PYTHON" - "$MODEL" <<'PY'
+import json, sys
+def node(cid, path, loc):
+    return {"uid": f"go:{cid}", "id": cid, "name": cid.rsplit("/", 1)[-1], "path": path,
+            "loc": loc, "kind": "package", "lang": "go", "module": "example.com/demo",
+            "synopsis": "", "has_doc": False, "has_tests": True, "types": [],
+            "functions": [], "deps": []}
+nodes = {n["uid"]: n for n in (node("internal/zones", "backend/internal/zones", 220),
+                               node("internal/store", "backend/internal/store", 140))}
+json.dump({"languages": ["go"], "nodes": nodes, "order": sorted(nodes),
+           "title": "demo (go)",
+           "meta": {"generated_at": "2026-01-01T00:00:00Z", "source_sha": "abc1234"}},
+          open(sys.argv[1], "w"), indent=2)
+PY
+}
+
+# The durable half: the DELTA only — structure the repo has not reached.
+write_arch() { cat > "$ARCH" <<'MD'
+# Architecture map
+
+## Components
+
+- **internal/httpapi** (planned) — Will mount the zone routes. Depends on: internal/zones.
+MD
+}
+
+# Replace the canonical slice's prose increments with the template's
+# `- **Allocation:**` bullet, one per increment ($1, $2 — either may embed a newline).
+alloc_slice() { write_slice; "$PYTHON" - "$SLICE" "$1" "$2" <<'PY'
+import sys
+p, a1, a2 = sys.argv[1], sys.argv[2], sys.argv[3]
+t = open(p).read()
+t = t.replace("Goal: the store can patch one zone. Allocation: store + service.",
+              "- **Allocation:** " + a1)
+t = t.replace("Goal: the patch is reachable over HTTP. Allocation: handler + router.",
+              "- **Allocation:** " + a2)
+open(p, 'w').write(t)
+PY
+}
+
+# an existing component with an EMPTY map passes: existing structure is derived, never
+# listed — and a `(planned)` map entry the repo has not built passes too
+write_model
+printf '# Architecture map\n\n## Components\n\n- **<component-id>** — <what it does>.\n' > "$ARCH"
+alloc_slice "internal/zones — patch one zone; internal/store — persist it" \
+            "internal/zones — serve it"
+OUT="$(wf slice check --format json)"; RC=$?
+[ "$RC" -eq 0 ] && [ "$(has "$OUT" A12)" = "False" ] \
+  && ok "A12 accepts a repo component against an empty map (structure is derived)" \
+  || bad "A12 derived" "rc=$RC $OUT"
+
+write_arch
+alloc_slice "internal/zones — patch one zone" \
+            $'internal/httpapi — mount PATCH /zones/{id};\n  internal/store — persist it'
+OUT="$(wf slice check --format json)"; RC=$?
+[ "$RC" -eq 0 ] && [ "$(has "$OUT" A12)" = "False" ] \
+  && ok "A12 accepts a (planned) map entry the repo has not built, and a wrapped allocation" \
+  || bad "A12 planned" "rc=$RC $OUT"
+
+# the repo-relative path is the same component under another name — the brief prints the
+# id, grounding pointers print the path
+alloc_slice "backend/internal/zones — patch one zone" "backend/internal/store — persist it"
+OUT="$(wf slice check --format json)"; RC=$?
+[ "$RC" -eq 0 ] && [ "$(has "$OUT" A12)" = "False" ] \
+  && ok "A12 accepts a component named by its repo-relative path" || bad "A12 path form" "rc=$RC $OUT"
+
+# in NEITHER source → error naming it, routed to an SA session
+write_arch
+alloc_slice "internal/zones — patch one zone" "internal/router — route it"
+OUT="$(wf slice check --format json)"; RC=$?
+[ "$RC" -eq 1 ] && ok "a component in neither source exits 1" || bad "A12 exit" "rc=$RC $OUT"
+[ "$(has "$OUT" A12)" = "True" ] && ok "A12 flags a component neither source carries" || bad "A12" "$OUT"
+[ "$(jget "$OUT" "any('internal/router' in f['msg'] for f in d['errors'] if f['code']=='A12')")" = "True" ] \
+  && ok "A12 names the unknown component" || bad "A12 name" "$OUT"
+[ "$(jget "$OUT" "any('SA session' in f['msg'] for f in d['errors'] if f['code']=='A12')")" = "True" ] \
+  && ok "A12 routes the structure change through an SA session" || bad "A12 route" "$OUT"
+
+# the entry after a wrapped line break is read too — an author's line break must not
+# silently drop half the allocation
+write_arch
+alloc_slice "internal/zones — patch one zone" \
+            $'internal/store — persist it;\n  internal/router — route it'
+OUT="$(wf slice check --format json)"
+[ "$(jget "$OUT" "[f['msg'].split(\"'\")[1] for f in d['errors'] if f['code']=='A12']")" = "['internal/router']" ] \
+  && ok "A12 reads the allocation entry beneath a wrapped line" || bad "A12 wrap" "$OUT"
+
+# no derived inventory + something neither source resolves → never pass open: say so and
+# name the run that fixes it
+rm -f "$MODEL"
+alloc_slice "internal/zones — patch one zone" "internal/router — route it"
+OUT="$(wf slice check --format json)"; RC=$?
+[ "$RC" -eq 1 ] && ok "an absent discover model exits 1 when a component is unresolved" \
+  || bad "A12-nomodel exit" "rc=$RC $OUT"
+[ "$(jget "$OUT" "len([f for f in d['errors'] if f['code']=='A12'])")" = "1" ] \
+  && ok "an absent discover model yields one A12 error, not one per component" || bad "A12-nomodel count" "$OUT"
+[ "$(jget "$OUT" "any('wf-discover' in f['msg'] for f in d['errors'] if f['code']=='A12')")" = "True" ] \
+  && ok "the absent-inventory error names wf-discover" || bad "A12-nomodel msg" "$OUT"
+
+# an unreadable model is an absent one
+printf 'not json at all' > "$MODEL"
+OUT="$(wf slice check --format json)"
+[ "$(jget "$OUT" "any('wf-discover' in f['msg'] for f in d['errors'] if f['code']=='A12')")" = "True" ] \
+  && ok "an unreadable discover model is treated as absent" || bad "A12-badmodel" "$OUT"
+
+# greenfield: no derived inventory yet, and the map carries every allocation → green.
+# Nothing is unresolved, so there is nothing for discover to adjudicate.
+rm -f "$MODEL"
+write_arch
+alloc_slice "internal/httpapi — mount PATCH /zones/{id}" "internal/httpapi — serve it"
+OUT="$(wf slice check --format json)"; RC=$?
+[ "$RC" -eq 0 ] && [ "$(has "$OUT" A12)" = "False" ] \
+  && ok "A12 passes greenfield: no model, every allocation named by the map" || bad "A12 greenfield" "rc=$RC $OUT"
+
+# a slice that declares no allocation yet is silent — nothing to bind
+write_slice
+OUT="$(wf slice check --format json)"; RC=$?
+[ "$RC" -eq 0 ] && [ "$(has "$OUT" A12)" = "False" ] \
+  && ok "A12 is silent on a slice with no allocation" || bad "A12 silent" "rc=$RC $OUT"
+write_model; write_arch
 
 # ---------------------------------------------------------------------------
 # --slice override wins over config
