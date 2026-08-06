@@ -320,6 +320,11 @@ def _preserve_uncommitted(rest):
 
     tracked_files: list[str] = []
     new_untracked_files: list[str] = []
+    # Deletions git has ALREADY staged ("D " — gone from the worktree and from the index
+    # alike). They belong in the commit, but `git add <that path>` matches nothing in
+    # either place and exits 128, which aborted the whole preserve and lost every other
+    # file with it. They need no staging: the index already carries them.
+    staged_deletions: list[str] = []
 
     for line in status_output.splitlines():
         if not line:
@@ -342,10 +347,12 @@ def _preserve_uncommitted(rest):
             # v1 without --ignored). All of it is preserved — the expected write
             # set is a planning signal, never a filter on what survives a halt.
             new_untracked_files.append(path_field)
+        elif x == "D":
+            staged_deletions.append(path_field)
         elif x in "MADRC" or y in "MADRC":
             tracked_files.append(path_field)
 
-    total = len(tracked_files) + len(new_untracked_files)
+    total = len(tracked_files) + len(new_untracked_files) + len(staged_deletions)
     if total == 0:
         print("clean")
         return 0
@@ -360,6 +367,10 @@ def _preserve_uncommitted(rest):
     if new_untracked_files:
         body_lines += f"New (untracked): {len(new_untracked_files)} file(s)\n"
         for f in new_untracked_files:
+            body_lines += f"  • {f}\n"
+    if staged_deletions:
+        body_lines += f"Deleted (already staged): {len(staged_deletions)} file(s)\n"
+        for f in staged_deletions:
             body_lines += f"  • {f}\n"
 
     commit_message = (
@@ -378,12 +389,13 @@ def _preserve_uncommitted(rest):
     # preserve down with it. `-f` overrides the ignore guard for THIS explicit list
     # only — it is not `git add -A` and does not bypass hooks.
     try:
-        add = subprocess.run(
-            ["git", "-C", str(worktree_path), "add", "-f", "--", *files_to_stage],
-            capture_output=True, text=True, timeout=GIT_TIMEOUT_S,
-        )
-        if add.returncode != 0:
-            return _err("error: git add failed", 1)
+        if files_to_stage:
+            add = subprocess.run(
+                ["git", "-C", str(worktree_path), "add", "-f", "--", *files_to_stage],
+                capture_output=True, text=True, timeout=GIT_TIMEOUT_S,
+            )
+            if add.returncode != 0:
+                return _err("error: git add failed", 1)
         # A commit runs the project's hooks, which can be slow — it gets its own,
         # wider bound rather than the plumbing one.
         commit = subprocess.run(

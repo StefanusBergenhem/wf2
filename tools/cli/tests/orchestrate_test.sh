@@ -147,6 +147,34 @@ wf orchestrate preserve-uncommitted "$R" T1 >/dev/null
 git -C "$R" -c core.hooksPath=/dev/null log --name-only -1 --pretty=format: | grep -q "junk.log" \
     && bad "pres ignored" "ignored file committed" || ok "preserve: gitignored file stays out"
 
+# a task that DELETED a file: the live dems failure. `git status` reports a staged
+# deletion as "D " — already staged, and gone from both the worktree and the index, so
+# `git add <that path>` cannot match it and exits 128. That took the whole preserve down
+# with it and NOTHING was preserved, for any file in the task.
+RD="$(mkrepo)"
+echo old > "$RD/doomed.txt"; echo keep > "$RD/kept.txt"
+git -C "$RD" add doomed.txt kept.txt; git -C "$RD" -c core.hooksPath=/dev/null commit -q -m base
+git -C "$RD" rm -q doomed.txt                       # staged deletion  → "D "
+echo more >> "$RD/kept.txt"                         # unstaged modify  → " M"
+echo new > "$RD/added.txt"                          # untracked        → "??"
+OUTD="$(wf orchestrate preserve-uncommitted "$RD" T1)"
+[ "${OUTD%% *}" = "committed" ] && ok "preserve: a staged deletion does not abort the preserve" || bad "pres deleted" "$OUTD"
+[ -z "$(git -C "$RD" status --porcelain=v1)" ] \
+    && ok "preserve: deletion + modify + untracked all land in the commit" \
+    || bad "pres deleted leftovers" "$(git -C "$RD" status --porcelain=v1)"
+git -C "$RD" -c core.hooksPath=/dev/null log --name-only -1 --pretty=format: | grep -q "doomed.txt" \
+    && ok "preserve: the deletion itself is recorded" || bad "pres deletion recorded" ""
+
+# an UNSTAGED deletion — "` D`" — is the same file gone with `rm`, never `git rm`
+RU="$(mkrepo)"
+echo old > "$RU/doomed.txt"; git -C "$RU" add doomed.txt
+git -C "$RU" -c core.hooksPath=/dev/null commit -q -m base
+rm "$RU/doomed.txt"
+OUTU="$(wf orchestrate preserve-uncommitted "$RU" T1)"
+[ "${OUTU%% *}" = "committed" ] && ok "preserve: an unstaged deletion is preserved too" || bad "pres rm" "$OUTU"
+[ -z "$(git -C "$RU" status --porcelain=v1)" ] \
+    && ok "preserve: the unstaged deletion leaves a clean tree" || bad "pres rm leftovers" ""
+
 # ── sweep-transients ─────────────────────────────────────────────────────────
 # Staleness routes on pipeline_state.task_states: the artifact names its task_id;
 # a terminal task status (approved/completed/blocked/escalated/design_issue) makes
