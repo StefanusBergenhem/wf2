@@ -48,6 +48,7 @@ paths:
   capabilities: ".wf/CAPABILITIES.yaml"       # User-voice capabilities (wf-po appends; `pipeline drain-capability` removes one on an adequate verdict). Committed.
   charter: ".wf/charter.md"                   # Direction: target shape, ranked forces, domain language, sequencing rationale, no-go zones. A wf-sa session writes it; the design role reads it, never writes it. Committed.
   plan: ".wf/plan.md"                         # Rolling milestone plan — the one durable file the design role writes, revised at every sprint start and trimmed as milestones ship. Rides in every sprint PR. Committed.
+  architecture: ".wf/architecture.md"         # Component map — the structural DELTA only: components planned but not built, and ones whose intent is being re-ratified, each with its intent and its depends-on. Structure that already exists derives from paths.discover_model and is never stored here; entries drain as the repo reaches them. A wf-sa session writes it; the design role reads it, never writes it; `wf slice check` errors on an increment allocation naming a component neither this map nor the derived inventory carries. Committed.
 
   # Test-tree roots — every root the tag scanners sweep for [SYS-TC:] tags
   # (register.py, retired.py, complete-sprint's superseded sweep). A
@@ -69,8 +70,11 @@ paths:
   adrs: ".wf/adrs"                             # Durable architecture decision records. Committed dir, one .md per ADR.
   design_slice: ".wf/transient/design-slice.md"   # The sprint's design: serves header, narrative, claimed scope, ordered increments, SYS-TC cases, supersessions, soundness verdicts, decision log. Read by the TL and by every task envelope; drained at complete-sprint. Transient.
   drain_report: ".wf/transient/drain-report.yaml" # complete-sprint appends what each closed sprint served, drained, and left for the adequacy gate; the ship step folds it into the PR body. Transient.
-  decision_prep: ".wf/transient/decision-prep.md" # A decision the design role could not take autonomously (ADR threshold, capability recast, shipped-scenario supersession, charter contradiction). The design role writes the brief, the options, and its recommendation; the driver pauses; a wf-sa session records the ruling in the same file; the design role's resume mode consumes it and deletes the file. Transient.
+  decision_prep: ".wf/transient/decision-prep.md" # A decision the design role could not take autonomously (ADR threshold, capability recast, shipped-scenario supersession, charter contradiction, architecture change). The design role writes the brief, the options, and its recommendation; the driver pauses; a wf-sa session records the ruling in the same file; the design role's resume mode consumes it and deletes the file. Transient.
   drill_cache: ".wf/transient/drill-cache"        # Shared scout digests — wf-drill and wf-adequacy write here (an adequacy digest is `adequacy-<CAP-id>-<full-promise|iteration-claim>-<utc>.md`; `pipeline drain-capability` reads the newest `full-promise` one as the drain verdict). Transient dir.
+  design_view: ".wf/transient/design-view.html"   # wf-sa interactive direction diagram (render_design.py) — the hand-over artifact of its align phase. Transient.
+  design_graph: ".wf/transient/design-graph.json" # wf-sa's authored graph (the renderer's input); re-written whenever the shape shifts during alignment. Transient.
+  domain_view: ".wf/transient/domain-view.html"   # wf-sa entity/domain-model diagram (render_design.py entity mode). Transient.
   sprint: ".wf/transient/sprint.yaml"             # The sprint's cumulative task contracts (story / acceptance / boundaries / grounding), appended one increment at a time by wf-tl. Transient.
 
   # Maintainer research archive (committed). WRITE-ONLY: the drain sites snapshot each
@@ -111,10 +115,15 @@ driver:
   # artifacts on disk — never on an agent's prose.
   agent_cmd: '{{AGENT_CMD}}'  # driver: role launch template, rendered for this project's
                               # harness at init; {prompt} is substituted at dispatch.
-  # agent_cmd_overrides:      # driver: launch template for ONE role, when it needs a
-                              # different model or harness flag than the rest. A role
-                              # with no entry uses agent_cmd. For example:
-  #   wf-designer: 'claude -p --dangerously-skip-permissions --model opus "{prompt}"'
+                              # Pins the workhorse model tier — the frontmatter model: of
+                              # an agent file is honored only in subagent dispatch, never
+                              # by a headless launch.
+  agent_cmd_overrides:        # driver: launch template per role that needs a stronger
+                              # model than agent_cmd's tier; a role with no entry uses
+                              # agent_cmd.
+    wf-designer: '{{AGENT_CMD_STRONG}}'
+    wf-tl: '{{AGENT_CMD_STRONG}}'
+    wf-adequacy: '{{AGENT_CMD_STRONG}}'
   max_parallel: 4             # driver: tasks dispatched concurrently within one sub-layer.
   max_unmerged_sprints: 3     # driver: stack-depth cap — pause when this many shipped
                               # sprint branches are still unmerged into base_branch.
@@ -156,6 +165,7 @@ hygiene:
   agents_md_max: 200      # AGENTS.md / CLAUDE.md line cap — this file loads into every agent context
   charter_max: 120        # paths.charter line cap — the design role reads it whole, every sprint
   plan_max: 60            # paths.plan line cap — milestone altitude only, no component detail
+  architecture_max: 150   # paths.architecture line cap — the design role reads the whole component map every sprint
 
 impact:
   # Companion fan-out rules for `wf impact files`: when a changed or consumer file

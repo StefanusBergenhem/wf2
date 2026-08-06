@@ -4,7 +4,7 @@
 #
 # Verifies: config written from template with tokens resolved (including the per-target
 # driver.agent_cmd); the transient dir, telemetry sink, ADR dir, and the
-# capabilities/charter/plan/learnings homes created; gitignore updated; full idempotency
+# capabilities/charter/plan/architecture/learnings homes created; gitignore updated; full idempotency
 # (re-run clobbers no edited config nor existing home, and does not duplicate the gitignore
 # line); and homes skipped when their config key is absent.
 # wf2-source-only — never rendered into an install target.
@@ -45,6 +45,8 @@ check "charter home created"       "[ -f '$PROJ/.wf/charter.md' ]"
 check "charter has direction sections" "grep -q '## Target shape' '$PROJ/.wf/charter.md' && grep -q '## No-go zones' '$PROJ/.wf/charter.md'"
 check "plan home created"          "[ -f '$PROJ/.wf/plan.md' ]"
 check "plan has milestone sections" "grep -q '## Next' '$PROJ/.wf/plan.md'"
+check "architecture home created"  "[ -f '$PROJ/.wf/architecture.md' ]"
+check "architecture has components section" "grep -q '## Components' '$PROJ/.wf/architecture.md'"
 check "learnings home created"     "[ -f '$PROJ/.wf/LEARNINGS.yaml' ]"
 check "learnings has structure"    "grep -q 'learnings:' '$PROJ/.wf/LEARNINGS.yaml'"
 check "wf-learnings home created"  "[ -f '$PROJ/.wf/wf-learnings.yaml' ]"
@@ -64,6 +66,18 @@ for T in opencode pi; do
         "grep -q 'agent_cmd:.*{prompt}' '$TP/.wf/config.yaml'"
 done
 check "opencode agent_cmd is opencode run" "grep -q 'agent_cmd:.*opencode run' '$WORK/t-opencode/.wf/config.yaml'"
+# Two model tiers on claude: the shared template pins the workhorse tier, the
+# overrides pin the judgment roles (designer, tl, adequacy) to the stronger one.
+check "claude agent_cmd pins sonnet" \
+    "grep -q \"agent_cmd:.*--model sonnet.*{prompt}\" '$PROJ/.wf/config.yaml'"
+check "claude overrides block present" \
+    "grep -q 'agent_cmd_overrides:' '$PROJ/.wf/config.yaml'"
+for R in wf-designer wf-tl wf-adequacy; do
+    check "claude override: $R pinned to opus" \
+        "grep -A6 'agent_cmd_overrides:' '$PROJ/.wf/config.yaml' | grep -q \"$R:.*--model opus.*{prompt}\""
+done
+check "opencode overrides carry no claude flags" \
+    "! grep -A6 'agent_cmd_overrides:' '$WORK/t-opencode/.wf/config.yaml' | grep -q -- '--model'"
 
 echo "== idempotency =="
 # Mark the config as user-edited and append content to durable homes, then re-run.
@@ -73,6 +87,7 @@ echo "  - id: CAP-001" >> "$PROJ/.wf/CAPABILITIES.yaml"
 echo "  - id: L-001" >> "$PROJ/.wf/LEARNINGS.yaml"
 echo "- edited by hand" >> "$PROJ/.wf/charter.md"
 echo "- edited by hand" >> "$PROJ/.wf/plan.md"
+echo "- edited by hand" >> "$PROJ/.wf/architecture.md"
 bash "$SCAFFOLD" --dir "$PROJ" --target claude --name demo > "$WORK/run2.log" 2>&1 \
     || fail "second scaffold exited non-zero (see $WORK/run2.log)"
 
@@ -82,6 +97,7 @@ check "capabilities home not clobbered" "grep -q 'CAP-001' '$PROJ/.wf/CAPABILITI
 check "learnings home not clobbered" "grep -q 'L-001' '$PROJ/.wf/LEARNINGS.yaml'"
 check "charter home not clobbered"  "grep -q 'edited by hand' '$PROJ/.wf/charter.md'"
 check "plan home not clobbered"     "grep -q 'edited by hand' '$PROJ/.wf/plan.md'"
+check "architecture home not clobbered" "grep -q 'edited by hand' '$PROJ/.wf/architecture.md'"
 gi_count="$(grep -cF '.wf/transient/' "$PROJ/.gitignore")"
 check "gitignore line not duplicated" "[ '$gi_count' -eq 1 ]"
 
@@ -107,6 +123,7 @@ check "default sink NOT created"      "! [ -f '$CUSTOM/.wf/telemetry/sessions.js
 check "no home when key absent"       "! [ -f '$CUSTOM/.wf/CAPABILITIES.yaml' ]"
 check "no charter when key absent"    "! [ -f '$CUSTOM/.wf/charter.md' ]"
 check "no plan when key absent"       "! [ -f '$CUSTOM/.wf/plan.md' ]"
+check "no architecture when key absent" "! [ -f '$CUSTOM/.wf/architecture.md' ]"
 
 echo "== bad target rejected =="
 if bash "$SCAFFOLD" --dir "$WORK/proj2" --target frobnicate --name x > /dev/null 2>&1; then

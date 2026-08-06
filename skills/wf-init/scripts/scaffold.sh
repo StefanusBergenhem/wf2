@@ -45,13 +45,19 @@ GITIGNORE="$DIR/.gitignore"
 
 mkdir -p "$WF_DIR"
 
-# The headless launch command the driver runs for every role, per harness. `{prompt}` is
-# the DRIVER's substitution — it must reach the config verbatim.
+# The headless launch commands the driver runs, per harness: AGENT_CMD is the workhorse
+# tier every role gets by default; AGENT_CMD_STRONG is the stronger tier the template's
+# agent_cmd_overrides pins for the judgment roles. `{prompt}` is the DRIVER's
+# substitution — it must reach the config verbatim.
 case "$TARGET" in
-    claude)   AGENT_CMD='claude -p --dangerously-skip-permissions "{prompt}"' ;;
-    opencode) AGENT_CMD='opencode run "{prompt}"' ;;
-    # TODO: pi's headless invocation is unverified — confirm it before the first driver run.
-    pi)       AGENT_CMD='pi run "{prompt}"' ;;
+    claude)   AGENT_CMD='claude -p --dangerously-skip-permissions --model sonnet "{prompt}"'
+              AGENT_CMD_STRONG='claude -p --dangerously-skip-permissions --model opus "{prompt}"' ;;
+    # TODO: opencode/pi model flags are unverified — both tiers render the harness
+    # default; pin models in agent_cmd/agent_cmd_overrides after the first run.
+    opencode) AGENT_CMD='opencode run "{prompt}"'
+              AGENT_CMD_STRONG='opencode run "{prompt}"' ;;
+    pi)       AGENT_CMD='pi run "{prompt}"'
+              AGENT_CMD_STRONG='pi run "{prompt}"' ;;
 esac
 
 # Config: write once from the template. An existing config is the user's — never
@@ -62,6 +68,7 @@ else
     sed -e "s|{{PROJECT_NAME}}|$NAME|g" \
         -e "s|{{TARGET}}|$TARGET|g" \
         -e "s|{{AGENT_CMD}}|$AGENT_CMD|g" \
+        -e "s|{{AGENT_CMD_STRONG}}|$AGENT_CMD_STRONG|g" \
         "$TEMPLATE" > "$CONFIG"
     echo "  wrote $CONFIG"
 fi
@@ -134,6 +141,7 @@ scaffold_home() {
 scaffold_home capabilities    "../../wf-po/assets/capabilities.yaml.tmpl"            "capabilities home"
 scaffold_home charter         "../../wf-sa/assets/charter.md.tmpl"                            "charter home"
 scaffold_home plan            "../../wf-designer/assets/plan.md.tmpl"                               "plan home"
+scaffold_home architecture    "../../wf-sa/assets/architecture.md.tmpl"                  "architecture home"
 scaffold_home learnings       "../../wf-retrospective/assets/learnings.yaml.tmpl"    "learnings home"
 scaffold_home wf_learnings    "../../wf-retrospective/assets/wf-learnings.yaml.tmpl" "wf-learnings home"
 

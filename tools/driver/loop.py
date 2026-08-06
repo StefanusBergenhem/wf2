@@ -23,7 +23,7 @@ def build_runtime(config_path: str, dry_run: bool = False) -> Runtime:
     tele = events.Telemetry(cfg, dry_run=dry_run)
     return Runtime(
         cfg=cfg,
-        state=driver_state.load(cfg),
+        state=driver_state.load(cfg, dry_run=dry_run),
         tele=tele,
         cli=cliverbs.Cli(cfg, dry_run=dry_run),
         git=gitops.Git(cfg, dry_run=dry_run),

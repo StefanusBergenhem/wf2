@@ -331,6 +331,18 @@ class LoopTest(support.TempProject):
                          ["wf-discover", "wf-designer"])
         self.assertFalse(self.cfg.path("design_slice").exists())
 
+    def test_dry_run_leaves_no_state_file_behind(self):
+        # A dry run that persists state poisons the next REAL run: it resumes into a
+        # phase whose sprint branch was never actually cut.
+        import events
+        cfg = driver_config.load(str(support.write_config(self.root)))
+        rt = fakes.runtime(cfg, telemetry=events.Telemetry(cfg, dry_run=True))
+        rt.dry_run = True
+        rt.agents.dry_run = True
+        rt.state.dry_run = True
+        loop.run_loop(rt, once=True)
+        self.assertFalse(cfg.state_file.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

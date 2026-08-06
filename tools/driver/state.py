@@ -25,8 +25,11 @@ def _now() -> str:
 
 
 class State:
-    def __init__(self, path: Path, doc: dict):
+    def __init__(self, path: Path, doc: dict, dry_run: bool = False):
         self.path = path
+        # A dry run must leave no state behind: persisted position would make the next
+        # real run resume into a phase whose sprint branch was never actually cut.
+        self.dry_run = dry_run
         self.phase = str(doc.get("phase") or "sprint_start")
         self.sprint_id = doc.get("sprint_id")
         self.sprint_branch = doc.get("sprint_branch")
@@ -48,6 +51,8 @@ class State:
     def save(self) -> None:
         """Write the state file. A render identical to what is on disk is skipped —
         a no-op rewrite churns mtimes for nothing (L-106)."""
+        if self.dry_run:
+            return
         doc = self.as_doc()
         existing = _read(self.path)
         if existing and {k: existing.get(k) for k in _FIELDS} == \
@@ -98,6 +103,6 @@ def _read(path: Path) -> dict:
     return doc if isinstance(doc, dict) else {}
 
 
-def load(cfg) -> State:
+def load(cfg, dry_run: bool = False) -> State:
     path = cfg.state_file
-    return State(path, _read(path))
+    return State(path, _read(path), dry_run=dry_run)
