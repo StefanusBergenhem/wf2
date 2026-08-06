@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """chassis.py — the shared rendering shell for wf's interactive graph views.
 
-The discover read-view (render.py) draws a node/edge graph beside a details side
-panel, offline and self-contained.
+Both the discover read-view (render.py) and the SA design-view (render_design.py)
+draw a node/edge graph beside a details side panel, offline and self-contained.
 Everything common to that lives here exactly once: the page skeleton, the design
 system CSS, the two-pane layout (graph left, panel right), the vendored graph lib
 inlined for offline use, and the base vis-network options (the spacing physics).
