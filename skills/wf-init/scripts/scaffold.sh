@@ -55,9 +55,16 @@ mkdir -p "$WF_DIR"
 # nothing until the process exits, which leaves an hour-long dispatch with an empty log
 # and no way to tell a working role from a wedged one. The driver never reads the log,
 # so the format is free to be whatever a human can follow: `tail -f … | jq`.
+#
+# `--disallowedTools` takes the wait-for-a-later-turn tools away. A dispatch gets ONE
+# turn, so a role that arms one of them ends its session with nothing written and the
+# whole cycle is spent again — four dems builds went that way, each reaching the tool
+# through ToolSearch, each having just read the skill that forbids it. Bash is untouched:
+# a gate run in the FOREGROUND is exactly what this pushes the role back to. The flag is
+# variadic, so `"{prompt}"` must stay ahead of it or it is swallowed as another tool name.
 case "$TARGET" in
-    claude)   AGENT_CMD='claude -p --output-format stream-json --verbose --dangerously-skip-permissions --model sonnet "{prompt}"'
-              AGENT_CMD_STRONG='claude -p --output-format stream-json --verbose --dangerously-skip-permissions --model opus "{prompt}"' ;;
+    claude)   AGENT_CMD='claude -p --output-format stream-json --verbose --dangerously-skip-permissions --model sonnet "{prompt}" --disallowedTools "Monitor,ScheduleWakeup,CronCreate"'
+              AGENT_CMD_STRONG='claude -p --output-format stream-json --verbose --dangerously-skip-permissions --model opus "{prompt}" --disallowedTools "Monitor,ScheduleWakeup,CronCreate"' ;;
     # TODO: opencode/pi model flags are unverified — both tiers render the harness
     # default; pin models in agent_cmd/agent_cmd_overrides after the first run.
     opencode) AGENT_CMD='opencode run "{prompt}"'

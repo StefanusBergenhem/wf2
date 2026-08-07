@@ -117,7 +117,12 @@ driver:
                               # harness at init; {prompt} is substituted at dispatch.
                               # Pins the workhorse model tier — the frontmatter model: of
                               # an agent file is honored only in subagent dispatch, never
-                              # by a headless launch.
+                              # by a headless launch. The same is true of its tools: list,
+                              # which is why the wait-for-a-later-turn tools are denied
+                              # here instead: a dispatch gets ONE turn, so a role that arms
+                              # one ends its session having written nothing. Keep
+                              # "{prompt}" ahead of that flag — it is variadic and will
+                              # swallow whatever follows it.
   agent_cmd_overrides:        # driver: launch template per role that needs a stronger
                               # model than agent_cmd's tier; a role with no entry uses
                               # agent_cmd.

@@ -271,7 +271,7 @@ class IncrementTest(support.TempProject):
         host = self.cfg.path("design_issues").read_text()
         self.assertIn("DI-1", host)
 
-    def test_no_build_artifacts_blocks_the_task_only_once_the_budget_is_spent(self):
+    def test_a_build_that_never_writes_an_artifact_blocks_on_its_own_budget(self):
         cli = self.happy_cli({
             ("orchestrate", "inspect-build-return"): {
                 "task_id": "T1", "verdict": "escalate_no_artifacts"},
@@ -281,8 +281,55 @@ class IncrementTest(support.TempProject):
         agents = fakes.FakeAgents(self.cfg)
         rt = self.rt(cli, agents=agents)
         increments.run_increment(rt, 1)
-        self.assertEqual(agents.roles().count("wf-build"), self.cfg.max_attempts)
-        self.assertIn("pipeline block-task", cli.verbs())
+        self.assertEqual(agents.roles().count("wf-build"),
+                         increments.REDISPATCH_ATTEMPTS + 1)
+        blocked = next(c for c in cli.calls if c[:2] == ["pipeline", "block-task"])
+        # the reason must name the budget that actually ran out — a task blocked for
+        # never producing anything to judge is not a task the review kept rejecting
+        self.assertIn("no artifact", " ".join(str(a) for a in blocked))
+
+    def test_a_redispatch_does_not_spend_the_review_fix_budget(self):
+        """The live dems failure on T19: two builds parked and wrote nothing, the third
+        was reviewed and rejected once — legitimately, and over six one-line comment
+        fixes — and the loop blocked the task reporting `review rejected the build at
+        every allowed attempt` without ever dispatching a fix. A dispatch that left
+        nothing to judge and a build the review judged and rejected are different
+        failures, and they no longer share one counter."""
+        cli = self.happy_cli({
+            ("orchestrate", "inspect-build-return"): [
+                {"task_id": "T1", "verdict": "escalate_no_artifacts"},
+                {"task_id": "T1", "verdict": "escalate_no_artifacts"},
+                BUILD_OK],
+            ("orchestrate", "inspect-review-return"): [
+                {"task_id": "T1", "verdict": "rejected",
+                 "artifact": ".wf/transient/feedback.yaml"},
+                REVIEW_OK],
+        })
+        agents = fakes.FakeAgents(self.cfg)
+        rt = self.rt(cli, agents=agents)
+        increments.run_increment(rt, 1)
+        # two parked, one reviewed-and-rejected, one fix build that lands
+        self.assertEqual(agents.roles().count("wf-build"), 4)
+        self.assertIn("pipeline approve-task", cli.verbs())
+        self.assertNotIn("pipeline block-task", cli.verbs())
+
+    def test_a_build_that_returned_nothing_is_sent_back_in_before_it_blocks(self):
+        """The live dems failure: the build agent backgrounded its gate, ended its
+        headless session waiting to be woken, and exited 0 with nothing written — after
+        20 minutes of real work left uncommitted in the worktree. One no-artifact return
+        is an agent that mis-stepped, not a task that cannot be built, so it spends an
+        attempt and goes back in; blocking it on the first one doomed every dependent
+        task through `propagate-blocks`."""
+        cli = self.happy_cli({
+            ("orchestrate", "inspect-build-return"): [
+                {"task_id": "T1", "verdict": "escalate_no_artifacts"}, BUILD_OK],
+        })
+        agents = fakes.FakeAgents(self.cfg)
+        rt = self.rt(cli, agents=agents)
+        increments.run_increment(rt, 1)
+        self.assertEqual(agents.roles().count("wf-build"), 2)
+        self.assertIn("pipeline retry-task", cli.verbs())
+        self.assertNotIn("pipeline block-task", cli.verbs())
 
     def test_a_build_that_returned_nothing_is_sent_back_in_before_it_blocks(self):
         """The live dems failure: the build agent backgrounded its gate, ended its

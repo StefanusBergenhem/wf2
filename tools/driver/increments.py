@@ -33,6 +33,10 @@ MAX_INCREMENT_ROUNDS = 5
 # budget: `review.max_attempts` bounds one task's build→review chain and nothing else.
 CONTRACT_PREP_ATTEMPTS = 3
 STAGE_REPAIR_ATTEMPTS = 3
+# How many times a build that left no artifact at all is sent back in. Its own budget,
+# for the same reason: a dispatch that produced nothing to judge is a different failure
+# from a build the review judged and rejected, and must not spend that one's fix cycles.
+REDISPATCH_ATTEMPTS = 2
 
 # The slice template writes `- **Checkpoint:** <what>`; a plain `Checkpoint: <what>` is
 # accepted too. The bold markers close AFTER the colon, so they are consumed on both
@@ -282,8 +286,8 @@ def _run_task(rt, entry, number) -> None:
                       "--reason", "the build envelope could not be written")
         return
 
-    spent = "review rejected the build"
-    for _ in range(rt.cfg.max_attempts):
+    rejections = redispatches = 0
+    while True:
         attempt = _attempt(rt, task_id)
         rt.cli.mutate("pipeline", "dispatch", "--agent", "wf-build",
                       "--task", task_id, "--attempt", str(attempt))
@@ -308,22 +312,33 @@ def _run_task(rt, entry, number) -> None:
             # blocking the task would record a verdict about work that was never done —
             # and with a refused harness every task in the frontier blocks the same way
             dispatch.check_launch(launched)
-            # A dispatch that wrote nothing is an agent that mis-stepped (a backgrounded
-            # gate, a session that ended mid-turn), not a task that cannot be built. It
-            # spends an attempt and goes back in — blocking on the first one throws away
-            # the work in the worktree and dooms every dependent task with it.
-            spent = f"the build returned {kind}"
-            rt.cli.mutate("pipeline", "retry-task", task_id, "--reason", spent)
+            # A dispatch that wrote nothing is an agent that mis-stepped, not a task that
+            # cannot be built: it spends a redispatch and goes back into the same worktree,
+            # where its work still is. This budget is its own — charged against the review
+            # budget instead, two mis-steps left a task no fix attempt at all after its
+            # first rejection, and it was blocked reporting the review had rejected it
+            # every time.
+            redispatches += 1
+            if redispatches > REDISPATCH_ATTEMPTS:
+                _block(rt, task_id, f"the build wrote no artifact to route on in "
+                                    f"{redispatches} dispatches")
+                return
+            rt.cli.mutate("pipeline", "retry-task", task_id,
+                          "--reason", f"the build returned {kind}")
             continue
         outcome = _review_chain(rt, worktree, task_id, verdict.get("build_commit_sha"),
                                 number)
         if outcome != "rejected":
             return
-        spent = "review rejected the build"
-    rt.report.line(f"task {task_id} blocked — {spent} at every allowed attempt",
-                   symbol=progress.BAD, indent=2)
-    rt.cli.mutate("pipeline", "block-task", task_id,
-                  "--reason", f"{spent} at every allowed attempt")
+        rejections += 1
+        if rejections >= rt.cfg.max_attempts:
+            _block(rt, task_id, "review rejected the build at every allowed attempt")
+            return
+
+
+def _block(rt, task_id, reason) -> None:
+    rt.report.line(f"task {task_id} blocked — {reason}", symbol=progress.BAD, indent=2)
+    rt.cli.mutate("pipeline", "block-task", task_id, "--reason", reason)
 
 
 def _review_chain(rt, worktree, task_id, build_sha, number) -> str:
