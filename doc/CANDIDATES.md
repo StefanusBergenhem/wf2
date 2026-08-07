@@ -535,3 +535,42 @@ live worktree.
 tree-walking derivation is added. The fix is the same three lines each time; the real
 candidate is whether tree-walking derivations should share one pruned walker instead of
 each re-deriving the skip set.
+
+## C41 — nothing stops two drivers from running on one repo
+
+**Date:** 2026-08-07
+**Context:** a second `wf-driver` was started against dems while one was already ten
+minutes into a sub-layer. Neither noticed the other. The damage was immediate and
+entirely mechanical:
+
+- the second driver's `resume_hygiene` → `pipeline reclaim-stale` reset the first
+  driver's two **live** dispatches to `pending` — the verb cannot tell a slot held by a
+  running agent from one orphaned by a dead run, because "was the launcher still alive?"
+  is not a question the run state can answer;
+- it then re-dispatched both tasks, and `worktree_add` — correctly, by its own rule —
+  found the base branch was no longer an ancestor of the worktree HEADs and **deleted and
+  recreated both worktrees underneath the first driver's running agents**;
+- the first driver's build then returned `escalate_no_artifacts` (its worktree had
+  vanished mid-run) and spent one of its two redispatches recovering from a cause that
+  had nothing to do with the build.
+
+Every step behaved exactly as designed. The composition is what fails, and it fails
+silently: no error, no warning, and a run state that stays internally consistent
+throughout — so nothing downstream can detect that it happened.
+
+**Why it is not merely operator error:** the driver is explicitly resumable by re-running
+the same command, and the position lives on disk precisely so a human can restart it
+after a halt. "Re-run to resume" and "never run twice" are contradictory instructions to
+hold in a human's head, and the second one is enforced nowhere. The recovery cost is real
+but bounded (a redispatch and some wasted agent time); the *diagnostic* cost is not — the
+symptoms (a build that wrote nothing, a task retried for no visible reason) are
+indistinguishable from the failures the loop is built to absorb.
+
+**Shape of the fix:** a pidfile under `paths.transient` written at startup and removed on
+exit, with a liveness check on a stale one (the pid is gone, or is not a driver) so a
+crashed run does not lock the repo forever. Refuse to start with a message naming the
+running pid. Roughly the same size as the other startup gates in `loop.py`, and it
+belongs beside `verify_position` — both answer "is the world what this run assumes?".
+
+**Trigger to act:** it happens once more, or any run is unattended long enough that a
+human could reasonably forget one is going. Recurrence so far: **1** (2026-08-07).
