@@ -741,6 +741,56 @@ def _block_task(rest):
     return 0
 
 
+def _unblock_task(rest):
+    """Reverse a block, once its cause is fixed: the named task and every task
+    ``propagate-blocks`` doomed BECAUSE of it go back to pending, and the stage pointer
+    rewinds to the earliest sub-layer the freed work sits in. The rewind is half the job —
+    ``compute-stages`` preserves an existing plan, so nothing else moves ``current``, and a
+    run resumed without it re-enters a sub-layer whose work never ran. A root blocked for
+    its own reason keeps its own chain. Attempt counters survive: what a task has already
+    cost is not undone by unblocking it."""
+    p = common.base_parser("pipeline unblock-task")
+    p.add_argument("task_id")
+    args = p.parse_args(rest)
+
+    doc = _load_state(args)
+    raw = doc.get("blocked_tasks") or {}
+    entries = raw if isinstance(raw, dict) else {
+        b.get("task_id"): b for b in raw if isinstance(b, dict)}
+    if args.task_id not in entries:
+        common.die(f"{args.task_id} is not blocked")
+
+    freed = {args.task_id}
+    changed = True
+    while changed:
+        changed = False
+        for tid, entry in entries.items():
+            if tid not in freed and (entry or {}).get("blocked_by") in freed:
+                freed.add(tid)
+                changed = True
+
+    for tid in freed:
+        entries.pop(tid, None)
+        doc.setdefault("task_states", {}).setdefault(tid, {})["status"] = "pending"
+    doc["blocked_tasks"] = entries
+
+    stages = doc.get("stages") or {}
+    current = int(stages.get("current") or 1)
+    earliest = next((i for i, layer in enumerate(stages.get("definitions") or [], 1)
+                     if any(t in freed for t in layer)), None)
+    if earliest is not None and earliest < current:
+        stages["current"] = current = earliest
+
+    doc.setdefault("history", []).append({
+        "ts": _now(), "event": "task_unblocked", "task_id": args.task_id,
+        "freed": sorted(freed), "stage": current,
+    })
+    _save_state(args, doc)
+    common.emit({"ok": True, "event": "task_unblocked", "task_id": args.task_id,
+                 "freed": sorted(freed), "stage": current}, args.format)
+    return 0
+
+
 def _reclaim_stale(rest):
     """Cold-resume safety: reset orphan slots (building/reviewing/dispatching) left by
     an interrupted run back to pending so `next` re-surfaces them. The attempt counter
@@ -1530,6 +1580,7 @@ COMMANDS = {
     ("pipeline", "reject-task"): _reject_task,
     ("pipeline", "retry-task"): _retry_task,
     ("pipeline", "block-task"): _block_task,
+    ("pipeline", "unblock-task"): _unblock_task,
     ("pipeline", "reclaim-stale"): _reclaim_stale,
     ("pipeline", "record-design-issue"): _record_design_issue,
     ("pipeline", "resolve-design-issue"): _resolve_design_issue,

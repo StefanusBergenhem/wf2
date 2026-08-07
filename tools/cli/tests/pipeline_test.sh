@@ -381,6 +381,72 @@ BLC="$(wf "$PROJ_M" pipeline block-task T3 --reason "manual" --format json)"
 [ "$(jget "$(wf "$PROJ_M" pipeline task-state T3 --format json)" "d['state']")" = "blocked" ] \
     && ok "block-task → blocked" || bad "block" ""
 
+# ── unblock-task ─────────────────────────────────────────────────────────────
+# The whole recovery from a `tasks_blocked` halt, in one verb: the named task goes back
+# to pending, every task `propagate-blocks` doomed BECAUSE of it comes with it, an
+# independently blocked root is left alone, and the stage pointer rewinds to the
+# sub-layer the freed work sits in — `compute-stages` preserves an existing plan, so
+# nothing else ever rewinds it, and a run resumed without that lands in the wrong layer.
+FANOUT='tasks:
+  - {id: T1, increment: 1, depends_on: []}
+  - {id: T2, increment: 1, depends_on: []}
+  - {id: T3, increment: 1, depends_on: [T1]}
+  - {id: T4, increment: 1, depends_on: [T3]}
+  - {id: T9, increment: 1, depends_on: [T2]}'
+PROJ_UB="$(echo "$FANOUT" | new_proj)"
+wf "$PROJ_UB" pipeline compute-stages --increment 1 >/dev/null
+wf "$PROJ_UB" pipeline reject-task T1 --feedback /tmp/fb.yaml >/dev/null   # spends attempt 1
+wf "$PROJ_UB" pipeline block-task T1 --reason "the build wrote no artifact" >/dev/null
+wf "$PROJ_UB" pipeline block-task T2 --reason "review rejected it every time" >/dev/null
+wf "$PROJ_UB" pipeline propagate-blocks >/dev/null
+# the run walked on to the last sub-layer with everything behind it doomed
+"$PYTHON" - "$PROJ_UB/.wf/transient/pipeline-state.yaml" <<'PY'
+import sys, yaml
+p = sys.argv[1]; d = yaml.safe_load(open(p)); d["stages"]["current"] = 3
+open(p, "w").write(yaml.safe_dump(d, sort_keys=False))
+PY
+
+UBC="$(wf "$PROJ_UB" pipeline unblock-task T1 --format json)"
+[ "$(jget "$UBC" "d.get('ok') is True and d.get('event')=='task_unblocked'")" = "True" ] \
+    && ok "unblock-task emits a success confirmation (L-059)" || bad "unblock confirm" "$UBC"
+[ "$(jget "$UBC" "sorted(d['freed'])")" = "['T1', 'T3', 'T4']" ] \
+    && ok "unblock-task frees the task and everything doomed by it" || bad "unblock cascade" "$UBC"
+for T in T1 T3 T4; do
+    [ "$(jget "$(wf "$PROJ_UB" pipeline task-state $T --format json)" "d['state']")" = "pending" ] \
+        && ok "unblock-task: $T back to pending" || bad "unblock $T state" ""
+done
+[ "$(jget "$(wf "$PROJ_UB" pipeline task-state T1 --format json)" "d['attempt_counter']")" = "1" ] \
+    && ok "unblock-task keeps the attempt counter — the record of what it already cost" \
+    || bad "unblock attempt_counter" ""
+# an independently blocked root and ITS dependents are none of this task's business
+[ "$(jget "$(wf "$PROJ_UB" pipeline blocked-tasks --format json)" "sorted(t['task_id'] for t in d['tasks'])")" = "['T2', 'T9']" ] \
+    && ok "unblock-task leaves an independently blocked root alone" || bad "unblock other root" ""
+[ "$(jget "$UBC" "d['stage']")" = "1" ] && ok "unblock-task rewinds to the freed work's sub-layer" || bad "unblock stage" "$UBC"
+[ "$(yget "$PROJ_UB/.wf/transient/pipeline-state.yaml" "d['stages']['current']")" = "1" ] \
+    && ok "unblock-task persists the rewound stage" || bad "unblock stage persisted" ""
+[ "$(yget "$PROJ_UB/.wf/transient/pipeline-state.yaml" "any(e.get('event')=='task_unblocked' for e in d['history'])")" = "True" ] \
+    && ok "unblock-task appends to the audit trail" || bad "unblock history" ""
+
+UB2="$(wf "$PROJ_UB" pipeline unblock-task T2 --format json)"
+[ "$(jget "$UB2" "sorted(d['freed'])")" = "['T2', 'T9']" ] \
+    && ok "unblock-task frees the second root's chain" || bad "unblock second root" "$UB2"
+
+# the pointer only ever moves BACK: freeing work in a LATER sub-layer must not drag the
+# frontier past sub-layers that still have to run
+wf "$PROJ_UB" pipeline block-task T9 --reason "blocked on its own, in sub-layer 2" >/dev/null
+UB3="$(wf "$PROJ_UB" pipeline unblock-task T9 --format json)"
+[ "$(jget "$UB3" "d['stage']")" = "1" ] \
+    && ok "unblock-task never moves the stage pointer forward" || bad "unblock forward" "$UB3"
+[ "$(yget "$PROJ_UB/.wf/transient/pipeline-state.yaml" "d['stages']['current']")" = "1" ] \
+    && ok "unblock-task persists the unmoved pointer" || bad "unblock forward persisted" ""
+
+# a task that is not blocked is a typo, not a no-op
+if wf "$PROJ_UB" pipeline unblock-task T1 --format json >/dev/null 2>&1; then
+    bad "unblock unblocked" "exited zero on a task that is not blocked"
+else
+    ok "unblock-task refuses a task that is not blocked"
+fi
+
 # record-design-issue → design_issue + surfaces as unresolved
 RDC="$(wf "$PROJ_M" pipeline record-design-issue DI-1 --task T4 --severity high --fix_kind contract_amendment --format json)"
 [ "$(jget "$RDC" "d.get('ok') is True and d.get('event')=='design_issue_recorded' and d.get('di_id')=='DI-1'")" = "True" ] \

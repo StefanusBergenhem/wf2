@@ -66,7 +66,7 @@ re-running the same command resumes wherever it stopped. Stop reasons:
 | `escalation` | designer wrote `.wf/transient/decision-prep.md` | step 5 |
 | `work_exhaustion` | no open, unparked capability/learning left | step 1 (refill) |
 | `stack_depth` | ≥ `driver.max_unmerged_sprints` PRs unmerged | step 4 (merge) |
-| `tasks_blocked` | a task spent every attempt without landing; its dependents were blocked with it | read the reason in the halt, fix the cause, then drop those tasks from `blocked_tasks` and `task_states` in `.wf/transient/pipeline-state.yaml` and resume — their worktrees still hold what was built |
+| `tasks_blocked` | a task spent every attempt without landing; its dependents were blocked with it | read the reason in the halt, fix the cause, then `wf pipeline unblock-task <id>` per root it names, and resume — the task, everything doomed with it, and the stage pointer all come back, and its worktree still holds what was built |
 | stop file | you asked it to stop | nothing |
 | `dirty_tree` / other halts | something needs a look | read the message |
 

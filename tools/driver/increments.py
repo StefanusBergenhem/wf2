@@ -579,11 +579,14 @@ def _blocked_gate(rt, number) -> None:
     named = "; ".join(
         f"{t.get('task_id')} ({t.get('reason') or 'blocked by ' + str(t.get('blocked_by'))})"
         for t in tasks)
+    roots = [str(t.get("task_id")) for t in tasks if not t.get("blocked_by")]
     raise Halt("tasks_blocked",
                f"increment {number} cannot close — {len(tasks)} task(s) never landed and "
                f"every task depending on them was blocked with them: {named}. Their "
-               f"worktrees still hold whatever was built; clear the block in "
-               f"{rt.cfg.rel('pipeline_state')} once the cause is fixed")
+               f"worktrees still hold whatever was built; once the cause is fixed, "
+               f"`wf pipeline unblock-task <id>` reopens a task and everything doomed "
+               f"with it — the roots here are "
+               f"{', '.join(roots) or 'in the list above'}")
 
 
 def _resolve_open_issues(rt) -> bool:
