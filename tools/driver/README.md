@@ -145,6 +145,21 @@ it is the difference between "the Tech Lead decomposed nothing" and "the Tech Le
 ran". The one exception is `_repair_merge`, where a non-zero exit already *is* the
 "did not resolve" signal.
 
+**A rate limit is a wait, not a verdict.** A harness that refuses the launch leaves the
+same empty worktree as a role that mis-stepped, so every caller reading "nothing to
+route on" would otherwise have to tell the two apart — and the one that didn't spent a
+task's whole review chain in 49 seconds and blocked it for "not settling". The refusal
+is absorbed in `Dispatcher.launch` instead, below every caller: the reset time is read
+out of the harness's own log, the wait runs to two minutes past it
+(`RATE_LIMIT_MARGIN_S` — landing *on* the reset races the window roll), and the same
+command goes again. Bounds: `RATE_LIMIT_WAITS` per dispatch, each capped by
+`driver.rate_limit_max_wait_s`; a limit that outlasts the cap (a weekly one) is not
+slept at all but handed back, so a human sees it instead of the loop burning hours to
+reach the same refusal. `driver.stop_file` is polled every `RATE_LIMIT_POLL_S` while
+waiting — the wait is the longest thing the loop does, and a stop must not queue behind
+it. Each attempt keeps its own log and its own telemetry row; the wait itself is a
+`rate_limit_wait` row.
+
 ## Config keys
 
 Read from `.wf/config.yaml` through the CLI's `common` module — the driver has no
@@ -159,6 +174,8 @@ defaults of its own; a missing key is a named, fatal error.
 - `driver.agent_timeout_s`, `driver.command_timeout_s` — hard bounds on a role
   dispatch and on a project command (new). Every other subprocess is bounded by the
   constants in `procs.py`; nothing runs unbounded (L-090).
+- `driver.rate_limit_max_wait_s` — the longest one dispatch sleeps out a harness rate
+  limit before handing the refusal back (new).
 
 ## Timeouts
 
@@ -166,6 +183,7 @@ defaults of its own; a missing key is a named, fatal error.
 |---|---|---|
 | one role dispatch | `driver.agent_timeout_s` | config |
 | `commands.stage_check`, `driver.review_state_cmd` | `driver.command_timeout_s` | config |
+| waiting out a harness rate limit | `driver.rate_limit_max_wait_s` | config |
 | a `wf` verb | `procs.CLI_TIMEOUT_S` (300s) | constant |
 | git plumbing / commit+merge / push+`gh` | `procs.GIT_TIMEOUT_S` (120s), `GIT_WRITE_TIMEOUT_S` (900s), `NETWORK_TIMEOUT_S` (600s) | constants |
 

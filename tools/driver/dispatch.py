@@ -9,11 +9,17 @@ The launch command is the config template ``driver.agent_cmd`` with ``{prompt}``
 substituted — the one place harness differences live. A role named in
 ``driver.agent_cmd_overrides`` is launched with its own template instead, which is how
 a single role gets a different model or harness flag.
+
+A refused launch is not always a failure to route on: a harness rate limit is a wait,
+not a verdict, so it is slept out and re-launched here rather than surfacing to callers
+who would each have to recognise it.
 """
 from __future__ import annotations
 
 import datetime
+import re
 import shlex
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -24,6 +30,26 @@ from runtime import Pause
 _PLACEHOLDER = "{prompt}"
 # How much of the harness's last log line is quoted back when a launch failed.
 _BLAME_CHARS = 200
+
+# How far past the reset the relaunch goes. The reset is the instant the window rolls;
+# launching on it races the roll and spends the retry on a second refusal.
+RATE_LIMIT_MARGIN_S = 120
+# How many times ONE dispatch waits out a limit before handing the refusal back. A wait
+# resumes into a fresh window, so needing a third means the work does not fit a window
+# and a human should size it, not the loop.
+RATE_LIMIT_WAITS = 2
+# The wait is slept in slices this long so `driver.stop_file` is honoured while waiting
+# — a wait can run for hours, and a stop must not have to outlast it.
+RATE_LIMIT_POLL_S = 30
+
+# What a rate-limited harness leaves behind: the refusal event carries the reset as an
+# epoch second, and the exit carries the HTTP status. Tolerant of the whitespace a
+# pretty-printer would add.
+_RATE_LIMITED_RE = re.compile(
+    r'"api_error_status"\s*:\s*429'
+    r'|"error"\s*:\s*"rate_limit"'
+    r'|"rateLimitType"\s*:')
+_RESETS_AT_RE = re.compile(r'"resetsAt"\s*:\s*(\d+)')
 
 
 class DispatchError(Exception):
@@ -84,6 +110,30 @@ def last_line(log_path, limit: int = _BLAME_CHARS) -> str:
     return lines[-1][:limit] if lines else ""
 
 
+def rate_limit_wait_s(log_path, *, now, cap_s):
+    """How long to sleep before re-launching a refused dispatch, or ``None`` when
+    waiting is not the answer.
+
+    ``None`` covers both "this was not a rate limit" and "the limit outlasts
+    ``driver.rate_limit_max_wait_s``" — one decision, since a weekly limit resets days
+    out and sleeping the cap would burn hours only to relaunch into the same refusal.
+    Either way the refusal goes back to the caller, whose pause quotes the harness's own
+    line about when it lifts."""
+    try:
+        text = Path(log_path).read_text(errors="replace")
+    except OSError:
+        return None
+    if not _RATE_LIMITED_RE.search(text):
+        return None
+    resets = _RESETS_AT_RE.findall(text)
+    if not resets:
+        # Rate-limited, but the harness named no reset. Waiting the cap is the only
+        # move left, and it is the whole window — so the next launch is inside a new one.
+        return cap_s
+    wait = max(0, int(resets[-1]) - int(now)) + RATE_LIMIT_MARGIN_S
+    return None if wait > cap_s else wait
+
+
 def check_launch(launched) -> None:
     """Call where a role left nothing its caller can route on. A non-zero exit then means
     the harness never ran it, so every conclusion the caller would otherwise draw about
@@ -127,15 +177,19 @@ class Dispatcher:
         self.dry_run = dry_run
         self.report = report if report is not None else progress.silent()
         self.timeout = int(cfg.driver("agent_timeout_s"))
+        self.rate_limit_cap = int(cfg.driver("rate_limit_max_wait_s"))
         self.log_dir = cfg.path("transient") / "driver-logs"
         self.planned: list = []
+        # Injected so the wait is testable without spending it.
+        self.clock = time.time
+        self.sleep = time.sleep
 
     def launch(self, role: str, params: dict, *, cwd=None, task_id=None,
                increment=None, mode=None) -> Launched:
         prompt = build_prompt(self.cfg, role, params)
         cmd = render_cmd(self.cfg.agent_cmd_for(role), prompt)
-        log_path = self._log_path(role, task_id)
         if self.dry_run:
+            log_path = self._log_path(role, task_id)
             self.planned.append({"role": role, "mode": mode, "task_id": task_id,
                                  "cwd": str(cwd or self.cfg.root), "cmd": cmd,
                                  "params": params})
@@ -145,6 +199,23 @@ class Dispatcher:
                   + f"\n          cwd: {cwd or self.cfg.root}\n          cmd: {cmd}")
             return Launched(role, 0, 0, False, log_path, cmd, params)
 
+        waits = 0
+        while True:
+            log_path = self._log_path(role, task_id)
+            done = self._run_once(cmd, role, mode, task_id, increment, cwd, log_path)
+            if done.rc == 0 or done.timed_out or waits >= RATE_LIMIT_WAITS:
+                break
+            wait_s = rate_limit_wait_s(log_path, now=self.clock(),
+                                       cap_s=self.rate_limit_cap)
+            if wait_s is None:
+                break
+            waits += 1
+            if not self._wait_out_limit(role, wait_s, task_id):
+                break
+        return Launched(role, done.rc, done.duration_s, done.timed_out, log_path,
+                        cmd, params)
+
+    def _run_once(self, cmd, role, mode, task_id, increment, cwd, log_path):
         # The role's own output goes to the log and is never read, so this step line and
         # its heartbeat are the only sign the dispatch is alive — and `agent_timeout_s`
         # is how long it can hang before anything else notices.
@@ -163,8 +234,27 @@ class Dispatcher:
                              started_at=done.started_at, ended_at=done.ended_at,
                              timed_out=done.timed_out or None,
                              log=str(log_path))
-        return Launched(role, done.rc, done.duration_s, done.timed_out, log_path,
-                        cmd, params)
+        return done
+
+    def _wait_out_limit(self, role: str, wait_s: int, task_id=None) -> bool:
+        """Sleep out a harness rate limit. Returns False if a stop was asked for while
+        waiting — the wait is the longest thing the loop ever does, so it watches for
+        one rather than making a stop queue behind it."""
+        self.telemetry.event("rate_limit_wait", role=role, task=task_id,
+                             wait_s=wait_s)
+        label = (f"rate limit — {describe(role, None, task_id)} waits "
+                 f"{progress.duration(wait_s)} for the harness window to reset")
+        with self.report.step(label, budget_s=wait_s) as step:
+            remaining = wait_s
+            while remaining > 0:
+                if self.cfg.stop_file.exists():
+                    step.ok = False
+                    step.note = f"{self.cfg.stop_file} appeared — not relaunching"
+                    return False
+                nap = min(RATE_LIMIT_POLL_S, remaining)
+                self.sleep(nap)
+                remaining -= nap
+        return True
 
     def _log_path(self, role: str, task_id) -> Path:
         stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")

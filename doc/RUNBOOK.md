@@ -67,6 +67,8 @@ re-running the same command resumes wherever it stopped. Stop reasons:
 | `work_exhaustion` | no open, unparked capability/learning left | step 1 (refill) |
 | `stack_depth` | ≥ `driver.max_unmerged_sprints` PRs unmerged | step 4 (merge) |
 | `tasks_blocked` | a task spent every attempt without landing; its dependents were blocked with it | read the reason in the halt, fix the cause, then `wf pipeline unblock-task <id>` per root it names, and resume — the task, everything doomed with it, and the stage pointer all come back, and its worktree still holds what was built |
+| `launch_failed` | the harness never ran a role — expired login, no quota left | read the quoted line; it is the harness's own reason. A **rate limit** is waited out and retried automatically, so seeing this for one means the limit outlasts `driver.rate_limit_max_wait_s` (a weekly cap): resume after it lifts |
+| `launch_timeout` | a role hit `driver.agent_timeout_s` with nothing written | raise the budget if the role legitimately needs longer, then resume |
 | stop file | you asked it to stop | nothing |
 | `dirty_tree` / other halts | something needs a look | read the message |
 

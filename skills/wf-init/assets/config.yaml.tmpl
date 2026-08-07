@@ -154,6 +154,14 @@ driver:
                               # nearly-finished role throws the whole run away.
   command_timeout_s: 3600     # driver: hard bound on a project command it shells out to
                               # (commands.stage_check, driver.review_state_cmd).
+  rate_limit_max_wait_s: 18000  # driver: the longest ONE dispatch sleeps out a harness
+                              # rate limit before handing the refusal back. A refused
+                              # launch is a wait, not a verdict, so the driver reads the
+                              # reset time out of the harness's own log and relaunches
+                              # two minutes past it. Sized to the five-hour window: a
+                              # limit that outlasts this (a weekly one) is not waited
+                              # out at all — it stops the loop for a human instead.
+                              # The stop_file is honoured while waiting.
 
 limits:
   increments_per_sprint: 4    # `slice check` errors above this — a sprint that big is not one iteration.

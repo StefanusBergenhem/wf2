@@ -331,22 +331,38 @@ class IncrementTest(support.TempProject):
         self.assertIn("pipeline retry-task", cli.verbs())
         self.assertNotIn("pipeline block-task", cli.verbs())
 
-    def test_a_build_that_returned_nothing_is_sent_back_in_before_it_blocks(self):
-        """The live dems failure: the build agent backgrounded its gate, ended its
-        headless session waiting to be woken, and exited 0 with nothing written — after
-        20 minutes of real work left uncommitted in the worktree. One no-artifact return
-        is an agent that mis-stepped, not a task that cannot be built, so it spends an
-        attempt and goes back in; blocking it on the first one doomed every dependent
-        task through `propagate-blocks`."""
+    def test_a_refused_review_launch_pauses_instead_of_spending_the_chains_budget(self):
+        """The live dems failure on T27: a session limit killed the review mid-run, the
+        untouched worktree read as `redispatch_same_attempt` — the one branch of the
+        chain that never asked whether the harness had run — and all four dispatches
+        went in 49 seconds. It then blocked a task whose build was clean, recording
+        `the review chain did not settle` for a limit that had nothing to do with it."""
         cli = self.happy_cli({
-            ("orchestrate", "inspect-build-return"): [
-                {"task_id": "T1", "verdict": "escalate_no_artifacts"}, BUILD_OK],
+            ("orchestrate", "inspect-review-return"): {
+                "task_id": "T1", "verdict": "redispatch_same_attempt"},
+        })
+        agents = fakes.FakeAgents(self.cfg)
+        agents.refuse("wf-review")
+        rt = self.rt(cli, agents=agents)
+        with self.assertRaises(driver_runtime.Pause) as caught:
+            increments.run_increment(rt, 1)
+        self.assertEqual(caught.exception.reason, "launch_failed")
+        self.assertIn("session limit", caught.exception.detail)
+        self.assertEqual(agents.roles().count("wf-review"), 1)
+        self.assertNotIn("pipeline block-task", cli.verbs())
+
+    def test_a_review_that_ran_and_left_no_verdict_is_still_sent_back_in(self):
+        """The case the redispatch branch exists for, and which the launch check must
+        not swallow: the review agent ran to a clean exit and simply wrote nothing."""
+        cli = self.happy_cli({
+            ("orchestrate", "inspect-review-return"): [
+                {"task_id": "T1", "verdict": "redispatch_same_attempt"}, REVIEW_OK],
         })
         agents = fakes.FakeAgents(self.cfg)
         rt = self.rt(cli, agents=agents)
         increments.run_increment(rt, 1)
-        self.assertEqual(agents.roles().count("wf-build"), 2)
-        self.assertIn("pipeline retry-task", cli.verbs())
+        self.assertEqual(agents.roles().count("wf-review"), 2)
+        self.assertIn("pipeline approve-task", cli.verbs())
         self.assertNotIn("pipeline block-task", cli.verbs())
 
     # ── merges ───────────────────────────────────────────────────────────────

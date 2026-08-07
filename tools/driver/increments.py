@@ -369,6 +369,11 @@ def _review_chain(rt, worktree, task_id, build_sha, number) -> str:
             index += 1
             continue
         if kind == "redispatch_same_attempt":
+            # An untouched worktree is what a review that mis-stepped leaves — and it is
+            # byte-identical to what a harness that never ran the review leaves. Only the
+            # exit code separates them, and without asking, a refused harness spends the
+            # whole chain in seconds and blocks the task for "not settling".
+            dispatch.check_launch(launched)
             continue
         if kind == "design_issue":
             issues.promote(rt, worktree, verdict.get("di_id"), task_id)

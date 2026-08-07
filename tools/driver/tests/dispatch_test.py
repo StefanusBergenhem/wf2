@@ -200,5 +200,189 @@ class CheckLaunchTest(support.TempProject):
         return path
 
 
+# The two shapes a rate-limited harness leaves in the log: the event it emits the
+# moment it refuses, and the result line it exits on. Both are real, copied from the
+# dems run that stopped increment 4.
+def limit_event(resets_at) -> str:
+    return ('{"type":"rate_limit_event","rate_limit_info":{"status":"rejected",'
+            f'"resetsAt":{resets_at},"rateLimitType":"five_hour"}}}}')
+
+
+RESULT_LINE = ('{"is_error":true,"terminal_reason":"api_error","subtype":"success",'
+               '"api_error_status":429,"result":"You\'ve hit your session limit '
+               '· resets 8:40pm","type":"result"}')
+
+
+class RateLimitReadTest(support.TempProject):
+    """Reading a refused launch's log: was it a rate limit, and when does it lift?"""
+
+    NOW = 1_786_000_000
+
+    def log(self, body):
+        path = self.root / "role.log"
+        path.write_text(body)
+        return path
+
+    def wait(self, body, *, now=None, cap_s=18000):
+        return driver_dispatch.rate_limit_wait_s(
+            self.log(body), now=self.NOW if now is None else now, cap_s=cap_s)
+
+    def test_the_wait_runs_to_the_reset_the_harness_named_plus_the_margin(self):
+        self.assertEqual(self.wait(limit_event(self.NOW + 600) + "\n" + RESULT_LINE),
+                         600 + driver_dispatch.RATE_LIMIT_MARGIN_S)
+
+    def test_the_margin_is_two_minutes_past_the_reset(self):
+        # The reset is the moment the window rolls; relaunching on it races the roll.
+        self.assertEqual(driver_dispatch.RATE_LIMIT_MARGIN_S, 120)
+
+    def test_a_launch_that_failed_for_any_other_reason_is_not_waited_out(self):
+        self.assertIsNone(self.wait('{"type":"result","is_error":true,'
+                                    '"result":"command not found"}'))
+
+    def test_an_empty_or_missing_log_is_not_a_rate_limit(self):
+        self.assertIsNone(self.wait(""))
+        self.assertIsNone(driver_dispatch.rate_limit_wait_s(
+            self.root / "nope.log", now=self.NOW, cap_s=18000))
+
+    def test_the_last_reset_in_the_log_is_the_one_that_counts(self):
+        # A long dispatch can be told about the limit more than once; the final word
+        # is the only one still true when it exits.
+        body = "\n".join([limit_event(self.NOW + 60), RESULT_LINE,
+                          limit_event(self.NOW + 900)])
+        self.assertEqual(self.wait(body), 900 + driver_dispatch.RATE_LIMIT_MARGIN_S)
+
+    def test_a_reset_already_past_waits_only_the_margin(self):
+        self.assertEqual(self.wait(limit_event(self.NOW - 5000) + "\n" + RESULT_LINE),
+                         driver_dispatch.RATE_LIMIT_MARGIN_S)
+
+    def test_a_rate_limit_naming_no_reset_falls_back_to_the_configured_cap(self):
+        self.assertEqual(self.wait(RESULT_LINE, cap_s=18000), 18000)
+
+    def test_a_reset_beyond_the_cap_is_not_waited_out_at_all(self):
+        # A weekly limit resets days out. Sleeping the cap would burn hours and still
+        # relaunch into a refusal; the human is told instead.
+        self.assertIsNone(self.wait(limit_event(self.NOW + 400000) + "\n" + RESULT_LINE,
+                                    cap_s=18000))
+
+    def test_whitespace_in_the_harness_json_does_not_hide_the_limit(self):
+        self.assertEqual(
+            self.wait('{"rate_limit_info": {"status": "rejected", '
+                      f'"resetsAt": {self.NOW + 300}}}, '
+                      '"api_error_status" : 429}'),
+            300 + driver_dispatch.RATE_LIMIT_MARGIN_S)
+
+
+class RateLimitWaitTest(support.TempProject):
+    """A rate-limited dispatch waits the limit out and goes again, in the one place
+    every role's launch passes through."""
+
+    def setUp(self):
+        super().setUp()
+        (self.root / ".claude/agents").mkdir(parents=True)
+        (self.root / ".claude/agents/wf-build.md").write_text("agent\n")
+        self.slept = []
+
+    def dispatcher(self, agent_cmd, *, now=1_786_000_000):
+        cfg = driver_config.load(str(support.write_config(self.root,
+                                                          agent_cmd=agent_cmd)))
+        self.cfg_obj = cfg
+        d = driver_dispatch.Dispatcher(cfg, driver_events.Telemetry(cfg))
+        d.clock = lambda: now
+        d.sleep = self.slept.append
+        return d
+
+    def refusing_agent(self, *, resets_in=600, fail_times=1):
+        """An agent that writes a rate-limited log and exits 1 the first ``fail_times``
+        launches, then succeeds — what waiting the limit out is supposed to reach."""
+        counter = self.root / "runs"
+        script = self.root / "limited-agent.sh"
+        script.write_text(
+            f"""#!/usr/bin/env bash
+n=$(cat {counter} 2>/dev/null || echo 0); n=$((n+1)); echo $n > {counter}
+if [ "$n" -le {fail_times} ]; then
+cat <<'WF_EOF'
+{limit_event(1_786_000_000 + resets_in)}
+{RESULT_LINE}
+WF_EOF
+  exit 1
+fi
+echo done
+""")
+        script.chmod(0o755)
+        self.runs = counter
+        return f'{script} "{{prompt}}"'
+
+    def test_a_rate_limited_dispatch_sleeps_to_the_reset_and_launches_again(self):
+        d = self.dispatcher(self.refusing_agent(resets_in=600))
+        result = d.launch("wf-build", {}, task_id="T1")
+        self.assertEqual(result.exit_code, 0)
+        self.assertEqual(self.runs.read_text().strip(), "2")
+        self.assertEqual(sum(self.slept), 600 + driver_dispatch.RATE_LIMIT_MARGIN_S)
+
+    def test_the_returned_launch_points_at_the_log_of_the_attempt_that_ran(self):
+        d = self.dispatcher(self.refusing_agent())
+        result = d.launch("wf-build", {}, task_id="T1")
+        self.assertIn("done", result.log_path.read_text())
+        self.assertNotIn("api_error_status", result.log_path.read_text())
+
+    def test_waiting_is_bounded_and_the_refusal_is_handed_back_to_the_caller(self):
+        d = self.dispatcher(self.refusing_agent(fail_times=99))
+        result = d.launch("wf-build", {}, task_id="T1")
+        self.assertNotEqual(result.exit_code, 0)
+        self.assertEqual(int(self.runs.read_text().strip()),
+                         driver_dispatch.RATE_LIMIT_WAITS + 1)
+        with self.assertRaises(driver_runtime.Pause):
+            driver_dispatch.check_launch(result)
+
+    def test_a_stop_asked_for_during_the_wait_ends_it_immediately(self):
+        d = self.dispatcher(self.refusing_agent(fail_times=99))
+        stop_file = self.cfg_obj.stop_file
+        stop_file.parent.mkdir(parents=True, exist_ok=True)
+        d.sleep = lambda s: (self.slept.append(s), stop_file.touch())[0]
+        result = d.launch("wf-build", {}, task_id="T1")
+        self.assertNotEqual(result.exit_code, 0)
+        self.assertEqual(int(self.runs.read_text().strip()), 1)  # never relaunched
+
+    def test_the_wait_is_polled_in_slices_so_a_stop_is_seen_within_one(self):
+        d = self.dispatcher(self.refusing_agent(resets_in=600, fail_times=99))
+        d.launch("wf-build", {}, task_id="T1")
+        self.assertTrue(all(s <= driver_dispatch.RATE_LIMIT_POLL_S for s in self.slept))
+
+    def test_a_clean_launch_never_waits(self):
+        d = self.dispatcher('bash -c "true" "{prompt}"')
+        self.assertEqual(d.launch("wf-build", {}).exit_code, 0)
+        self.assertEqual(self.slept, [])
+
+    def test_a_failure_that_is_not_a_rate_limit_never_waits(self):
+        d = self.dispatcher('bash -c "echo boom; exit 7" "{prompt}"')
+        self.assertEqual(d.launch("wf-build", {}).exit_code, 7)
+        self.assertEqual(self.slept, [])
+
+    def test_a_timed_out_dispatch_is_never_mistaken_for_a_rate_limit(self):
+        # The bound killed it; the log may still carry an earlier limit event.
+        d = self.dispatcher(self.refusing_agent())
+        timed_out = driver_dispatch.Launched("wf-build", 124, 60, True,
+                                             self.root / "role.log", "cmd", {})
+        with self.assertRaises(driver_runtime.Pause) as caught:
+            driver_dispatch.check_launch(timed_out)
+        self.assertEqual(caught.exception.reason, "launch_timeout")
+
+    def test_the_wait_is_recorded_in_telemetry(self):
+        d = self.dispatcher(self.refusing_agent(resets_in=600))
+        d.launch("wf-build", {}, task_id="T1")
+        rows = [json.loads(x) for x in
+                self.cfg_obj.path("telemetry").read_text().splitlines()]
+        waits = [r for r in rows if r["event"] == "rate_limit_wait"]
+        self.assertEqual(len(waits), 1)
+        self.assertEqual(waits[0]["role"], "wf-build")
+        self.assertEqual(waits[0]["wait_s"], 600 + driver_dispatch.RATE_LIMIT_MARGIN_S)
+
+    def test_dry_run_never_waits(self):
+        d = self.dispatcher(self.refusing_agent())
+        d.dry_run = True
+        self.assertEqual(d.launch("wf-build", {}).exit_code, 0)
+        self.assertEqual(self.slept, [])
+
+
 if __name__ == "__main__":
     unittest.main()

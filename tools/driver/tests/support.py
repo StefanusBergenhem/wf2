@@ -75,6 +75,7 @@ driver:
   review_state_cmd: "{review_state_cmd}"
   agent_timeout_s: 60
   command_timeout_s: 60
+  rate_limit_max_wait_s: 18000
 
 limits:
   increments_per_sprint: 4
