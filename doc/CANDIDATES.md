@@ -574,6 +574,9 @@ belongs beside `verify_position` — both answer "is the world what this run ass
 
 **Trigger to act:** it happens once more, or any run is unattended long enough that a
 human could reasonably forget one is going. Recurrence so far: **1** (2026-08-07).
+**Ruled 2026-08-08:** stays parked — build nothing until it recurs. The sprint-branch
+shape in the last paragraph is ruled out entirely (only a maintainer debugging wf2 commits
+to a live sprint branch); the pidfile remains the fix for the two-drivers shape alone.
 
 **Detected independently, from inside.** dems `wf-learnings.yaml` L-119 is a build session
 reporting the same incident with no knowledge of its cause: *"Mid-build, HEAD advanced to
@@ -583,3 +586,33 @@ investigation to reach a conclusion the driver could have stated at startup, whi
 diagnostic cost above, priced. A second, milder shape of the same thing lands whenever a
 human commits to the sprint branch mid-run: `worktree_add` then destroys the live
 worktrees for the same reason. The pidfile does not cover that one.
+
+---
+
+## C42 — cost and per-dispatch wall time are readable only from the raw harness logs
+
+**Date:** 2026-08-08
+**Context:** answering "what did that sprint cost, and where did the time go" for dems s1
+took a one-off script over 86 MB of `.wf/transient/driver-logs/*.log`. Every dispatch's
+stream ends in a `{"type":"result"}` line carrying `total_cost_usd`, `duration_ms`,
+`num_turns` and the full `usage` breakdown — the only place cost exists. `wf telemetry
+roles` reports context, tool calls and duration from the usage rows, and the driver's own
+`dispatch` events carry `duration_s`, but neither reads cost at all.
+
+**Why it matters:** the logs are transient and gitignored. The numbers that justified
+this session's four fixes (build = 73% of spend; 23% of task spend was rework; 98% of
+tokens are cache reads) existed for exactly as long as one run's logs survived, and the
+s1 baseline had to be written into `doc/notes/s1-run-metrics-handover-20260808.md` by hand
+so it would outlive them.
+
+**Shape of the fix:** the driver already knows the log path per dispatch — it writes it.
+Have it parse that one result line at dispatch close and put `cost_usd`, `num_turns` and
+the usage totals on the telemetry row it is already writing. Then `wf telemetry roles`
+reports cost per role for free, the retrospective can quote it, and nothing new is stored:
+the row is written either way, and the archive already keeps it. The parse must be
+best-effort — a dispatch the harness refused has no result line, and telemetry is
+observability, never correctness.
+
+**Trigger to act:** the next time a run's cost or throughput has to be explained, or when
+sub-layer width (the next-session agenda item) needs a before/after measurement — that
+comparison is not worth re-running the one-off script for.
