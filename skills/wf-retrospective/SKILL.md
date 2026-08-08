@@ -74,9 +74,12 @@ tasks**. Read these signals — from `$PIPELINE_STATE` and the driver events, ke
 other by task id — and keep only what repeats or clusters; one task's lone hiccup is noise,
 not a learning. With neither source present, skip this phase:
 
-- **Recurring rejection** — several tasks whose `attempt_counter` climbed for the **same
-  reason**. The shared cause is the learning (a process/toolkit gap → `$WF_LEARNINGS`, or a
-  code smell the tasks share → `$LEARNINGS`), never the count.
+- **Recurring rejection** — several tasks that took more than one `wf-build` dispatch for
+  the **same reason**. Count the driver `dispatch` events per task and role; a task's
+  `attempt_counter` moves only on a review rejection, so a task re-dispatched after a
+  resume, a refused launch or a design-issue repair reads as first-try and the pattern
+  stays invisible. The shared cause is the learning (a process/toolkit gap →
+  `$WF_LEARNINGS`, or a code smell the tasks share → `$LEARNINGS`), never the count.
 - **Design-issue cluster** — multiple `design_issues` of the same `fix_kind` against related
   contracts: a systematic gap in how the work was specified → `$WF_LEARNINGS`.
 - **Escalation / block cause** — an `escalated` or `blocked` task, or the stop event that
@@ -152,7 +155,8 @@ the whole deliverable, and the human applies or rejects it.
    split/cleanup tasks; and,
    when `$PIPELINE_STATE` was
    present, a one-glance execution summary — tasks completed/escalated/blocked, design issues
-   by `fix_kind`, per-increment durations. Do not commit `$RETRO_REPORT` — it is transient. In your
+   by `fix_kind`, per-increment durations, and the rebuild count as tasks that took more than
+   one `wf-build` dispatch event. Do not commit `$RETRO_REPORT` — it is transient. In your
    return, name `$RETRO_REPORT` and the headline counts; the file carries the detail.
 3. **Archive and drain `$TELEMETRY`** — after step 2 has read the log for the roles report.
    Snapshot the cycle's telemetry into the maintainer archive and empty the live log, so it

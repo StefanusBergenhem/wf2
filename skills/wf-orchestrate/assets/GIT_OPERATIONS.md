@@ -65,18 +65,17 @@ Worktree cleanup is mandatory — never leave an orphan.
 
 Close the sprint first, then publish it in the run's **one** push. `complete-sprint`
 archives and drains the sprint's working set into `<paths.archive>/<sprint_id>/`, runs
-the close-time drain — trimming shipped ids from `paths.design_backlog`, draining served
-learnings from `paths.learnings`, and writing `paths.drain_report` (transient, for the
-next wf-sa run) — and resets the run state. Committing the snapshots **and the trimmed
-backlog/learnings** before the push carries the drain into the PR instead of stranding
-it as an uncommitted, un-pushed dirty tree:
+the close-time drain — draining served learnings from `paths.learnings` and writing
+`paths.drain_report` (transient, for the next wf-sa run) — and resets the run state.
+Committing the snapshots **and the drained learnings** before the push carries the drain
+into the PR instead of stranding it as an uncommitted, un-pushed dirty tree:
 
 Capture the spec-fix decision report **before** `complete-sprint` drains it: read
 `paths.spec_decisions` if present — its blocks go in the PR body under **Spec decisions**.
 
 ```
 wf pipeline complete-sprint
-git add -A -- <paths.archive> <paths.design_backlog> <paths.learnings>
+git add -A -- <paths.archive> <paths.learnings>
 git commit -m "sprint close: archive + drain <sprint-id>"   # skip if nothing changed (empty stage)
 git push -u origin <sprint-branch>
 gh pr create --base <base> --head <sprint-branch> --title "<sprint summary>" --body "<body>"

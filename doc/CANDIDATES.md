@@ -574,3 +574,12 @@ belongs beside `verify_position` — both answer "is the world what this run ass
 
 **Trigger to act:** it happens once more, or any run is unattended long enough that a
 human could reasonably forget one is going. Recurrence so far: **1** (2026-08-07).
+
+**Detected independently, from inside.** dems `wf-learnings.yaml` L-119 is a build session
+reporting the same incident with no knowledge of its cause: *"Mid-build, HEAD advanced to
+an unrelated commit and the session's own uncommitted changes vanished from the worktree —
+`ps` showed a live wf-driver plus a claude -p dispatch."* It cost that session a `ps`
+investigation to reach a conclusion the driver could have stated at startup, which is the
+diagnostic cost above, priced. A second, milder shape of the same thing lands whenever a
+human commits to the sprint branch mid-run: `worktree_add` then destroys the live
+worktrees for the same reason. The pidfile does not cover that one.

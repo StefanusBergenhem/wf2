@@ -174,6 +174,32 @@ OUT="$(wf telemetry roles --sink "$DRV" --config "$P/.wf/config.yaml" --format j
 [ "$(rget "$OUT" "next(r['context_max_max'] for r in d['roles'] if r['role']=='wf-build')")" = "7000" ] \
     && ok "roles: falls back to the overlap join when nothing contains the window" || bad "driver fuzzy" "$OUT"
 
+# ---------------------------------------------------------------------------
+# A driver-dispatched role runs as its OWN top-level session, so its hook fires
+# `Stop`, not `SubagentStop`. Reading only SubagentStop rows made the report blind
+# to build/review/tl/stage-repair — the roles the driver runs, and the ones doing
+# nearly all the work — while the main loop's own snapshots stay unattributed.
+# ---------------------------------------------------------------------------
+cat > "$DRV" <<'JSONL'
+{"kind":"driver_event","ts":"2026-07-12T11:00:00Z","event":"dispatch","agent":"wf-build","role":"wf-build","mode":"build","sprint":"sprint-1","increment":1,"task":"T1","rc":0,"duration_s":3600,"started_at":"2026-07-12T11:00:00Z","ended_at":"2026-07-12T12:00:00Z"}
+{"kind":"driver_event","ts":"2026-07-12T12:20:00Z","event":"dispatch","agent":"wf-review","role":"wf-review","mode":"review","sprint":"sprint-1","increment":1,"task":"T1","rc":0,"duration_s":600,"started_at":"2026-07-12T12:10:00Z","ended_at":"2026-07-12T12:20:00Z"}
+{"kind":"usage","session_id":"S6","hook_event":"Stop","started_at":"2026-07-12T11:00:05Z","ended_at":"2026-07-12T11:58:00Z","tokens":{"input":10,"output":20,"cache_read":30,"cache_creation":90},"tool_calls":180,"requests":90,"context_max":418000}
+{"kind":"usage","session_id":"S7","hook_event":"Stop","started_at":"2026-07-12T12:11:00Z","ended_at":"2026-07-12T12:19:00Z","tokens":{"input":1,"output":2,"cache_read":3,"cache_creation":9},"tool_calls":12,"requests":10,"context_max":92000}
+{"kind":"usage","session_id":"S8","hook_event":"Stop","started_at":"2026-07-12T09:00:00Z","ended_at":"2026-07-12T21:00:00Z","tokens":{"input":5,"output":6,"cache_read":7,"cache_creation":8},"tool_calls":40,"requests":30,"context_max":110000}
+JSONL
+OUT="$(wf telemetry roles --sink "$DRV" --config "$P/.wf/config.yaml" --format json 2>&1)"
+[ "$(rget "$OUT" "next(r['context_max_max'] for r in d['roles'] if r['role']=='wf-build')")" = "418000" ] \
+    && ok "roles: a Stop row a dispatch brackets is that dispatched role" || bad "stop build" "$OUT"
+[ "$(rget "$OUT" "next(r['context_max_max'] for r in d['roles'] if r['role']=='wf-review')")" = "92000" ] \
+    && ok "roles: each dispatch claims its own Stop row" || bad "stop review" "$OUT"
+# the session-spanning snapshot is contained by NO dispatch — it stays the main loop
+[ "$(rget "$OUT" "len(d['main_loop'])")" = "1" ] \
+    && ok "roles: a Stop row no dispatch brackets stays main_loop" || bad "stop main" "$OUT"
+[ "$(rget "$OUT" "d['main_loop'][0]['context_max']")" = "110000" ] \
+    && ok "roles: main_loop keeps the session-spanning snapshot" || bad "stop main ctx" "$OUT"
+[ "$(rget "$OUT" "d['matched']")" = "2" ] \
+    && ok "roles: attributed Stop rows count as matched" || bad "stop matched" "$OUT"
+
 echo ""
 echo "  telemetry verbs: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

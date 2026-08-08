@@ -87,14 +87,15 @@ def _contains(cand, ua, ub):
     return bool(cand["_a"] and cand["_b"] and cand["_a"] <= ua and cand["_b"] >= ub)
 
 
-def _exact_pick(ua, ub, cands, used):
+def _exact_pick(ua, ub, cands, used, only=None):
     """The index of the tightest candidate window CONTAINING [ua, ub] — the exact join.
     The driver brackets every dispatch it launches, so a transcript that falls inside a
-    dispatch belongs to that role; tightest wins when parallel dispatches overlap."""
+    dispatch belongs to that role; tightest wins when parallel dispatches overlap.
+    ``only`` restricts the search to a subset of candidate indices."""
     if not (ua and ub):
         return None
     fits = [(c["_b"] - c["_a"], i) for i, c in enumerate(cands)
-            if i not in used and _contains(c, ua, ub)]
+            if i not in used and (only is None or i in only) and _contains(c, ua, ub)]
     return min(fits)[1] if fits else None
 
 
@@ -152,7 +153,20 @@ def _roles(rest):
     # every subagent's window; it is reported under main_loop from its `Stop` rows.
     cands = [_candidate(s, s.get("agent")) for s in skill
              if s.get("agent") != "wf-orchestrate"]
+    dispatched = set(range(len(cands), len(cands) + len(driver)))
     cands += [_candidate(d, _driver_role(d)) for d in driver]
+
+    def _metrics(u, ua, ub):
+        t = u.get("tokens") or {}
+        return {
+            "footprint": (t.get("input") or 0) + (t.get("cache_creation") or 0),
+            "context_max": u.get("context_max") or 0,
+            "requests": u.get("requests") or 0,
+            "cache_read": t.get("cache_read") or 0,
+            "output": t.get("output") or 0,
+            "tool_calls": u.get("tool_calls") or 0,
+            "duration_s": int((ub - ua).total_seconds()) if ua and ub else 0,
+        }
 
     used, joined = set(), []
     for u in sub:
@@ -165,16 +179,22 @@ def _roles(rest):
         if pick is None:
             continue
         used.add(pick)
-        t = u.get("tokens") or {}
-        joined.append((cands[pick]["agent"], {
-            "footprint": (t.get("input") or 0) + (t.get("cache_creation") or 0),
-            "context_max": u.get("context_max") or 0,
-            "requests": u.get("requests") or 0,
-            "cache_read": t.get("cache_read") or 0,
-            "output": t.get("output") or 0,
-            "tool_calls": u.get("tool_calls") or 0,
-            "duration_s": int((ub - ua).total_seconds()) if ua and ub else 0,
-        }))
+        joined.append((cands[pick]["agent"], _metrics(u, ua, ub)))
+
+    # A role the driver dispatches runs as its OWN top-level session, so its hook fires
+    # `Stop`, not `SubagentStop`. A Stop row a dispatch window brackets is that role's
+    # transcript. Containment only, and only against dispatch windows: the main loop's
+    # own Stop rows are cumulative snapshots spanning the whole session, so no dispatch
+    # can contain one, and an overlap fallback would let one claim a role it merely ran.
+    unclaimed = []
+    for u in stop:
+        ua, ub = _parse(u.get("started_at")), _parse(u.get("ended_at"))
+        pick = _exact_pick(ua, ub, cands, used, only=dispatched)
+        if pick is None:
+            unclaimed.append(u)
+            continue
+        used.add(pick)
+        joined.append((cands[pick]["agent"], _metrics(u, ua, ub)))
 
     by_role = {}
     for role, m in joined:
@@ -202,7 +222,7 @@ def _roles(rest):
 
     # Main loop: per session_id, the largest cumulative Stop snapshot is the final total.
     main = {}
-    for u in stop:
+    for u in unclaimed:
         t = u.get("tokens") or {}
         total = sum(t.get(k) or 0 for k in ("input", "output", "cache_read", "cache_creation"))
         sid = u.get("session_id")

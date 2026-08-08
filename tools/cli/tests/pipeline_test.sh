@@ -544,6 +544,39 @@ SS="$(wf "$PROJ_TM" pipeline stage-start --stage 1 --format json)"
 SE="$(wf "$PROJ_TM" pipeline stage-end --stage 1 --format json)"
 [ "$(jget "$SE" "'duration_seconds' in d['timing']")" = "True" ] && ok "stage-end records duration_seconds" || bad "stage-end" "$SE"
 
+# Every increment re-uses the sub-layer numbers 1..N, and stage-start deliberately
+# preserves an existing started_at so a resumed stage keeps its origin. Together those
+# made the NEXT increment's stage 1 inherit the PREVIOUS increment's start: a fresh
+# completed_at measured against a day-old start, reported as a 28-hour sub-layer.
+PROJ_XI="$(echo "$DIAMOND" | new_proj)"
+wf "$PROJ_XI" pipeline compute-stages --increment 1 >/dev/null
+seed_timing() { "$PYTHON" - "$1" <<'PY'
+import sys, yaml, pathlib
+p = pathlib.Path(sys.argv[1]) / ".wf/transient/pipeline-state.yaml"
+doc = yaml.safe_load(p.read_text()) or {}
+doc.setdefault("stage_summaries", {})[1] = {
+    "timing": {"started_at": "2020-01-01T00:00:00Z"}, "tasks": ["T1", "T2"]}
+p.write_text(yaml.safe_dump(doc))
+PY
+}
+seed_timing "$PROJ_XI"
+wf "$PROJ_XI" pipeline compute-stages --increment 2 >/dev/null
+XS="$(wf "$PROJ_XI" pipeline stage-start --stage 1 --format json)"
+[ "$(jget "$XS" "d['started_at'].startswith('2020')")" = "False" ] \
+    && ok "stage-start: a new increment's sub-layer 1 does not inherit the last one's start" \
+    || bad "cross-increment stage start" "$XS"
+
+# ...but re-layering the SAME increment (a design-issue repair) is a continuation, so
+# an in-flight sub-layer keeps the origin stage-start's idempotence exists to protect.
+PROJ_SI="$(echo "$DIAMOND" | new_proj)"
+wf "$PROJ_SI" pipeline compute-stages --increment 1 >/dev/null
+seed_timing "$PROJ_SI"
+wf "$PROJ_SI" pipeline compute-stages --increment 1 --force >/dev/null
+SI="$(wf "$PROJ_SI" pipeline stage-start --stage 1 --format json)"
+[ "$(jget "$SI" "d['started_at']")" = "2020-01-01T00:00:00Z" ] \
+    && ok "stage-start: re-layering the same increment keeps the sub-layer's origin" \
+    || bad "same-increment stage start" "$SI"
+
 # stage-summary derives lists from task_states
 PROJ_SS="$(echo "$DIAMOND" | new_proj)"
 seed_state "$PROJ_SS" <<'YAML'
@@ -786,6 +819,23 @@ ls "$P/.wf/archive/capabilities/"*__CAPABILITIES.yaml >/dev/null 2>&1 \
     && ok "drain-capability: snapshots the pre-drain file into the archive" || bad "drain-cap archive" "$(ls -R "$P/.wf/archive" 2>&1)"
 [ "$(jget "$DC" "'drill-cache' in d['digest']")" = "True" ] \
     && ok "drain-capability: resolves the newest digest from paths.drill_cache" || bad "drain-cap digest" "$DC"
+
+# A digest predating the full-promise/iteration-claim naming matches no glob, so the
+# capability sits undrained on a verdict that IS on disk. Refusing it is right — an
+# unstamped digest cannot be assumed to answer the whole promise — but the refusal has to
+# name the file, or the operator has no way to know --verdict is the move.
+P="$(mk_cap_proj)"
+printf '# Adequacy: CAP-3 — adequate\n' \
+    > "$P/.wf/transient/drill-cache/adequacy-CAP-3-20260731T090000Z.md"
+DC="$("$PYTHON" "$WF" pipeline drain-capability CAP-3 --config "$P/.wf/config.yaml" --format json 2>&1)"; RCD=$?
+[ "$RCD" -ne 0 ] \
+    && ok "drain-capability: an unstamped digest does not drain on its own" || bad "drain-cap unstamped" "rc=$RCD $DC"
+case "$DC" in *adequacy-CAP-3-20260731T090000Z.md*)
+    ok "drain-capability: the refusal names the unstamped digest it declined" ;;
+  *) bad "drain-cap unstamped name" "$DC" ;; esac
+case "$DC" in *--verdict*)
+    ok "drain-capability: the refusal names the flag that resolves it" ;;
+  *) bad "drain-cap unstamped flag" "$DC" ;; esac
 
 # an inadequate verdict mutates nothing and exits 1
 P="$(mk_cap_proj)"

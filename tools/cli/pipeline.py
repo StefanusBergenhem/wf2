@@ -186,6 +186,14 @@ def _compute_stages(rest):
     stages, unplaceable = _layer_stages(in_increment, deps_of, completed, excluded)
     unplaceable = sorted(set(unplaceable) | stranded)
 
+    # Sub-layer numbers restart at 1 every increment, and a summary is keyed by that
+    # number alone — so a summary outlives the plan it describes and the next increment's
+    # stage 1 reads the last one's. stage-start then preserves that inherited origin
+    # (idempotent by design, to survive a resume) and stage-end measures a fresh
+    # completed_at against it. Dropping the old plan's summaries here is what keeps the
+    # two honest; a re-layer of the SAME increment is a continuation and keeps them.
+    if (existing.get("definitions") or {}) and existing.get("increment") != increment:
+        doc.pop("stage_summaries", None)
     doc["stages"] = {"increment": increment, "definitions": stages, "current": 1,
                      "total": len(stages)}
     # Tasks that can never run (they depend on a blocked task, or on an earlier
@@ -1280,8 +1288,17 @@ def _drain_capability(rest):
 
     path = Path(args.verdict) if args.verdict else _newest_adequacy_digest(args)
     if path is None or not path.is_file():
-        common.die(f"no full-promise adequacy digest for {args.capability}"
-                   + (f" at {path}" if path else " under paths.drill_cache"))
+        msg = (f"no full-promise adequacy digest for {args.capability}"
+               + (f" at {path}" if path else " under paths.drill_cache"))
+        # A digest whose name carries neither question marker cannot be assumed to answer
+        # the whole promise, so it is right that the glob passes it over — but silently
+        # passing it over leaves a capability undrained against a verdict that is on disk,
+        # with nothing on screen to say the file is even there.
+        unstamped = _unstamped_digests(args)
+        if unstamped:
+            msg += ("; " + ", ".join(p.name for p in unstamped)
+                    + " name no question — pass --verdict <path> to drain on one")
+        common.die(msg)
     text = path.read_text(errors="replace")
     if _is_iteration_claim(path, text):
         common.die(f"{path} answers the iteration-claim question — only a full-promise "
@@ -1473,6 +1490,19 @@ def _newest_adequacy_digest(args):
     pattern = f"adequacy-{args.capability}-{_FULL_PROMISE}-*.md"
     hits = sorted(cache.glob(pattern)) if cache.is_dir() else []
     return hits[-1] if hits else None
+
+
+def _unstamped_digests(args):
+    """This capability's adequacy digests whose names carry neither question marker —
+    written before the naming split, so no glob can tell which question they answer."""
+    rel = (common.config_doc(args.config).get("paths") or {}).get("drill_cache")
+    if not rel:
+        return []
+    cache = (common.project_root(args.config) / rel).resolve()
+    if not cache.is_dir():
+        return []
+    return sorted(p for p in cache.glob(f"adequacy-{args.capability}-*.md")
+                  if _FULL_PROMISE not in p.name and _ITERATION_CLAIM not in p.name)
 
 
 def _is_iteration_claim(path, text):

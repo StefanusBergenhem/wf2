@@ -129,10 +129,12 @@ you never go on to review.
 ## Step 4 — Gate
 
 Run `commands.preflight` **in the foreground** — never a shell `&`, never a background
-tool mode: a backgrounded gate completes with no turn watching, so you park waiting on a
-notification that never arrives and the whole cycle is spent again. Pipe to
-`/tmp/wf-build-<task-id>-preflight.log`; read the outcome per `wf-agent-preamble`, not the
-whole log. It must exit clean. A gate that cannot run because its environment is
+tool mode — and **pass an explicit tool timeout of at least 600000 ms on the call**.
+Preflight routinely outruns the Bash tool's ~120 s default, and past it the tool
+backgrounds the run on its own however you invoked it: it then completes with no turn
+watching, so you park waiting on a notification that never arrives and the whole cycle is
+spent again. Pipe to `/tmp/wf-build-<task-id>-preflight.log`; read the outcome per
+`wf-agent-preamble`, not the whole log. It must exit clean. A gate that cannot run because its environment is
 unavailable is a HALT, not a pass — do not write `review_ready`.
 
 Then run the hygiene ratchet **from your worktree root** — before Step 5's commit, so

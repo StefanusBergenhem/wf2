@@ -42,14 +42,20 @@ RATE_LIMIT_WAITS = 2
 # — a wait can run for hours, and a stop must not have to outlast it.
 RATE_LIMIT_POLL_S = 30
 
-# What a rate-limited harness leaves behind: the refusal event carries the reset as an
-# epoch second, and the exit carries the HTTP status. Tolerant of the whitespace a
+# What a rate-limited harness leaves behind. All three are tolerant of the whitespace a
 # pretty-printer would add.
-_RATE_LIMITED_RE = re.compile(
-    r'"api_error_status"\s*:\s*429'
-    r'|"error"\s*:\s*"rate_limit"'
-    r'|"rateLimitType"\s*:')
+#
+# The refusal is a `rate_limit_info` whose OWN status is `rejected`, and its reset is
+# read from inside that same object. A harness that is still serving emits the identical
+# event shape — same `resetsAt`, same `rateLimitType`, even the word `rejected` under
+# `overageStatus` — as a routine heartbeat on nearly every stream, so anything short of
+# reading the status reads every ordinary log as rate-limited, and a role that died for
+# its own reasons sleeps to the next window rollover instead of surfacing.
+_RATE_LIMIT_INFO_RE = re.compile(r'"rate_limit_info"\s*:\s*\{([^}]*)\}')
+_REJECTED_RE = re.compile(r'"status"\s*:\s*"rejected"')
 _RESETS_AT_RE = re.compile(r'"resetsAt"\s*:\s*(\d+)')
+# The exit itself, for a harness that refuses without ever emitting the event.
+_LIMIT_EXIT_RE = re.compile(r'"api_error_status"\s*:\s*429|"error"\s*:\s*"rate_limit"')
 
 
 class DispatchError(Exception):
@@ -123,15 +129,30 @@ def rate_limit_wait_s(log_path, *, now, cap_s):
         text = Path(log_path).read_text(errors="replace")
     except OSError:
         return None
-    if not _RATE_LIMITED_RE.search(text):
-        return None
-    resets = _RESETS_AT_RE.findall(text)
+    resets = _refusal_resets(text)
     if not resets:
+        if not _LIMIT_EXIT_RE.search(text):
+            return None
         # Rate-limited, but the harness named no reset. Waiting the cap is the only
         # move left, and it is the whole window — so the next launch is inside a new one.
         return cap_s
-    wait = max(0, int(resets[-1]) - int(now)) + RATE_LIMIT_MARGIN_S
+    wait = max(0, resets[-1] - int(now)) + RATE_LIMIT_MARGIN_S
     return None if wait > cap_s else wait
+
+
+def _refusal_resets(text):
+    """Every reset stamp the harness recorded on a REFUSAL, in the order it recorded
+    them. A `rate_limit_info` that is not itself `rejected` is the still-serving
+    heartbeat and names a window nothing is waiting for."""
+    out = []
+    for match in _RATE_LIMIT_INFO_RE.finditer(text):
+        info = match.group(1)
+        if not _REJECTED_RE.search(info):
+            continue
+        resets = _RESETS_AT_RE.search(info)
+        if resets:
+            out.append(int(resets.group(1)))
+    return out
 
 
 def check_launch(launched) -> None:

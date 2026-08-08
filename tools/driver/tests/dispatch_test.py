@@ -208,6 +208,16 @@ def limit_event(resets_at) -> str:
             f'"resetsAt":{resets_at},"rateLimitType":"five_hour"}}}}')
 
 
+def heartbeat(resets_at) -> str:
+    """The rate_limit_event a harness that is still serving emits — same shape and
+    same fields as a refusal, `allowed`, and present in nearly every dispatch log.
+    `overageStatus` carries the word `rejected` in it on purpose: that is the real
+    payload, and it is what a status-blind match trips over."""
+    return ('{"type":"rate_limit_event","rate_limit_info":{"status":"allowed",'
+            f'"resetsAt":{resets_at},"rateLimitType":"five_hour",'
+            '"overageStatus":"rejected","isUsingOverage":false}}')
+
+
 RESULT_LINE = ('{"is_error":true,"terminal_reason":"api_error","subtype":"success",'
                '"api_error_status":429,"result":"You\'ve hit your session limit '
                '· resets 8:40pm","type":"result"}')
@@ -263,6 +273,23 @@ class RateLimitReadTest(support.TempProject):
         # relaunch into a refusal; the human is told instead.
         self.assertIsNone(self.wait(limit_event(self.NOW + 400000) + "\n" + RESULT_LINE,
                                     cap_s=18000))
+
+    def test_the_routine_allowed_heartbeat_is_not_a_refusal(self):
+        # The heartbeat is in nearly every log, so matching the event's shape rather
+        # than its status reads EVERY failed dispatch as rate-limited — and a role that
+        # died for its own reasons then sleeps to the next window rollover twice over
+        # instead of surfacing.
+        self.assertIsNone(self.wait("\n".join([
+            heartbeat(self.NOW + 9000),
+            '{"type":"result","is_error":true,"terminal_reason":"aborted_streaming"}',
+        ])))
+
+    def test_a_refusal_among_heartbeats_is_read_from_the_refusal(self):
+        # The heartbeats name the window the harness was still serving from; only the
+        # refusal names the one being waited out.
+        body = "\n".join([heartbeat(self.NOW + 9000), heartbeat(self.NOW + 9000),
+                          limit_event(self.NOW + 600), RESULT_LINE])
+        self.assertEqual(self.wait(body), 600 + driver_dispatch.RATE_LIMIT_MARGIN_S)
 
     def test_whitespace_in_the_harness_json_does_not_hide_the_limit(self):
         self.assertEqual(
