@@ -13,6 +13,7 @@ Contents:
 - Boundaries
 - Grounding
 - Ground every claim about existing code
+- One file, one task
 - Sizing
 - End-to-end tasks
 
@@ -23,11 +24,12 @@ waiting to happen. `title` is one line — a noun phrase naming the deliverable,
 period; the build commits with it, so keep it under ~60 characters and never let it carry a
 fact the four sections need.
 
+Ids are `S<stage>-T<n>` — the stage number from `id_counters.stage`, then a counter within
+the stage starting at 1.
+
 ```yaml
-- id: T3
-  increment: 2
+- id: S7-T1
   title: <one line naming what this task delivers — the build's commit subject>
-  depends_on: [T1]           # task ids that must land first
   covers: [CAP-024]          # and/or L-ids — the driver this task serves
   story: |
     <2–4 paragraphs, FIRST field: what this task builds and why, how the change flows
@@ -50,46 +52,45 @@ fact the four sections need.
      rejects a diff that does.>
   grounding:
     - "backend/internal/handlers/zones.go:88 — current mount point"
-    - dependency_commits: {T1: <sha>}
   system_tests: [SYS-TC-44]  # e2e tasks only
 ```
 
 ## Materialized fields
 
-Author the fields above only. After writing, and after **every** later edit to the sprint
+Author the fields above only. After writing, and after **every** later edit to the stage
 file, run:
 
 ```
-python3 <paths.tools>/cli/wf sprint materialize
+python3 <paths.tools>/cli/wf stage materialize
 ```
 
 It inlines each `system_tests` entry's scenario text. Never write one by hand and never
-paraphrase a scenario — hand copies drift, and `wf sprint check` fails a sprint the
+paraphrase a scenario — hand copies drift, and `wf stage check` fails a stage the
 materializer has not filled.
 
 ## Story
 
 The first field, and the one the build reads first. Two to four paragraphs covering:
 
-- **What this task builds, and why** — the behaviour it delivers, in the increment's terms.
+- **What this task builds, and why** — the behaviour it delivers, in the stage's terms.
 - **How the change flows through the code** — the path a request, event, or call takes
   through the files this task touches, in order.
 - **What is new against what exists** — name the current behaviour you are extending,
   replacing, or wiring into.
 
 Write it so the build needs no other prose. A story that only restates the task title is
-not a story; `wf sprint check` fails a trivial one.
+not a story; `wf stage check` fails a trivial one.
 
 ## Acceptance
 
 The acceptance criteria are the task's requirement layer — there is no separate statement
-above them. Write the criteria that prove the task's part of the increment:
+above them. Write the criteria that prove the task's part of the stage:
 
 - **Complete for the task** — cover the failure and boundary behaviour, not just the happy
   path. Happy-path-only acceptance is an incomplete set.
-- **Within the task** — do not write criteria for behaviour the increment does not call
-  for. Behaviour you cannot make testable from the source is a slice defect you raise, never
-  a guess.
+- **Within the task** — do not write criteria for behaviour the stage does not call for.
+  Behaviour you cannot make testable against the source is not a criterion: narrow the
+  stage until what remains is provable, never guess.
 - **Ids are `AC-<n>`, scoped to the task** — the reviewer's and the build feedback loop's
   stable handle.
 
@@ -122,11 +123,12 @@ test and one of the two silently disappears.
 One prose section holding everything that bounds the build:
 
 - **Out of scope** — what a diligent developer might otherwise absorb: an adjacent behaviour
-  belonging to a later increment, a refactor the task does not need, a consumer deliberately
+  belonging to a later stage, a refactor the task does not need, a consumer deliberately
   left untouched (with the reason).
 - **Read-only** — files the task reads for reference but must not edit.
-- **Fixed interfaces** — a shape from the slice's Interface contracts, or an existing
-  signature this task must build to rather than change.
+- **Fixed interfaces** — a shape another task in this stage owns, or an existing signature
+  this task must build to rather than change. Write the shape out in full: signature,
+  struct, endpoint request/response.
 
 Nothing here may be contradicted by the story, a criterion, or a grounding pointer. Never
 waste a line restating that some file is merely unrelated.
@@ -140,11 +142,11 @@ and a paraphrase that drifts ships a defect straight into the contract.
   (`membership.go:41 — the deletedEntities CTE exclusion`);
 - an ADR id plus the one-clause constraint from its `constraint:` frontmatter line, lifted
   verbatim, never paraphrased from the body;
-- the name of a pattern to follow and where it lives;
-- `dependency_commits: {T1: <sha>}` — filled at extraction, so the build reads a
-  dependency's merged diff directly. When the pattern to follow lives in a `depends_on`
-  task's not-yet-built work, no `file:line` exists at cut time: name the task **and** the
-  concrete files it will create or edit, never a bare "same pattern as T12".
+- the name of a pattern to follow and where it lives.
+
+Every pointer must resolve in the merged tree this stage was cut from. A sibling task's
+work is not in the build's worktree, so never point at a file, symbol, or pattern another
+task in this stage creates — put the shape in `boundaries` instead.
 
 If a pointer needs more than one sentence, what it holds is behaviour (a criterion), a shape
 (the boundaries section), or not the contract's to say.
@@ -175,8 +177,14 @@ story, criteria, boundaries, and grounding to source:
   helper *and* each of its twins (a build-tag variant, a separately-compiled `_test` copy)
   and take the union as the floor for what the task changes.
 
-Cite what you verified with a `<path>:<symbol>` pointer in `grounding`; `wf sprint check`
+Cite what you verified with a `<path>:<symbol>` pointer in `grounding`; `wf stage check`
 re-resolves them and errors when the symbol is not there.
+
+## One file, one task
+
+Two tasks in a stage may not centre on the same file. Either factor that file into its own
+task and push the two that need it to the next cut, or push one of the two to the next cut.
+`wf stage check` warns (C20) when two tasks' `grounding` paths overlap.
 
 ## Sizing
 
@@ -190,9 +198,10 @@ dispatch overhead is roughly fixed.
 
 ## End-to-end tasks
 
-One per `SYS-TC-<n>` the increment completes. Its `system_tests` names the case id (the
-materializer fills the scenario text), its `acceptance` is empty — the scenario *is* the
-acceptance — and its `depends_on` names the tasks that assemble the path it exercises. It
-imports the components without owning them; the build stamps `[SYS-TC:SYS-TC-<n>]` in the
-test. This is the level that catches a `nil`-wired dependency that compiles and silently
-does nothing; per-component tests, which mock what they wire, never substitute for it.
+A `SYS-TC-<n>` gets its e2e task in the stage **after** the one whose tasks assemble the
+path it exercises, so it runs against a merged tree. Its `system_tests` names the case id
+(the materializer fills the scenario text) and its `acceptance` is empty — the scenario *is*
+the acceptance. It imports the components without owning them; the build stamps
+`[SYS-TC:SYS-TC-<n>]` in the test. This is the level that catches a `nil`-wired dependency
+that compiles and silently does nothing; per-component tests, which mock what they wire,
+never substitute for it.

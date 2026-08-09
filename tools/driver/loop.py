@@ -11,10 +11,10 @@ import config as driver_config
 import dispatch
 import events
 import gitops
-import increments
 import phases
 import procs
 import progress
+import stages
 import state as driver_state
 import stoprules
 from runtime import Halt, Pause, Runtime
@@ -98,26 +98,16 @@ def run_sprint(rt) -> None:
         phases.resume_ruling(rt)
     if rt.state.phase in ("sprint_start", "stopped"):
         phases.sprint_start(rt, resume=rt.state.sprint_id is not None)
-    if rt.state.phase == "designing":
-        phases.designing(rt)
-    if rt.state.phase == "increment_loop":
-        numbers = _increment_numbers(rt)
-        increments.run_increment_loop(rt, numbers)
-        rt.state.enter("closeout")
+    # Cut, build, close, cut again — until the close says the PR is ready to ship. The
+    # two phases stay separate and named: a resume has to say which of them it was in,
+    # and `designing` is where the escalation gate and the work-exhaustion exit live.
+    while rt.state.phase in ("designing", "stage_run"):
+        if rt.state.phase == "designing":
+            phases.designing(rt)
+        if rt.state.phase == "stage_run":
+            stages.run_stage(rt)
     if rt.state.phase == "closeout":
         phases.closeout(rt)
-
-
-def _increment_numbers(rt) -> list:
-    check = rt.cli.read("slice", "check")
-    if not check.ok:
-        # Carrying the findings, not just the verdict: the operator's next move depends
-        # entirely on WHICH check went red, and a bare "the slice cannot be built" blames
-        # the slice even when the gate itself is what broke.
-        raise Halt("slice_check_red",
-                   f"the slice on disk no longer passes its gate — it cannot be built: "
-                   f"{increments.gate_findings(check.data)}")
-    return [int(item["n"]) for item in (check.data.get("increments") or [])]
 
 
 def refresh_base(rt) -> None:

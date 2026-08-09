@@ -75,11 +75,11 @@ class StepTest(unittest.TestCase):
     def test_a_step_prints_an_open_and_a_close_line_with_its_duration(self):
         clock = FakeClock()
         rep, out = reporter(clock=clock)
-        with rep.step("wf-designer (originate)"):
+        with rep.step("wf-designer (resume)"):
             clock.advance(185)
         lines = out.getvalue().splitlines()
-        self.assertIn(f"{progress.RUN} wf-designer (originate)", lines[0])
-        self.assertIn(f"{progress.OK} wf-designer (originate)", lines[1])
+        self.assertIn(f"{progress.RUN} wf-designer (resume)", lines[0])
+        self.assertIn(f"{progress.OK} wf-designer (resume)", lines[1])
         self.assertIn("3m05s", lines[1])
 
     def test_a_step_can_carry_its_own_outcome_note(self):
@@ -94,7 +94,7 @@ class StepTest(unittest.TestCase):
     def test_a_raising_step_closes_as_failed_and_re_raises(self):
         rep, out = reporter()
         with self.assertRaises(ValueError):
-            with rep.step("wf-tl"):
+            with rep.step("wf-designer"):
                 raise ValueError("boom")
         closing = out.getvalue().splitlines()[-1]
         self.assertIn(progress.BAD, closing)

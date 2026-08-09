@@ -2,8 +2,7 @@
 
 The Python program that executes wf's continuous delivery loop. One invocation runs
 sprint after sprint — design, build, review, merge, close, ship — until a stop rule
-fires. It replaces the `wf-orchestrate` skill: orchestration is mechanical, so a
-script does it.
+fires. Orchestration is mechanical, so a script does it rather than a role.
 
 ```sh
 python3 .wf/tools/driver/wf-driver              # run continuously
@@ -26,11 +25,11 @@ elapsed-since-start; `──` marks a position in the phase machine, `▶`/`✔`
 close something long-running, and `·` is a heartbeat saying it is still alive:
 
 ```
-[wf-driver 0:02:11] ── designing — the design role cuts the slice
-[wf-driver 0:02:11]   ▶ wf-designer (originate)
-[wf-driver 0:03:11]     · wf-designer (originate) still running — 1m00s / 2h00m budget
-[wf-driver 0:14:52]   ✔ wf-designer (originate) — 12m41s
-[wf-driver 0:14:53]   ✔ slice check green · serves CAP-004
+[wf-driver 0:02:11] ── designing — the design role cuts the next stage
+[wf-driver 0:02:11]   ▶ wf-designer
+[wf-driver 0:03:11]     · wf-designer still running — 1m00s / 2h00m budget
+[wf-driver 0:14:52]   ✔ wf-designer — 12m41s
+[wf-driver 0:14:53]   ✔ stage check green · stage 7 · serves CAP-004
 ```
 
 The heartbeat's budget is the timeout that will kill the dispatch
@@ -46,23 +45,27 @@ prompt names the role's installed file and its envelope fields:
 
 ```
 Read /repo/.claude/agents/wf-build.md and follow it.
-task_id: T3
-worktree: /repo/.wf/transient/worktrees/s7-T3
+task_id: S7-T3
+worktree: /repo/.wf/transient/worktrees/s1-S7-T3
 contract: .wf/transient/current-task.yaml
 attempt: 0
 ```
 
 **The contract is exit code + artifacts on disk.** Agent stdout is streamed to
 `<paths.transient>/driver-logs/` and never read. Every verdict comes from a `wf`
-verb's JSON (`pipeline next`, `slice check`, `sprint check`,
+verb's JSON (`pipeline next`, `stage check`, `pipeline capability-complete`,
 `orchestrate inspect-*`) or from an artifact (`paths.design_issues`, an adequacy
 digest, `paths.decision_prep`). Nothing routes on prose.
 
 Each dispatch, routing decision and stop appends one row to `paths.telemetry`:
-`{kind: driver_event, agent, role, event, mode, sprint, increment, task, rc,
+`{kind: driver_event, agent, role, event, mode, sprint, stage, task, rc,
 duration_s, started_at, ended_at, ts}`. `agent` mirrors `role` because that is the
 field the telemetry reader classifies on, and every row carries an ISO-8601 UTC span
 (zero-length for an instantaneous event) so the usage-row join is exact, not fuzzy.
+The `stage_done` row also carries `width` (the stage's task count) and `merged`:
+width cannot be gated — a lower bound would be wrong — so it is watched, and a trend
+toward one task per stage means design dispatches are compounding against a chain the
+role is not cutting around.
 
 ## Phases
 
@@ -71,11 +74,32 @@ acts, so a restart re-enters it.
 
 | phase | what runs | leaves |
 |---|---|---|
-| `sprint_start` | clean-tree gate; branch `sprint/s<N>` off the stack tip; carry the telemetry rows onto it; `sweep-transients` + `reclaim-stale`; `wf-discover` | `designing` |
-| `designing` | `wf-designer` (originate) → `wf slice check`; a red gate records a design issue and routes `wf-designer` (repair) | `increment_loop`, or a pause |
-| `increment_loop` | per increment: `wf-tl` → `sprint materialize` + `sprint check` → `compute-stages` → sub-layers → boundary | `closeout` |
-| `closeout` | the `closeout` config steps, each banked on disk as it finishes: `wf-*` roles, `adequacy` (per served capability → drain / residuals / park), `ship` (`complete-sprint`, commit, push, `gh pr create`) | `sprint_start` |
-| `awaiting_ruling` | on restart: `wf-designer` (resume) once `paths.decision_prep` carries a ruling, then `resolve-design-issue` for the brief's `di_id` (the resume run closes only the host entry; the run-state twin is what parks the task); the brief's `mode:` header says where to pick up — `originate` carries on designing, `repair` returns to the increment loop | `designing` / `increment_loop` |
+| `sprint_start` | clean-tree gate; branch `sprint/s<N>` off the stack tip; carry the telemetry rows onto it; reset `paths.pr_body`; `sweep-transients` + `reclaim-stale`; `wf-discover` | `designing` |
+| `designing` | `wf-designer` (no mode — one role, one sitting, one artifact) → `wf stage materialize` + `wf stage check`; a red gate records the findings as a design issue and sends the role back in; a dispatch that grew the work-set's scenario count without cutting is dispatched again, bounded by `SCENARIO_ROUNDS` | `stage_run`, or a pause |
+| `stage_run` | `pipeline load-stage` → the frontier in parallel worktrees → build→review per task → batch merge → the close | `designing` (cut the next) or `closeout` |
+| `closeout` | the `closeout` config steps, each banked on disk as it finishes: `wf-*` roles, then `ship` (`complete-sprint`, commit, push, `gh pr create`) | `sprint_start` |
+| `awaiting_ruling` | on restart: `wf-designer` (resume) once `paths.decision_prep` carries a ruling, then `resolve-design-issue` for the brief's `di_id` (the resume run closes only the host entry; the run-state twin is what parks the task). A brief that is *already gone* means the ruling was consumed by a round that stopped before the phase moved — it cuts rather than concluding | `designing`, which runs its rounds and its gate: the ruling round is one design dispatch, not the whole cut |
+
+`designing` and `stage_run` alternate until the close says the PR is ready. They stay
+separate and named because a resume has to say which of them it was suspended in, and
+because `designing` is where the escalation gate and the work-exhaustion exit live — a
+compound state cannot answer either question.
+
+**The stage close is where the sprint ends.** After the heavy checks it appends the
+stage's block to `paths.pr_body`, archives and deletes `paths.stage`, fires the
+completion gate, prunes the drill cache, then decides: ship when the merged tree crossed
+an end-to-end checkpoint (a stage that landed at least one SYS-TC — measured on what
+*merged*, not on what the cut intended), or at `driver.max_stages_per_sprint`, whichever
+comes first. Otherwise it goes back to `designing` for the next cut.
+
+**A blocked task dooms nothing.** There are no edges inside a stage, so the stage closes
+with the tasks that merged and the blocked one re-enters at the next cut: both block
+sites raise a design issue naming the task's branch, the design role drains it by
+authoring the successor and naming it (`task:`), and the driver then cuts that
+successor's worktree from the old branch and rebases it onto the sprint tip — passing
+`--prior-attempt` so the build's Red phase does not read already-passing code as a
+vacuous test. On a rebase conflict it falls back to a fresh worktree and passes nothing:
+carrying the old work is opportunistic, never required.
 
 The clean-tree gate has exactly one carve-out: a tree whose *only* dirt is
 `paths.telemetry`. That file is committed and every role and Stop hook appends to it
@@ -89,15 +113,27 @@ stack, and points the next PR at a base the forge has deleted. `ship` stages the
 with the close, so the sprint's own rows go out with its PR.
 
 Each loop that re-runs a role owns its own budget, as a constant in the module that
-runs it: `phases.SLICE_GATE_ATTEMPTS`, `increments.CONTRACT_PREP_ATTEMPTS`,
-`increments.STAGE_REPAIR_ATTEMPTS`. `review.max_attempts` bounds one task's
-build→review chain and nothing else.
+runs it: `phases.STAGE_GATE_ATTEMPTS`, `stages.STAGE_REPAIR_ATTEMPTS`,
+`stages.REDISPATCH_ATTEMPTS`. `review.max_attempts` bounds one task's build→review
+chain and nothing else.
 
-Inside an increment, one sub-layer at a time: `pipeline next` gives the frontier,
-each task gets a worktree + its envelope (`sprint task --write`) + `wf-build`, then
-the `review.passes` chain; the approved set batch-merges into the sprint branch; the
-boundary runs `commands.stage_check` (repairing through `wf-stage-repair`, whose
-envelope carries the increment's observable checkpoint) and clears design issues.
+Inside a stage there is one pass: `pipeline next` gives the frontier, each task gets a
+worktree + its envelope (`stage task --write`) + `wf-build`, then the `review.passes`
+chain; the approved set batch-merges into the sprint branch. The close then runs
+`commands.stage_check` over the integrated tree — at **every** stage close, so an
+integration break is caught at the stage that caused it — repairing through
+`wf-stage-repair`, whose envelope carries the stage number and its observable
+checkpoint. A check that stays red after
+`STAGE_REPAIR_ATTEMPTS` is a true halt naming its log: the stage has already merged, so
+red means the sprint branch is broken, and under the PR cadence the branch may already
+be pushed.
+
+**Drill-cache staleness is derived, not judged.** Each `wf-drill` digest header carries
+`**Taken at:** <sha>` and `**Targets:** <paths>`; at every stage close the driver drops
+any digest whose targets changed since that commit. A digest naming no targets, or one
+whose commit git cannot reach, is stale by definition — it cannot be checked at all.
+Adequacy digests share the directory and are never swept: they are verdicts, and the
+park count is derived by counting them.
 
 Sprint ids and stack depth are **derived from git**, never stored: the next id is one
 past the highest `sprint/s<N>` branch, and the stack is the sprint branches not yet
@@ -114,9 +150,10 @@ derives from local state. When the stack is empty the next sprint branches from
 
 | rule | trigger | effect |
 |---|---|---|
-| escalation | `paths.decision_prep` exists — written by the design role in any mode | pause in `awaiting_ruling`, with the phase it interrupted recorded; a ruling resumes into that phase, and nothing consumes the brief before then |
-| work exhaustion | no capability or learning entry left that is not `status: parked` | clean exit |
-| manual stop | `driver.stop_file` exists | seen at an increment boundary: finish the sprint, ship, exit |
+| escalation | `paths.decision_prep` exists — written by the design role at a cut | pause in `awaiting_ruling`, with the phase it interrupted recorded; a ruling resumes the cut, and nothing consumes the brief before then |
+| work exhaustion | no capability or learning entry left that is not `status: parked` | clean exit — but whatever stages already merged ship as a PR first, so reviewed green work never strands on a branch nobody is looking at |
+| no stage cut | the design role ran its rounds and wrote no `paths.stage`, while the work-set still holds open, unparked entries | same clean exit, same ship-first. A separate reason because "nothing is in scope" is a claim about the *work-set*: reported as work exhaustion it reads as a drained backlog, and the counts it names say otherwise |
+| manual stop | `driver.stop_file` exists | seen at a stage close: ship the sprint in flight, exit |
 | stack depth | unmerged sprint branches ≥ `driver.max_unmerged_sprints` | pause until PRs merge |
 | request-changes | `driver.review_state_cmd` output contains `CHANGES_REQUESTED` | same as manual stop |
 | launch failed | a role exited non-zero **and** left nothing to route on | pause, quoting the harness's own last log line; re-run to continue from the same position |
@@ -134,16 +171,23 @@ missing:
   Correspondingly, `sprint_start` cuts the branch *before* recording the position, so
   the window that produces such a state never opens.
 - **The hygiene runs.** `sweep-transients` and `pipeline reclaim-stale` used to live
-  only inside `sprint_start` — but an interruption inside the increment loop is exactly
-  where a task is left holding a slot no one will release, and that re-entry never
-  passes through `sprint_start`.
+  only inside `sprint_start` — but an interruption inside a stage is exactly where a
+  task is left holding a slot no one will release, and that re-entry never passes
+  through `sprint_start`.
+- **A stage already closed resumes into the next cut.** The close archives and deletes
+  `paths.stage`, so a run interrupted between that and the phase write comes back to
+  `stage_run` with nothing to load. Its work is merged; what is missing is the next cut,
+  not a halt.
 
 **A non-zero exit is not, on its own, a failure** and is deliberately never checked as
 one: a role can exit badly having already written a perfectly good artifact. It is
 consulted only where the caller has established that the role produced *nothing* — there
-it is the difference between "the Tech Lead decomposed nothing" and "the Tech Lead never
+it is the difference between "the design role cut nothing" and "the design role never
 ran". The one exception is `_repair_merge`, where a non-zero exit already *is* the
-"did not resolve" signal.
+"did not resolve" signal. The stronger form of the same rule guards the no-stage ending
+itself: reaching it with *no dispatch at all* behind it halts as `no_design_dispatch`,
+because a verdict about the work needs a role to have produced it — a resume that
+launched nothing and concluded from the empty disk is how the loop once wedged.
 
 **A rate limit is a wait, not a verdict.** A harness that refuses the launch leaves the
 same empty worktree as a role that mis-stepped, so every caller reading "nothing to
@@ -206,9 +250,10 @@ distinct from `launch_failed`, so "it needed longer" is never reported as "it ne
 |---|---|
 | `wf-driver`, `driver_main.py` | entrypoint and flags |
 | `loop.py` | the continuous loop and per-sprint entry by phase |
-| `phases.py` | sprint_start, designing, closeout, adequacy pass, ship |
-| `increments.py` | increment loop, sub-layer loop, task pipeline, merges, boundary |
-| `issues.py` | design-issue promotion/recording and the repair dispatch |
+| `phases.py` | sprint_start, designing + the stage gate, the completion gate, closeout, ship |
+| `stages.py` | one stage: load, frontier, build→review, merges, the close and the ship-or-cut decision |
+| `issues.py` | design-issue promotion/recording, twin closing, and the blocked-branch salvage lookup |
+| `drillcache.py` | derived digest staleness (taken-at sha × targets), swept at every stage close |
 | `adequacy.py` | digest reading, consecutive-inadequate count, parking |
 | `stoprules.py` | the five stop signals |
 | `gitops.py` | branches, worktrees, merges, stack derivation, push/PR |
@@ -225,28 +270,32 @@ distinct from `launch_failed`, so "it needed longer" is never reported as "it ne
   ancestor of the sprint branch — those two prove the merge landed; tree cleanliness says
   nothing about it, and the repair's own telemetry row leaves the tree dirty anyway). Only
   a repair that could not resolve it
-  aborts the merge, records a design issue naming the conflicting paths (which parks the
-  task) and hands it to the repair ladder.
+  aborts the merge and records a design issue naming the conflicting paths, which parks
+  the task and is what the next cut reads.
 - **The park count is derived, not stored.** Three consecutive `inadequate`
   full-promise digests under `paths.drill_cache` park the capability
   (`status: parked`, written as a text-surgical edit that preserves comments and
-  unicode, L-106). Only full-promise digests count; an iteration-claim review judges
-  one slice's claim. If the drill cache is ever cleared, the count restarts — the
-  park is simply delayed, never wrong.
+  unicode, L-106). Only full-promise digests count; a proposed-set review judges a
+  scenario set at authoring time, not the promise as shipped. If the drill cache is ever
+  cleared, the count restarts — the park is simply delayed, never wrong.
 - **An inadequate verdict is not a dead end.** Before the park count is consulted,
   `wf pipeline append-residuals` carries the digest's residual paths onto the
   capability's `notes:` — stamped with the digest's own timestamp, so re-running a
   review never doubles them. That is what the next plan revision reads.
-- **`adequacy` is a named `closeout` step, not an implicit one.** It must appear before
-  `ship`, which archives the slice and drains the working set it reviews; a list that
-  ships without it, or after it, is a `closeout_order` halt, and a step the driver
-  cannot run is `unknown_closeout_step`. Finished steps are banked in the driver state,
-  so a restart inside closeout does not re-dispatch a review (a second one would shift
-  the park counter).
-- **The PR body's decision report comes from the slice's `## Decision log`,** read
-  before `complete-sprint` archives the slice. There is no separate decisions file.
+- **Adequacy is not a `closeout` step.** It fires per capability at every stage close,
+  on `wf pipeline capability-complete`'s mechanical set-difference of a scenario set
+  against the shipped `[SYS-TC:]` tags — pure mechanism with no ordering to configure, so
+  it carries no knob and naming it in `closeout` is an `unknown_closeout_step` halt. What
+  the config still owns is the per-sprint half: the `wf-*` roles and the terminal `ship`.
+  Finished steps are banked in the driver state, so a restart inside closeout does not
+  re-dispatch one.
+- **The PR body is an accumulator, not a read of one artifact.** Each stage close appends
+  its `serves`, `checkpoint` and `decisions` to `paths.pr_body` (`wf pipeline
+  append-pr-body`) as it merges, because the stage artifact is archived and deleted right
+  after; `ship` folds the close's drain and the plan in around those blocks, in the same
+  file. The PR title comes from what the close says the sprint served.
 - **`--dry-run` stops after the design dispatch.** It prints the dispatches, git
-  writes and CLI mutations it would make; with no slice on disk there is nothing
+  writes and CLI mutations it would make; with no stage on disk there is nothing
   further to plan. It is the smoke-test surface: config, path resolution, role
   resolution, prompt and command construction, stack derivation.
 

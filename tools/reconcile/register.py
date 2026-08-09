@@ -13,8 +13,8 @@ When two tags for one id carry different non-empty descriptions, the row is
 flagged divergent.
 
 Component requirements have no lane here: an acceptance criterion is the requirement,
-planning-time working state in the transient slice → task contract chain, drained from
-the merge record at sprint close, and never tagged in code.
+planning-time working state in the transient stage → task contract chain, drained from
+the merge record, and never tagged in code.
 
 Usage:
     register.py --tests <test-root> [--tests <root> ...] [--out <path>]

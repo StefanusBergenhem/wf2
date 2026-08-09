@@ -206,7 +206,7 @@ class Dispatcher:
         self.sleep = time.sleep
 
     def launch(self, role: str, params: dict, *, cwd=None, task_id=None,
-               increment=None, mode=None) -> Launched:
+               stage=None, mode=None) -> Launched:
         prompt = build_prompt(self.cfg, role, params)
         cmd = render_cmd(self.cfg.agent_cmd_for(role), prompt)
         if self.dry_run:
@@ -223,7 +223,7 @@ class Dispatcher:
         waits = 0
         while True:
             log_path = self._log_path(role, task_id)
-            done = self._run_once(cmd, role, mode, task_id, increment, cwd, log_path)
+            done = self._run_once(cmd, role, mode, task_id, stage, cwd, log_path)
             if done.rc == 0 or done.timed_out or waits >= RATE_LIMIT_WAITS:
                 break
             wait_s = rate_limit_wait_s(log_path, now=self.clock(),
@@ -236,7 +236,7 @@ class Dispatcher:
         return Launched(role, done.rc, done.duration_s, done.timed_out, log_path,
                         cmd, params)
 
-    def _run_once(self, cmd, role, mode, task_id, increment, cwd, log_path):
+    def _run_once(self, cmd, role, mode, task_id, stage, cwd, log_path):
         # The role's own output goes to the log and is never read, so this step line and
         # its heartbeat are the only sign the dispatch is alive — and `agent_timeout_s`
         # is how long it can hang before anything else notices.
@@ -250,7 +250,7 @@ class Dispatcher:
                          "" if step.ok else
                          f"rc={done.rc} · log {log_path}")
         self.telemetry.event("dispatch", role=role, mode=mode, task=task_id,
-                             increment=increment, rc=done.rc,
+                             stage=stage, rc=done.rc,
                              duration_s=done.duration_s,
                              started_at=done.started_at, ended_at=done.ended_at,
                              timed_out=done.timed_out or None,

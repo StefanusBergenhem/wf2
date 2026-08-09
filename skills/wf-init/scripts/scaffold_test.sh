@@ -76,13 +76,13 @@ check "claude overrides block present" \
 # Monitor → "I'll resume when it notifies me", writing no artifact — with the rule
 # against it in the skill they had just read. The tools are denied at launch instead.
 # `--disallowedTools` is variadic, so the prompt must come BEFORE it or the flag eats it.
-for R in "agent_cmd" "wf-designer" "wf-tl" "wf-adequacy"; do
+for R in "agent_cmd" "wf-designer" "wf-adequacy"; do
     check "claude $R denies the parking tools" \
         "grep -q \"$R:.*{prompt}.*--disallowedTools\" '$PROJ/.wf/config.yaml'"
     check "claude $R denies Monitor and ScheduleWakeup" \
         "grep -q \"$R:.*Monitor,ScheduleWakeup\" '$PROJ/.wf/config.yaml'"
 done
-for R in wf-designer wf-tl wf-adequacy; do
+for R in wf-designer wf-adequacy; do
     check "claude override: $R pinned to opus" \
         "grep -A6 'agent_cmd_overrides:' '$PROJ/.wf/config.yaml' | grep -q \"$R:.*--model opus.*{prompt}\""
 done

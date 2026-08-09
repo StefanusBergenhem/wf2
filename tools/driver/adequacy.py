@@ -47,8 +47,8 @@ def newest_digest(cfg, capability: str, question: str = FULL_PROMISE):
 
 def consecutive_inadequate(cfg, capability: str) -> int:
     """The trailing run of inadequate full-promise verdicts. Only the full-promise
-    question counts: an iteration-claim review judges one slice's claim, not the
-    promise, so it can never say the promise is unprovable."""
+    question counts: a proposed-set review judges a scenario set at authoring time, not
+    the promise as shipped, so it can never say the promise is unprovable."""
     count = 0
     for path in reversed(digests(cfg, capability)):
         if verdict_of(path) == "inadequate":

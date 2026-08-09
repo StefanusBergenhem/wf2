@@ -111,6 +111,71 @@ class GitopsTest(support.TempProject):
         self.assertFalse((wt / "leftover.txt").exists())
         self.assertTrue((wt / "moved.txt").is_file())
 
+    # ── carrying a blocked attempt forward ───────────────────────────────────
+
+    def _blocked_attempt(self, filename="attempt.txt", body="what the block left"):
+        """A branch holding a blocked task's commits, with the sprint moved on past it —
+        exactly the state the successor's worktree is cut from."""
+        self.git.start_branch("sprint/s1", "main")
+        old = self.root / ".wf/transient/worktrees/s1-OLD"
+        self.git.worktree_add(old, "task/s1-S7-T2", "sprint/s1")
+        (old / filename).write_text(body)
+        support.git(old, "add", filename)
+        support.git(old, "commit", "-q", "-m", "S7-T2: the attempt that blocked")
+        self.git.worktree_remove(old)
+        support.git(self.root, "checkout", "-q", "sprint/s1")
+        (self.root / "merged.txt").write_text("landed since\n")
+        support.git(self.root, "add", "merged.txt")
+        support.git(self.root, "commit", "-q", "-m", "another task merged")
+
+    def test_a_successors_worktree_carries_the_blocked_branch_and_rebases(self):
+        self._blocked_attempt()
+        wt = self.root / ".wf/transient/worktrees/s1-S8-T1"
+        self.assertTrue(self.git.worktree_from(wt, "task/s1-S8-T1", "task/s1-S7-T2",
+                                               "sprint/s1"))
+        self.assertEqual((wt / "attempt.txt").read_text(), "what the block left")
+        self.assertTrue((wt / "merged.txt").is_file())   # rebased onto the sprint tip
+
+    def test_a_conflicting_rebase_falls_back_instead_of_repairing(self):
+        """Carrying the old work is opportunistic: spending a repair dispatch to salvage
+        a build that was already rejected three times is bad economics."""
+        self._blocked_attempt(filename="README.md", body="the attempt's README\n")
+        support.git(self.root, "checkout", "-q", "sprint/s1")
+        (self.root / "README.md").write_text("the sprint's README\n")
+        support.git(self.root, "add", "README.md")
+        support.git(self.root, "commit", "-q", "-m", "sprint touched the same file")
+        wt = self.root / ".wf/transient/worktrees/s1-S8-T1"
+        self.assertFalse(self.git.worktree_from(wt, "task/s1-S8-T1", "task/s1-S7-T2",
+                                                "sprint/s1"))
+        self.assertFalse(wt.exists())
+        self.assertFalse(self.git.merge_in_progress())
+        # and the fresh cut still works afterwards
+        self.git.worktree_add(wt, "task/s1-S8-T1", "sprint/s1")
+        self.assertEqual((wt / "README.md").read_text(), "the sprint's README\n")
+
+    def test_a_vanished_branch_is_not_carried(self):
+        self.git.start_branch("sprint/s1", "main")
+        wt = self.root / ".wf/transient/worktrees/s1-S8-T1"
+        self.assertFalse(self.git.worktree_from(wt, "task/s1-S8-T1", "task/s1-gone",
+                                                "sprint/s1"))
+
+    # ── change detection ─────────────────────────────────────────────────────
+
+    def test_changed_since_names_what_moved(self):
+        base = support.git(self.root, "rev-parse", "HEAD")
+        (self.root / "backend/zones").mkdir(parents=True)
+        (self.root / "backend/zones/patch.go").write_text("package zones\n")
+        support.git(self.root, "add", "-A")
+        support.git(self.root, "commit", "-q", "-m", "a change")
+        self.assertEqual(self.git.changed_since(base), ["backend/zones/patch.go"])
+        self.assertEqual(self.git.changed_since(
+            support.git(self.root, "rev-parse", "HEAD")), [])
+
+    def test_a_sha_the_repo_does_not_have_reads_as_unknowable(self):
+        # fail safe: the drill-cache prune drops a digest it cannot check
+        self.assertIsNone(self.git.changed_since("0" * 40))
+        self.assertIsNone(self.git.changed_since(""))
+
     # ── merges ───────────────────────────────────────────────────────────────
 
     def _task_commit(self, branch, filename, content):

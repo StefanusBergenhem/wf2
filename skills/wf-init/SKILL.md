@@ -30,7 +30,7 @@ dispatch. See the `wf-basics` skill for what each config field governs.
 
 The scaffolded config carries `commands.preflight` and `commands.stage_check` as empty
 placeholders, run as mechanical gates by the build and review roles and by the driver at
-every increment boundary — leave `commands.preflight` empty and the first build task halts
+every stage close — leave `commands.preflight` empty and the first build task halts
 at its gate mid-sprint. Populate both keys now, before reporting init complete:
 
 1. **Probe the repo for evidence — read what exists, never guess from the stack:**
@@ -47,7 +47,7 @@ at its gate mid-sprint. Populate both keys now, before reporting init complete:
 2. **Propose a concrete value for each key, citing its evidence:**
    - `commands.preflight` — the fast per-task gate: lint + unit tests + build, chained
      with `&&` into one command that exits non-zero on any failure.
-   - `commands.stage_check` — the heavy increment-boundary check: the integration/e2e
+   - `commands.stage_check` — the heavy stage-close check: the integration/e2e
      invocation, plus where those tests live. A repo with no such layer gets an
      explicit "leave empty" proposal — empty skips the check by design.
    - `paths.tests` — the roots covering every test file found, as a list (e.g.

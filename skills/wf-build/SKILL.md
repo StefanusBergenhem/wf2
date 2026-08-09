@@ -6,8 +6,8 @@ description: TDD developer procedure — executes one task contract red→green�
 # wf-build — execute one task contract
 
 You execute the contract at `paths.current_task` under TDD. You do not plan or read the
-spec layer (ADRs, the design slice) — the contract, with the increment narrative that rides
-with it, is complete for what this task builds.
+spec layer (ADRs, the plan, the architecture map) — the contract, with the stage design
+that rides with it, is complete for what this task builds.
 Resolve every path and command from `.wf/config.yaml`:
 
 - `CONTRACT` = `paths.current_task` — what to build (the single source)
@@ -22,17 +22,17 @@ Resolve every path and command from `.wf/config.yaml`:
 
 ## Step 1 — Load the contract
 
-1. Read `CONTRACT`, opening with the **increment narrative** that rides with it: the story
-   of the increment this task belongs to — read it first, it is the frame the task sits in.
-   The task itself carries its `title` (the commit subject you use at handoff), `covers`,
-   and four sections, in this order:
+1. Read `CONTRACT`, opening with the **stage design** that rides with it — `goal`,
+   `allocation`, `flow`, `checkpoint`: the shape this task is built into. Read it first, it
+   is the frame the task sits in. The task itself carries its `title` (the commit subject
+   you use at handoff), `covers`, and four sections, in this order:
    - `story` — what this task builds, why, and how the change flows through the code;
    - `acceptance` — each criterion with the `tests` that prove it, or `verified_by`;
    - `boundaries` — out of scope, read-only files, and any fixed interface. It is
      **binding**, and no other field may contradict it. A signature, struct, or endpoint
      shape fixed here is implemented exactly as written; deviating is a contract problem
      (Step 3b), not a judgement call;
-   - `grounding` — pointers into the existing source, plus `dependency_commits`.
+   - `grounding` — pointers into the existing source.
 
    An e2e task also carries `system_tests`, each entry's scenario text inlined.
 2. Read only the source `grounding` and `boundaries` point at. No wider exploration. Those
@@ -40,13 +40,15 @@ Resolve every path and command from `.wf/config.yaml`:
    genuinely needs it (a consumer that won't compile otherwise, a test-file home, a
    regenerated file); what bounds your work is `covers`, the acceptance criteria, and
    `boundaries`.
-3. A completed `depends_on` task is already merged into the branch your worktree was cut
-   from, so its work is present — do not re-verify it.
-4. When the contract tells you to follow a dependency task's pattern, recover it from that
-   task's merge diff — `grounding`'s `dependency_commits` maps each merged `depends_on`
-   task to its commit hash. `git show <sha> --stat` lists what it changed;
-   `git show <sha> -- <file>` shows the pattern itself. Read those diffs, never the whole
-   files they touch, and do not go hunting for the pattern elsewhere in the tree.
+3. The other tasks of this stage are building in parallel from the same tip; their work is
+   not in your worktree and never will be before you hand off. A shape you must build to is
+   in `boundaries` — never go looking for it in the tree.
+4. **When the envelope carries `prior_attempt`**, your worktree was cut from the branch it
+   names and rebased onto the sprint tip, so it already holds an earlier attempt at this
+   same task; `prior_attempt` also says why that attempt was blocked. Read that reason and
+   `git diff` the attempt's commits before writing a line. Treat everything it left as an
+   unverified draft to be judged against this contract — never as working behaviour to
+   build on — and keep only what this contract still calls for.
 
 ## Step 2 — Derive the test oracles
 
@@ -90,13 +92,14 @@ Announce each phase.
    need a vacuity check: temporarily break the assertion, confirm it fails, then restore it.
 
 A test that passes before any implementation exists is testing the wrong thing —
-investigate, do not proceed. **Exception — the behaviour is already built:** when the code
-the test exercises exists before this task writes a line (an e2e task over merged
-`depends_on` work, a coverage task over a shipped helper), a correct new test passes on
-first run. Do not treat that pass as a Red failure — instead prove each such test is not
-vacuous: temporarily break the behaviour it asserts (or mutate the expected value),
-confirm it fails, then restore and confirm it passes. Do this once per AC, not once for
-the task. A test you cannot make fail this way is vacuous — restructure it.
+investigate, do not proceed. **Exception — the code is already there:** when the code the
+test exercises exists before this task writes a line (an e2e task over work the previous
+stage merged, a coverage task over a shipped helper, or anything a `prior_attempt`
+worktree left behind), a correct new test passes on first run. Do not treat that pass as a
+Red failure — instead prove each such test is not vacuous: temporarily break the behaviour
+it asserts (or mutate the expected value), confirm it fails, then restore and confirm it
+passes. Do this once per AC, not once for the task. A test you cannot make fail this way
+is vacuous — restructure it.
 
 ### Green
 
@@ -117,11 +120,11 @@ e2e task's `[SYS-TC:]` tag line.
 
 If the blocker is **not your own code** — an AC contradicts the source code, two ACs
 contradict each other, an AC contradicts `boundaries`, the contract asks for something the
-source code makes impossible, or an AC fails because **already-merged code** (a dependency
-task's work, not this task's diff) is defective — do not retry or work around it. Write
-`paths.design_issues` from `assets/design_issues.yaml.tmpl`: one open entry, `task_id` your
-task, and a `summary` of what is unbuildable and why — when the defect is in already-merged
-code, name which merged behaviour violates which acceptance criterion.
+source code makes impossible, or an AC fails because **already-merged code** (work that
+landed before this stage, not this task's diff) is defective — do not retry or work around
+it. Write `paths.design_issues` from `assets/design_issues.yaml.tmpl`: one open entry,
+`task_id` your task, and a `summary` of what is unbuildable and why — when the defect is in
+already-merged code, name which merged behaviour violates which acceptance criterion.
 
 Then HALT and report. The return inspector reads the open entry and parks the task —
 you never go on to review.

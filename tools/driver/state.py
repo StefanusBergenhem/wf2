@@ -1,10 +1,11 @@
 """Driver run state — the loop's position, on disk.
 
-The pipeline's own state file tracks one sprint's tasks and is reset at
+The pipeline's own state file tracks one stage's tasks and is reset at
 ``complete-sprint``; this file tracks the position that outlives it: which sprint
-is open, which branch carries it, which phase the machine is in, and which
-increment the loop reached. A restarted driver reads this plus git and resumes;
-nothing that matters lives only in memory.
+is open, which branch carries it, which phase the machine is in, which stage the
+last cut produced, and how many stages the PR in flight already carries. A
+restarted driver reads this plus git and resumes; nothing that matters lives only
+in memory.
 """
 from __future__ import annotations
 
@@ -13,11 +14,11 @@ from pathlib import Path
 
 import yaml
 
-PHASES = ("sprint_start", "designing", "increment_loop", "closeout",
+PHASES = ("sprint_start", "designing", "stage_run", "closeout",
           "awaiting_ruling", "stopped")
 
-_FIELDS = ("phase", "sprint_id", "sprint_branch", "increment", "stop_reason",
-           "stop_pending", "resume_phase", "closeout_done")
+_FIELDS = ("phase", "sprint_id", "sprint_branch", "stage", "stages_shipped",
+           "stop_reason", "stop_pending", "resume_phase", "closeout_done")
 
 
 def _now() -> str:
@@ -33,7 +34,13 @@ class State:
         self.phase = str(doc.get("phase") or "sprint_start")
         self.sprint_id = doc.get("sprint_id")
         self.sprint_branch = doc.get("sprint_branch")
-        self.increment = int(doc.get("increment") or 1)
+        # The stage the last cut produced — the repo-lifetime-monotonic id that keys the
+        # task ids, the stage-check log and the stage-timing state.
+        self.stage = doc.get("stage")
+        # How many stages have merged into the PR in flight. The PR ships when a stage
+        # lands an end-to-end checkpoint or when this reaches
+        # ``driver.max_stages_per_sprint`` — there is no increment list to exhaust.
+        self.stages_shipped = int(doc.get("stages_shipped") or 0)
         self.stop_reason = doc.get("stop_reason")
         # A stop signal seen mid-sprint: the loop finishes and ships the sprint it is
         # in, then exits. Carried on disk so a restart does not lose the signal.
@@ -70,7 +77,8 @@ class State:
         self.phase = "sprint_start"
         self.sprint_id = sprint_id
         self.sprint_branch = branch
-        self.increment = 1
+        self.stage = None
+        self.stages_shipped = 0
         self.stop_reason = None
         self.resume_phase = None
         self.closeout_done = []

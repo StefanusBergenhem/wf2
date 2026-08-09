@@ -41,8 +41,8 @@ class TelemetryTest(support.TempProject):
     def test_a_role_row_mirrors_the_role_into_agent(self):
         # the telemetry reader classifies every row by `agent`; a driver row that
         # carried only `role` was dropped or fuzzy-joined
-        self.tele.event("dispatch", role="wf-designer", mode="originate", sprint="s3",
-                        increment=2, rc=0, started_at="2026-07-31T09:00:00Z",
+        self.tele.event("dispatch", role="wf-designer", mode="resume", sprint="s3",
+                        stage=7, rc=0, started_at="2026-07-31T09:00:00Z",
                         ended_at="2026-07-31T09:04:00Z")
         (row,) = self.rows()
         self.assertEqual(row["agent"], "wf-designer")
@@ -64,10 +64,10 @@ class TelemetryTest(support.TempProject):
         self.assertEqual([r["event"] for r in self.rows()], ["sprint_start", "stop"])
 
     def test_none_valued_fields_are_dropped(self):
-        self.tele.event("phase", role=None, mode=None, increment=2)
+        self.tele.event("phase", role=None, mode=None, stage=7)
         (row,) = self.rows()
         self.assertNotIn("role", row)
-        self.assertEqual(row["increment"], 2)
+        self.assertEqual(row["stage"], 7)
 
     def test_dry_run_writes_nothing(self):
         tele = driver_events.Telemetry(self.cfg, dry_run=True)

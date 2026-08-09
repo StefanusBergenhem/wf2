@@ -1,23 +1,28 @@
-"""Design issues — the repair ladder's plumbing.
+"""Design issues — the channel work takes back into the next cut.
 
 The host ``paths.design_issues`` file is the authority on what is open: build and
-review agents raise one inside their worktree (the driver promotes it), the Tech
-Lead raises a slice-scoped one straight into it, and the driver itself raises one
-for a failure it detected mechanically (a red gate, a merge conflict). Every open
-entry is mirrored into the run state so the scheduler parks the task it names, and
-resolution routes through the design role's repair mode.
+review agents raise one inside their worktree (the driver promotes it), and the
+driver itself raises one for a failure it detected mechanically (a red gate, a
+conflicted merge, a task that blocked). Every open entry is mirrored into the run
+state so the scheduler parks the task it names.
+
+Nothing is dispatched from here. The design role reads the open entries when it
+grounds the next cut and drains each one by authoring the task that answers it,
+naming that successor on the entry — which is also how a blocked attempt's branch
+finds its way into the successor's worktree (``salvage``).
 """
 from __future__ import annotations
 
 import re
 import threading
 
-import dispatch
 import progress
 import yaml
-from runtime import Halt, Pause
 
 _ID_RE = re.compile(r"(\d+)$")
+# The task branch a driver-raised block names in its summary — the successor task's
+# worktree is cut from it when the design role's resolution names that successor.
+_BRANCH_RE = re.compile(r"\btask/[\w.\-/]+")
 # Parallel task threads promote their own issues into the one host file: the
 # read-modify-write below is serialized so the second promotion cannot lose the first.
 _LOCK = threading.Lock()
@@ -118,51 +123,37 @@ def mirror(rt, item: dict) -> None:
     rt.cli.mutate(*args)
 
 
-def repair(rt, item: dict) -> str:
-    """Dispatch the design role's repair mode for one issue and route on the entry it
-    leaves behind. Returns the fix_kind it recorded (may be empty)."""
-    di_id = str(item.get("id"))
-    sprint_path = rt.cfg.path_opt("sprint")
-    params = {"Mode": "repair", "di_id": di_id}
-    if sprint_path and sprint_path.exists():
-        params["sprint_artifact"] = str(sprint_path)
-    if item.get("task_id"):
-        params["task_id"] = str(item["task_id"])
-    rt.tele.event("repair", role="wf-designer", mode="repair", di_id=di_id,
-                  task=item.get("task_id"), sprint=rt.state.sprint_id)
-    launched = rt.agents.launch("wf-designer", params, mode="repair",
-                                task_id=item.get("task_id"))
+def salvage(rt, task_id: str):
+    """``(branch, reason)`` when this task succeeds a blocked one, else ``None``.
 
-    decision_prep = rt.cfg.path_opt("decision_prep")
-    if decision_prep and decision_prep.exists():
-        # The phase must be parked on disk before the run ends, or the restart re-runs
-        # this phase and the repair dispatch deletes the unread brief.
-        rt.state.suspend("awaiting_ruling")
-        rt.tele.event("stop", reason="escalation", sprint=rt.state.sprint_id,
-                      detail=str(decision_prep), di_id=di_id)
-        raise Pause("escalation", f"the design role escalated {di_id} to a ruling")
-
-    after = entry(rt, di_id)
-    if after is None:
-        dispatch.check_launch(launched)
-        raise Halt("design_issue_missing",
-                   f"{di_id} is no longer in {rt.cfg.path('design_issues')}")
-    if str(after.get("status")) != "resolved":
-        # an untouched issue is what BOTH a refused launch and a genuine "I cannot fix
-        # this" leave behind; only the exit code tells them apart
-        dispatch.check_launch(launched)
-        raise Halt("design_issue_unresolved",
-                   f"{di_id} came back {after.get('status')} — a human ruling is needed")
-    rt.cli.mutate("pipeline", "resolve-design-issue", di_id)
-    fix_kind = str(after.get("fix_kind") or "")
-    rt.report.line(f"{di_id} resolved · fix {fix_kind or 'unnamed'}",
-                   symbol=progress.OK, indent=1)
-    return fix_kind
+    A block writes an issue naming the branch its attempts are on; the design role
+    drains that issue by authoring the successor and naming it (``task:``). Those two
+    facts together are the whole mapping — the driver cuts the successor's worktree
+    from the old branch and hands the build the reason the last attempt failed, so its
+    Red phase does not mistake already-passing code for a vacuous test."""
+    for item in _entries(_read(rt.cfg.path_opt("design_issues"))):
+        if str(item.get("task") or "") != str(task_id):
+            continue
+        if str(item.get("status") or "") != "resolved":
+            continue
+        found = _BRANCH_RE.search(str(item.get("summary") or ""))
+        if found:
+            return found.group(0), str(item.get("summary"))
+    return None
 
 
-def is_slice_scoped(item: dict) -> bool:
-    """A slice defect names no task (the increment itself cannot be built as
-    allocated), or says so outright."""
-    return (str(item.get("scope") or "") == "slice"
-            or str(item.get("fix_kind") or "") == "slice_recut"
-            or not item.get("task_id"))
+def close_resolved(rt) -> list:
+    """Close the run-state twin of every host issue the design role has resolved. The
+    role writes only the host file, and the twin is what parks the task the issue names
+    — a twin left open keeps that task out of every later frontier."""
+    closed = []
+    res = rt.cli.read("pipeline", "unresolved-design-issues")
+    for item in (res.data.get("issues") or []):
+        if not isinstance(item, dict) or not item.get("di_id"):
+            continue
+        twin = str(item["di_id"])
+        host = entry(rt, twin)
+        if host is not None and str(host.get("status")) == "resolved":
+            rt.cli.mutate("pipeline", "resolve-design-issue", twin)
+            closed.append(twin)
+    return closed

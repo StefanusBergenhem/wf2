@@ -6,7 +6,7 @@ on role and time without guessing which row is which. Observability, never
 correctness: a sink that cannot be written is swallowed.
 
 The row shape is fixed, because the telemetry reader joins on it:
-``{kind, agent, role, event, mode, sprint, increment, task, rc, duration_s,
+``{kind, agent, role, event, mode, sprint, stage, task, rc, duration_s,
 started_at, ended_at, ts}``. ``agent`` mirrors ``role`` — the reader classifies
 rows by ``agent``, the same field the session and usage rows carry — and every row
 carries an ISO-8601 UTC span, zero-length for an instantaneous event, so a join by

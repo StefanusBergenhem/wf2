@@ -40,20 +40,22 @@ paths:
   skills: ".claude/skills"
   agents: ".claude/agents"
   discover: ".wf/transient/discover"
+  discover_model: ".wf/transient/discover/model.json"
   discover_brief: ".wf/transient/discover/brief.md"
   telemetry: ".wf/telemetry/sessions.jsonl"
   capabilities: ".wf/CAPABILITIES.yaml"
   charter: ".wf/charter.md"
   plan: ".wf/plan.md"
+  architecture: ".wf/architecture.md"
   tests: ["."]
   learnings: ".wf/LEARNINGS.yaml"
   wf_learnings: ".wf/wf-learnings.yaml"
   adrs: ".wf/adrs"
-  design_slice: ".wf/transient/design-slice.md"
+  stage: ".wf/transient/stage.yaml"
+  pr_body: ".wf/transient/pr-body.md"
   drain_report: ".wf/transient/drain-report.yaml"
   decision_prep: ".wf/transient/decision-prep.md"
   drill_cache: ".wf/transient/drill-cache"
-  sprint: ".wf/transient/sprint.yaml"
   archive: ".wf/archive"
   pipeline_state: ".wf/transient/pipeline-state.yaml"
   pipeline_history: ".wf/transient/pipeline-history.yaml"
@@ -69,6 +71,7 @@ driver:
   agent_cmd: '{agent_cmd}'
 {agent_cmd_overrides}\
   max_parallel: 2
+  max_stages_per_sprint: {max_stages_per_sprint}
   max_unmerged_sprints: 3
   stop_file: ".wf/transient/STOP"
   state_file: ".wf/transient/driver-state.yaml"
@@ -78,8 +81,7 @@ driver:
   rate_limit_max_wait_s: 18000
 
 limits:
-  increments_per_sprint: 4
-  tasks_per_increment: 10
+  tasks_per_stage: 10
 
 commands:
   preflight: ""
@@ -90,12 +92,13 @@ hygiene:
   file_error: 800
   charter_max: 120
   plan_max: 60
+  architecture_max: 150
 
 review:
   passes: [wf-review]
   max_attempts: 3
 
-closeout: [wf-retrospective, adequacy, ship]
+closeout: [wf-retrospective, ship]
 
 orchestrate:
   history_cap: 50
@@ -104,11 +107,13 @@ id_counters:
   cap: 0
   learning: 0
   sys_tc: 0
+  stage: 0
 """
 
 
 def write_config(root: Path, *, tools=None, agent_cmd='echo "{prompt}"',
-                 review_state_cmd="", stage_check="", agent_cmd_overrides=None) -> Path:
+                 review_state_cmd="", stage_check="", agent_cmd_overrides=None,
+                 max_stages_per_sprint=4) -> Path:
     """Write a complete .wf/config.yaml into ``root`` and return its path."""
     (root / ".wf").mkdir(parents=True, exist_ok=True)
     cfg = root / ".wf" / "config.yaml"
@@ -122,8 +127,55 @@ def write_config(root: Path, *, tools=None, agent_cmd='echo "{prompt}"',
         agent_cmd_overrides=overrides,
         review_state_cmd=review_state_cmd,
         stage_check=stage_check,
+        max_stages_per_sprint=max_stages_per_sprint,
     ))
     return cfg
+
+
+def stage_doc(*, stage=7, serves=("CAP-001",), tasks=None,
+              checkpoint="after this stage, a patch round-trips", decisions=None,
+              goal="the patch path exists") -> dict:
+    """One cut, in the shape ``paths.stage`` carries: the design header the build
+    envelope rides on, plus that stage's task contracts. No ``increment``, no
+    ``depends_on`` — a stage IS the tasks with no dependency between them."""
+    return {
+        "stage": stage,
+        "serves": list(serves),
+        "goal": goal,
+        "allocation": [{"component": "internal/zones", "does": "patch one zone"}],
+        "flow": "The handler validates, the store writes the named fields.\n",
+        "checkpoint": checkpoint,
+        "decisions": list(decisions or ["Assumption — a patch never creates a zone"]),
+        "tasks": list(tasks if tasks is not None
+                      else [task(f"S{stage}-T1", covers=list(serves)[:1])]),
+    }
+
+
+def task(task_id, *, covers=("CAP-001",), system_tests=None) -> dict:
+    """One task contract. An e2e task carries its scenarios and NO acceptance — the
+    SYS-TC is the acceptance."""
+    entry = {"id": task_id, "title": f"{task_id} — the change",
+             "covers": list(covers),
+             "story": "Build the thing the stage's flow names.\n",
+             "boundaries": "Out of scope: everything else.\n",
+             "grounding": ["README.md — the scratch repo's only file"]}
+    if system_tests:
+        entry["system_tests"] = list(system_tests)
+    else:
+        entry["acceptance"] = [
+            {"id": "AC-1", "criterion": "It works.",
+             "tests": [{"level": "unit", "target": f"{task_id}_test.go"}]}]
+    return entry
+
+
+def write_stage(cfg, **kw) -> Path:
+    """Write a stage artifact to ``paths.stage`` and return its path."""
+    import yaml
+    path = cfg.path("stage")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(yaml.safe_dump(stage_doc(**kw), sort_keys=False,
+                                   allow_unicode=True))
+    return path
 
 
 def commit_wf(root: Path) -> None:

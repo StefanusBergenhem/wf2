@@ -38,7 +38,7 @@ human-ratified before write:
   sequencing, no-go zones.
 - `.wf/architecture.md` — the structural delta: components/subsystems being
   added or changed, 1–2 sentence intent each, depends-on. The autonomous
-  designer **cannot** invent structure beyond this map (slice check A12).
+  designer **cannot** invent structure beyond this map (stage check A12).
 - `.wf/adrs/` — decisions passing the ADR threshold.
 
 This same session is where you **rule on escalations** (step 5 below).
@@ -51,12 +51,17 @@ python3 .wf/tools/driver/wf-driver --once      # bring-up: exactly one sprint
 python3 .wf/tools/driver/wf-driver             # continuous, sprint after sprint
 ```
 
-One sprint = discover refresh → wf-designer cuts the slice (plan revision,
-increments, scenarios; soundness + design-time adequacy gates) → per increment:
-wf-tl writes task contracts → parallel build/review in worktrees → merge per
-sub-layer → boundary checks/repair → closeout: retrospective → close-time
-adequacy per served capability (adequate = the capability drains) → the sprint
-ships as a **stacked PR**. Then the next sprint, until a stop rule fires.
+One **stage** = wf-designer cuts it against the merged tree (plan revision, the
+design, and that stage's task contracts, in one dispatch; soundness + `wf stage
+check`) → its tasks build and review in parallel worktrees, since a stage is the
+set with no dependency between them → they merge together → heavy checks and
+repair at the close → any capability whose scenario set is now fully shipped gets
+its close-time adequacy review (adequate = the capability drains).
+
+One **sprint** = the stages from branching until one lands a system test, or
+`driver.max_stages_per_sprint`, whichever comes first → closeout: retrospective →
+the sprint ships as a **stacked PR**. Then the next sprint, until a stop rule
+fires.
 
 Exit `0` = clean stop, exit `1` = halt needing you. The position is on disk —
 re-running the same command resumes wherever it stopped. Stop reasons:
@@ -65,8 +70,10 @@ re-running the same command resumes wherever it stopped. Stop reasons:
 |---|---|---|
 | `escalation` | designer wrote `.wf/transient/decision-prep.md` | step 5 |
 | `work_exhaustion` | no open, unparked capability/learning left | step 1 (refill) |
+| `no_stage_cut` | the designer ran its rounds and cut no stage — but the counts in the message say work is still open. **Not** a drained backlog | read the designer log the stop names. Usually the capability it is on is too wide to cut against (step 5 / a PO session); resuming just gives it the same rounds again |
+| `no_design_dispatch` | a halt: the loop reached that same no-stage ending with no designer dispatch behind it | a bug, not an operating condition — the run state and the log are the evidence |
 | `stack_depth` | ≥ `driver.max_unmerged_sprints` PRs unmerged | step 4 (merge) |
-| `tasks_blocked` | a task spent every attempt without landing; its dependents were blocked with it | read the reason in the halt, fix the cause, then `wf pipeline unblock-task <id>` per root it names, and resume — the task, everything doomed with it, and the stage pointer all come back, and its worktree still holds what was built |
+| `stage_check_red` | the heavy checks stayed red after every repair attempt, so the sprint branch is broken | read the stage-check log the halt names, fix the cause, and resume |
 | `launch_failed` | the harness never ran a role — expired login, no quota left | read the quoted line; it is the harness's own reason. A **rate limit** is waited out and retried automatically, so seeing this for one means the limit outlasts `driver.rate_limit_max_wait_s` (a weekly cap): resume after it lifts |
 | `launch_timeout` | a role hit `driver.agent_timeout_s` with nothing written | raise the budget if the role legitimately needs longer, then resume |
 | stop file | you asked it to stop | nothing |

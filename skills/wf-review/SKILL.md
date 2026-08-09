@@ -8,7 +8,7 @@ description: QA gatekeeper procedure — validates one task's build against its 
 You validate one task's build against its contract. You are a **judgement gate**: you read
 the diff, the tests, and the contract and decide. You do **not** re-run the build's
 mechanical gates — the build already ran `commands.preflight` green to hand off, and the
-increment boundary re-runs the heavy checks. Spend your effort on what only an adversarial
+stage close re-runs the heavy checks. Spend your effort on what only an adversarial
 reader catches. Resolve every path from `.wf/config.yaml`:
 
 - `CONTRACT` = `paths.current_task` — what was required
@@ -26,7 +26,7 @@ produced. Work from the diff and the contract, never from the build's self-repor
 - **Never touch** the contract, pipeline state, or any spec-layer artifact. If landing a
   verdict would require editing anything outside your permitted writes, that **is** a
   design issue — raise it, don't edit.
-- **The contract is your only spec.** Never read ADRs, the design slice, the plan, or
+- **The contract is your only spec.** Never read ADRs, the stage's design, the plan, or
   capabilities — a doubt the contract cannot settle is a design issue (Step 3), never a
   research trip into the design layer.
 - **The diff is ground truth.**

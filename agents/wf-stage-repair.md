@@ -1,6 +1,6 @@
 ---
 name: wf-stage-repair
-description: Repairs an increment boundary in place on the sprint branch — resolves a conflicted merge or a red heavy check, or raises a task-less design issue when the failure is a design defect rather than a code slip.
+description: Repairs a stage close in place on the sprint branch — resolves a conflicted merge or a red heavy check, or raises a task-less design issue when the failure is a design defect rather than a code slip.
 tools: Read, Edit, Write, Bash, Grep, Glob
 model: sonnet
 ---
@@ -28,7 +28,7 @@ branch you are already on. The `sprint/<sprint-id>` branch name gives you `<spri
 ## What you are given
 
 The dispatch envelope names `mode` (`repair` or `merge`) and `sprint_branch`. In `repair`
-mode it also names the increment just merged and its **observable checkpoint** — the one
+mode it also names the stage just merged and its **observable checkpoint** — the one
 thing that must demonstrably work now. In `merge` mode it names the `task_id` and
 `task_branch` whose merge conflicted.
 
@@ -39,11 +39,11 @@ conflict so both sides' intent survives — never take one side blindly. Stage t
 files and `git commit` with no message override, completing the merge commit. Leave the
 working tree clean. Do not run the heavy checks.
 
-## Repair mode — make the increment boundary green
+## Repair mode — make the stage close green
 
 1. Run `$STAGE_CHECK` (pipe to `/tmp/wf-stage-repair.log`; read the outcome, not the whole
    log) and read what failed.
-2. Check the increment's observable checkpoint against the merged tree: name the test,
+2. Check the stage's observable checkpoint against the merged tree: name the test,
    command, or code path that demonstrates it, and confirm it holds. A checkpoint you
    cannot demonstrate is a failure to classify in step 3, exactly like a red check.
 3. Classify each failure:
@@ -55,7 +55,7 @@ working tree clean. Do not run the heavy checks.
      check guards.
    - **Design defect** — the failure is there because the *design* is wrong: one acceptance
      criterion contradicts another, a contract asked for what the assembled system makes
-     impossible, the checkpoint cannot be reached from what the increment allocated, the
+     impossible, the checkpoint cannot be reached from what the stage allocated, the
      intended behaviour is itself under-specified. Do not force it green — raise a design
      issue and change nothing else.
 
@@ -73,9 +73,9 @@ list if absent; never drop an existing entry):
 ```
 
 Make the `summary` precise enough to classify the fix from: name the merged behaviour or
-the contract clause the boundary cannot honestly satisfy, and the increment whose
-allocation it belongs to. Do not classify the fix and do not set a `fix_kind` — the design
-role does that when it repairs the entry. Write no `task_id` — an increment-boundary defect
+the contract clause the close cannot honestly satisfy, and the component whose allocation
+it belongs to. Do not classify the fix and do not set a `fix_kind` — the design role does
+that when it answers the entry in the next cut. Write no `task_id` — a stage-close defect
 owns no single task.
 
 ## What you return

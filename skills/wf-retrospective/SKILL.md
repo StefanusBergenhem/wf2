@@ -51,7 +51,7 @@ You only ever **create and reinforce** entries — never remove one.
 
 1. Read `$TELEMETRY` — one JSON row per line.
 2. Read `$PIPELINE_STATE` if it exists — the finished run's `task_states`, `design_issues`,
-   and per-increment summaries. If absent, work the run patterns from the driver events
+   and per-stage summaries. If absent, work the run patterns from the driver events
    alone.
 3. Read `$LEARNINGS` and `$WF_LEARNINGS` (each may not exist yet). For each, collect the
    union of every entry's `sources`: that union is what has already been compiled.
@@ -84,7 +84,7 @@ not a learning. With neither source present, skip this phase:
   contracts: a systematic gap in how the work was specified → `$WF_LEARNINGS`.
 - **Escalation / block cause** — an `escalated` or `blocked` task, or the stop event that
   ended the run: what defeated it, stated as something to change next time.
-- **Repair churn** — increments whose boundary needed repair, or contracts amended after
+- **Repair churn** — stages whose close needed repair, or design issues answered after
   dispatch: what the design missed at cut time → `$WF_LEARNINGS`.
 
 Velocity and per-task counts are run telemetry, not learnings — they belong in the Phase 6
@@ -155,7 +155,7 @@ the whole deliverable, and the human applies or rejects it.
    split/cleanup tasks; and,
    when `$PIPELINE_STATE` was
    present, a one-glance execution summary — tasks completed/escalated/blocked, design issues
-   by `fix_kind`, per-increment durations, and the rebuild count as tasks that took more than
+   by `fix_kind`, per-stage durations, and the rebuild count as tasks that took more than
    one `wf-build` dispatch event. Do not commit `$RETRO_REPORT` — it is transient. In your
    return, name `$RETRO_REPORT` and the headline counts; the file carries the detail.
 3. **Archive and drain `$TELEMETRY`** — after step 2 has read the log for the roles report.

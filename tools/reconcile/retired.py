@@ -3,9 +3,9 @@
 
 Verifies that a list of superseded system-test ids no longer appears as a
 `[SYS-TC:]` proving-test tag anywhere in the test tree. When the SA supersedes a
-shipped scenario, the sprint that builds the successor must update or delete the
+shipped scenario, the stage that builds the successor must update or delete the
 old proving test and its tag — this is the mechanical check that it happened
-(complete-sprint runs the same sweep at close from the slice's Supersedes list).
+(complete-sprint runs the same sweep at close from the stage's `supersessions:` list).
 
 Reuses reconcile.py's harvester: exact-id matching (SYS-TC-2 never matches
 SYS-TC-20), test files only. Only SYS-TC ids are sweepable — component

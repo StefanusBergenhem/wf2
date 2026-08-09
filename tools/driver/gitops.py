@@ -185,11 +185,47 @@ class Git:
             done = self._write("worktree", "add", str(path), "-b", branch, base)
         return done
 
+    def worktree_from(self, path: Path, branch: str, source: str, onto: str) -> bool:
+        """Cut the task's worktree from an earlier attempt's branch and rebase it onto
+        the sprint tip, so the successor task starts from whatever the blocked build
+        already got right. Returns False when the source branch is gone or the rebase
+        conflicts — carrying the old work is opportunistic, so the caller then falls
+        back to a fresh worktree from the tip rather than spending a repair dispatch on
+        work a review already rejected."""
+        path = Path(path)
+        if self.dry_run or not self.branch_exists(source):
+            return False
+        if path.exists():
+            self.worktree_remove(path, branch)
+        elif self.branch_exists(branch):
+            self._write("branch", "-D", branch)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if self._write("worktree", "add", str(path), "-b", branch, source).rc != 0:
+            return False
+        if self._run("rebase", onto, cwd=path, timeout=procs.GIT_WRITE_TIMEOUT_S).rc == 0:
+            return True
+        self._run("rebase", "--abort", cwd=path)
+        self.worktree_remove(path, branch)
+        return False
+
     def worktree_remove(self, path: Path, branch: str = ""):
         done = self._write("worktree", "remove", "--force", str(path))
         if branch:
             self._write("branch", "-D", branch)
         return done
+
+    # ── change detection ─────────────────────────────────────────────────────
+
+    def changed_since(self, sha: str):
+        """Every path that changed between ``sha`` and HEAD, repo-relative. ``None``
+        when the repo does not have that commit — the drill-cache prune reads that as
+        "cannot be told" and drops the digest rather than trusting it."""
+        if not sha or not self.ref_exists(f"{sha}^{{commit}}"):
+            return None
+        done = self._run("diff", "--name-only", f"{sha}..HEAD")
+        if done.rc != 0:
+            return None
+        return [line.strip() for line in done.stdout.splitlines() if line.strip()]
 
     # ── merges ───────────────────────────────────────────────────────────────
 

@@ -33,18 +33,18 @@ over time.
 Most documents are transient handovers between roles. The durable set is small:
 
 - **Capabilities** — the *why*, kept as an **open work-set** of *un-proven* demand:
-  user-voice needs the PO has raised whose solution is not yet proven built. A capability
-  drains only through a two-gate proof at the driver's sprint close: its covering
-  **system tests** shipped (mechanical — the `[SYS-TC]` tags in the test tree), and the
-  close-time **wf-adequacy** dispatch finds the shipped scenario set covers the
-  capability's whole promise (judgment — adversarial, grounded in source, never in the
-  design's own decomposition). The drain is keyed on *proof*, never on the designer's
-  "I designed it" and never on requirement coverage alone — dems proved four times that a
-  design's proofs can all be present while the capability is false (each design faithfully
-  proved its own decomposition, which had missed sibling code paths; only source-grounded
-  adversarial review caught the misses). An inadequate verdict appends the residual paths
-  to the capability's notes and feeds the next plan revision; three consecutive
-  inadequates park the capability for a PO session. So a rejected slice, a re-cut, or a
+  user-voice needs the PO has raised whose solution is not yet proven built. One taken up
+  for work also carries, nested beside its promise, the **SYS-TC scenario set that would
+  prove it** — authored when the work starts, seeded from what already shipped, amendable
+  while it builds. It drains only through a two-gate proof, checked at **every stage
+  close**: its covering **system tests** shipped (mechanical — `[SYS-TC]` tags in the test
+  tree, set-differenced against that set), and a **wf-adequacy** dispatch finding they
+  cover the whole promise (judgment — adversarial, grounded in source, never in the
+  design's own decomposition). The drain is keyed on *proof*, never on "I designed it" —
+  dems proved four times that a design's proofs can all be present while the capability is
+  false, each having faithfully proved a decomposition that missed sibling code paths.
+  An inadequate verdict appends the residual paths to the capability's notes; three
+  consecutive ones park it for a PO session. So a rejected design, a re-cut, or a
   false-complete build all leave the *why* intact for the re-design to reason from.
 - **Charter** — the written-down *direction* the autonomous designer converges toward, in
   place of a human sitting in every design session: the target shape at fat-marker
@@ -59,18 +59,18 @@ Most documents are transient handovers between roles. The durable set is small:
   evidence: detailed requirement wording authored upfront was the defect source and left
   the session, but component/dependency thinking was not — so structure authority stays
   human. The map is a **delta**, never an inventory (the governor: existing structure
-  derives from discover). The designer is **hard-bound** to it mechanically (`wf slice
+  derives from discover). The designer is **hard-bound** to it mechanically (`wf stage
   check` rejects an allocation naming a component in neither the repo nor the map);
   needing new structure is an escalation, never an invention. Same drain and cap
   discipline as the charter (`hygiene.architecture_max`).
 - **Rolling plan** — the one durable file the autonomous designer writes: the next few
   milestones and why they come next, at **milestone altitude only** — no requirements, no
-  component detail — under `hygiene.plan_max`. It is re-validated at every sprint start
-  against fresh repo state (a hypothesis, never a commitment executed blindly) and trimmed
-  as milestones ship, and it rides in every sprint PR, where it is the reviewer's
-  direction-drift surface. There is **no design backlog**: design is cut just-in-time and
-  built in the sprint that designs it, so the drain anchor is the slice's `serves:` header
-  plus the merge record, and the load-bearing decisions live in the ADRs.
+  component detail — under `hygiene.plan_max`. Read at every cut and re-validated against
+  fresh repo state (a hypothesis, never a commitment executed blindly), rewritten only when
+  a milestone shipped or the evidence contradicts one, and it rides in every sprint PR as
+  the reviewer's direction-drift surface. There is **no design backlog and no forecast
+  beyond the next stage**: design is cut one stage at a time against the merged tree and
+  built by that stage, so the drain anchor is its `serves:` plus the merge record.
 - **ADRs** — deliberate architecture decisions: the choice made, the
   alternatives rejected, and why. The durable record of *how* the system is
   shaped, separate from the *why* (capabilities) and the local *how-to*
@@ -83,10 +83,10 @@ Most documents are transient handovers between roles. The durable set is small:
   test, so it cannot rot apart from it, and the shipped scenario set is the durable
   proof-of-capability record. Component requirements are **never tagged in code, and carry
   no ids at all**: the acceptance criterion *is* the requirement, it lives exclusively in
-  the transient chain (slice → task contract), and it drains from the **merge record** at
-  sprint close — persisted requirement prose in code claims spec authority, rots
-  invisibly, and makes agents work *around*
-  old requirements instead of replacing them (dems: ~90% of tagged statements were
+  the transient chain (the stage's design → its task contracts), and it drains from the
+  **merge record** — persisted requirement prose in code claims spec authority, rots
+  invisibly, and makes agents work *around* old requirements instead of replacing them
+  (dems: ~90% of tagged statements were
   orphans, one id carried two contradictory statements, and the prose was the top
   hygiene-debt source), while even a bare id-tag is weaker evidence than the merge it
   duplicates (a tag proves a test *mentions* an id; a merged task proves its tests *ran
@@ -99,14 +99,14 @@ Everything else (the repo map, component descriptions, plans, contracts) is
 derived on demand or discarded after the step that produced it.
 
 **The maintainer archive is outside all of this.** As each transient drains from the
-working set (a capability when its adequacy verdict drains it; learnings, the
-slice, and the sprint at sprint close), a copy is written to `paths.archive` — a
-**write-only** sink for the wf2 maintainer to study run quality offline. It is *not* part of the durable working set and
-**no wf role is ever instructed to read it**. The governor forbids storing what code can
-re-derive because a role would consume it as truth and it would rot; the archive is exempt
-because nothing consumes it — it is research exhaust, peer to the telemetry log, never a
-source of truth. Do not wire any role to read it, and do not "governor-police" it as a
-stored-what-code-reports violation.
+working set (a capability when its adequacy verdict drains it; the stage when it merges;
+learnings at sprint close), a copy is written to `paths.archive` — a **write-only** sink
+for the wf2 maintainer to study run quality offline. It is *not* part of the durable
+working set and **no wf role is ever instructed to read it**. The governor forbids storing
+what code can re-derive because a role would consume it as truth and it would rot; the
+archive is exempt because nothing consumes it — research exhaust, peer to the telemetry
+log, never a source of truth. Do not wire any role to read it, and do not
+"governor-police" it as a stored-what-code-reports violation.
 
 ## Ground rules (for building wf2)
 
@@ -129,7 +129,7 @@ real run proves its absence hurt).
     from `.wf/config.yaml`, does its job in the main window, and gates on human
     approval before any durable write.
   - **Dispatched subagent** — the Python driver launches it in a fresh scoped context
-    inside the loop (wf-designer, wf-tl, wf-build, wf-review).
+    inside the loop (wf-designer, wf-build, wf-review).
   This is a first-class, established pattern — the main-context mode is **not** a
   lesser or "ad-hoc" category. Each role is single-context: when a concern needs
   the other context, it becomes its own named skill — the design concern split out of

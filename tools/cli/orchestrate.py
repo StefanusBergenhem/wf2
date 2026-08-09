@@ -518,7 +518,7 @@ def _sweep_transients(rest):
         resets pipeline_state to a bare `idle`: by the next run the shipped sprint's task
         states are gone, and a task_states-keyed rule would keep the file forever.
         An open entry prunes only when its task is provably terminal — including a
-        task-less, slice-scoped one, which stays live until the design role resolves it."""
+        task-less, stage-scoped one, which stays live until the design role resolves it."""
         if not path.exists():
             return
         if task_states is None:
@@ -546,10 +546,10 @@ def _sweep_transients(rest):
             task_id = "" if task_id is None else str(task_id)
             if not task_id:
                 if status == "open":
-                    survivors.append(issue)  # a live slice-scoped handoff
+                    survivors.append(issue)  # a live stage-scoped handoff
                     continue
                 pruned.append({"path": str(path), "id": iid,
-                               "reason": f"slice issue is {status} — residue"})
+                               "reason": f"stage issue is {status} — residue"})
                 continue
             if status != "open":
                 pruned.append({"path": str(path), "id": iid,

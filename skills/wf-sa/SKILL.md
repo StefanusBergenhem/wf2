@@ -62,7 +62,7 @@ with the user: each component/subsystem as one entry — its id (the id
 `paths.discover_brief` lists, or `(planned)` for one not yet built), a **1–2 sentence
 intent**, and its depends-on edges. It is where add/remove/split/merge of components and
 dependency changes are decided — **by you and the user, never by the autonomous
-designer**. The designer is hard-bound to it: `wf slice check` rejects any increment
+designer**. The designer is hard-bound to it: `wf stage check` rejects any stage
 allocation naming a component that neither the repo already carries nor the map names,
 and a design that needs new structure comes back to this session as an escalation. The
 map is a **delta**, not an inventory — existing structure derives from the repo; you

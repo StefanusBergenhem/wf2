@@ -116,9 +116,9 @@ def _roles(rest):
     the context is re-written (churn, not load). Diagnose "loaded too much" on
     context_max, "cache churned" on a footprint far above it. Pre-upgrade rows carry
     no context_max and read as 0.
-    The main loop (`wf-orchestrate`) is not a subagent — its `Stop` rows are
-    cumulative snapshots of the whole session transcript, so its final total per
-    session is reported separately under `main_loop`."""
+    A main-loop session is not a subagent — its `Stop` rows are cumulative snapshots
+    of the whole session transcript, so its final total per session is reported
+    separately under `main_loop`."""
     p = common.base_parser("telemetry roles")
     p.add_argument("--sink", default=None,
                    help="explicit telemetry path; overrides paths.telemetry")

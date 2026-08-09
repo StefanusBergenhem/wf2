@@ -8,8 +8,8 @@
 4. **Stack depth** — the shipped-but-unmerged sprint branches reached
    ``driver.max_unmerged_sprints``: pause until PRs merge.
 
-A request-changes review on any stacked PR acts as (3); it is read at increment
-boundaries with the config-keyed ``driver.review_state_cmd``.
+A request-changes review on any stacked PR acts as (3); it is read at stage closes
+with the config-keyed ``driver.review_state_cmd``.
 
 Every rule is a mechanical read of a file, of git, or of a command's exit — never a
 judgement, and never an agent's prose.
@@ -92,8 +92,8 @@ def pre_sprint(cfg, git):
 
 
 def at_boundary(cfg, git):
-    """Checked at increment boundaries. Only the two signals that let the current
-    sprint finish first: a manual stop, and a request-changes review."""
+    """Checked at every stage close. Only the two signals that let the sprint in flight
+    finish first: a manual stop, and a request-changes review."""
     if cfg.stop_file.exists():
         return Stop("manual_stop", f"{cfg.stop_file} exists")
     branch = review_state(cfg, git)

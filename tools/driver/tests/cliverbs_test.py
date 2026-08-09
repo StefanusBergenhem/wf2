@@ -30,7 +30,7 @@ class CliverbsTest(support.TempProject):
         self.assertEqual(res.data["phase"], "designing")
 
     def test_a_failing_verb_returns_its_exit_code_without_raising(self):
-        res = self.cli.read("pipeline", "increments")  # no sprint file on disk
+        res = self.cli.mutate("pipeline", "load-stage")  # no stage file on disk
         self.assertNotEqual(res.rc, 0)
         self.assertEqual(res.data, {})
 

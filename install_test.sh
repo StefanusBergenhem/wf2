@@ -110,5 +110,22 @@ check "no claude hook script for pi target" "! find '$P2/.wf/tools/telemetry' -n
 check "no settings.json for pi target"      "! [ -e '$P2/.claude/settings.json' ]"
 check "claude+pi list ships the adapter"    "[ -f '$P3/.wf/tools/telemetry/claude_usage_hook.py' ]"
 
+echo "== a re-install prunes wf roles the source no longer carries =="
+# A role file left behind is a live, dispatchable role: the driver resolves a role by
+# naming its file, so a retired skill keeps answering until something removes it.
+mkdir -p "$P1/.claude/skills/wf-retired/" "$P1/.claude/skills/my-own-skill/"
+echo "stale" > "$P1/.claude/skills/wf-retired/SKILL.md"
+echo "mine"   > "$P1/.claude/skills/my-own-skill/SKILL.md"
+echo "stale"  > "$P1/.claude/agents/wf-retired.md"
+echo "mine"   > "$P1/.claude/agents/my-own-agent.md"
+bash "$INSTALL" --target claude "$P1" > "$WORK/run1c.log" 2>&1 \
+    || fail "prune re-install exited non-zero (see $WORK/run1c.log)"
+check "retired wf skill pruned"       "! [ -e '$P1/.claude/skills/wf-retired' ]"
+check "retired wf agent pruned"       "! [ -e '$P1/.claude/agents/wf-retired.md' ]"
+check "non-wf skill left alone"       "[ -f '$P1/.claude/skills/my-own-skill/SKILL.md' ]"
+check "non-wf agent left alone"       "[ -f '$P1/.claude/agents/my-own-agent.md' ]"
+check "live wf skill still installed" "[ -f '$P1/.claude/skills/wf-designer/SKILL.md' ]"
+check "live wf agent still installed" "[ -f '$P1/.claude/agents/wf-drill.md' ]"
+
 echo ""
 if [ "$FAILS" -eq 0 ]; then echo "ALL GREEN"; exit 0; else echo "$FAILS FAILURE(S)"; exit 1; fi

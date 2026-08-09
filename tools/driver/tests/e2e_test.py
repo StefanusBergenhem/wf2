@@ -3,9 +3,10 @@
 stubbed agent that leaves the artifacts a real role would leave.
 
 No LLM is involved — ``driver.agent_cmd`` points at a shell script that writes the
-slice, the contracts, the build commits, the review approval and the adequacy digest.
-Everything else (branching, worktrees, the frontier, the merges, the drain, the PR)
-is the driver and the CLI doing their real work.
+stage (its design header AND its task contracts, in one sitting), the build commits,
+the review approval and the adequacy digest. Everything else (branching, worktrees,
+the frontier, the merges, the drain, the PR) is the driver and the CLI doing their
+real work.
 
 Run: python3 tools/driver/tests/e2e_test.py
 wf2-source-only — never rendered into an install target.
@@ -32,7 +33,6 @@ role="$(sed -n '1s#.*/\([a-z0-9-]*\)\(\.md\| and follow it\.\)#\1#p' <<<"$prompt
 case "$prompt" in
   *wf-discover*)     role=wf-discover ;;
   *wf-designer*)     role=wf-designer ;;
-  *wf-tl*)           role=wf-tl ;;
   *wf-build*)        role=wf-build ;;
   *wf-review*)       role=wf-review ;;
   *wf-adequacy*)     role=wf-adequacy ;;
@@ -50,62 +50,28 @@ wf-designer)
   mkdir -p .wf/transient
   cap="$(grep -o 'CAP-[0-9]*' .wf/CAPABILITIES.yaml | head -1)"
   n=$((10#${cap##*-}))
-  cat > .wf/transient/design-slice.md <<MD
-# Design-slice — the greeting seam $n
-
-**Serves:** $cap
-
-## Design narrative
-
-The scratch service gains a greeting seam. The flow runs from the entry point into
-the greeting module and back out, wired in the composition root, so one end-to-end
-path exists to prove against.
-
-## Claimed scope
-
-- **$cap** — this iteration delivers the greeting for one caller end to end; the
-  bulk path is knowingly left for a later sprint.
-
-## Increments
-
-### Increment 1 — the greeting seam
-
-Goal: a caller can be greeted. Allocation: the greeting module and its entry point.
-Flow: entry point -> greeting module -> caller.
-Checkpoint: after this, greeting a caller demonstrably works.
-
-## System test cases
-
-- **SYS-TC-$n:** a caller is greeted end to end
-  **Covers:** $cap
-  - **Given** a running scratch service
-  - **When** a caller asks to be greeted
-  - **Then** the greeting comes back
-
-## Supersessions
-
-None.
-
-## Soundness
-
-- Cohesion: the seam sits in one module. Pass.
-
-## Decision log
-
-<!-- Ships in the sprint PR body. -->
-
-- **Assumption** — $cap read as one caller at a time, not the bulk path.
-MD
-  ;;
-wf-tl)
-  mkdir -p .wf/transient
-  cap="$(grep -o 'CAP-[0-9]*' .wf/CAPABILITIES.yaml | head -1)"
-  n=$((10#${cap##*-}))
-  cat > .wf/transient/sprint.yaml <<YAML
-sprint_id: "$(field sprint_id)"
+  stage=$((n + 6))
+  cat > .wf/transient/stage.yaml <<YAML
+# STAGE — one cut. TRANSIENT: written fresh, archived and deleted at stage merge.
+stage: $stage
+serves: [$cap]
+goal: "a caller can be greeted through one seam"
+grounded_in: [".wf/transient/discover/brief.md"]
+allocation:
+  - component: greeting
+    does: "hold the greeting behind one seam"
+flow: |
+  The entry point calls the greeting module, which returns the line, and the caller
+  reads it back out — one path, wired in the composition root.
+checkpoint: "after this stage, greeting a caller demonstrably works"
+supersessions: []
+nfr: []
+authz: []
+soundness: {boundary_srp: "the greeting module owns the wording"}
+decisions:
+  - "Assumption — $cap read as one caller at a time, not the bulk path."
 tasks:
-  - id: "T1"
-    increment: 1
+  - id: S$stage-T1
     title: "the greeting module"
     covers: ["$cap"]
     story: |
@@ -116,32 +82,38 @@ tasks:
       - id: AC-1
         criterion: "When a caller is named, the module returns a greeting for that name."
         tests:
-          - {level: unit, target: TestGreeting}
+          - {level: unit, target: "greeting_test.go:TestGreeting$stage"}
     boundaries: |
       Out of scope: the bulk path. Read-only: README.md. The entry point's signature is fixed.
     grounding:
       - "README.md — the scratch repo's only file"
-  - id: "T2"
-    increment: 1
+  - id: S$stage-T2
     title: "the end-to-end greeting"
-    depends_on: ["T1"]
     covers: ["$cap"]
     story: |
       This task proves the greeting path end to end, from the entry point through the
-      greeting module the previous task built, so the increment's checkpoint is observable
+      greeting module the sibling task builds, so the stage's checkpoint is observable
       rather than asserted. Nothing new is designed here; the path is exercised.
     boundaries: |
       Out of scope: new behaviour. Read-only: README.md.
     grounding:
-      - "README.md — the scratch repo's only file"
-    system_tests: ["SYS-TC-$n"]
+      - ".gitignore — what the install leaves ignored"
+    system_tests: [SYS-TC-$n]
 YAML
   ;;
 wf-build)
   task="$(field task_id)"
+  n="$(sed -n 's/.*SYS-TC-\([0-9]*\).*/\1/p' .wf/transient/current-task.yaml | head -1)"
   mkdir -p .wf/transient
-  printf 'built by %s on %s\n' "$task" "$(git rev-parse --abbrev-ref HEAD)" > "$task.txt"
-  git add "$task.txt" >/dev/null
+  if [ -n "$n" ]; then
+    printf 'func Test%s(t *T) { /* [SYS-TC:SYS-TC-%s] a caller is greeted end to end */ }\n' \
+      "$task" "$n" | tr -d '\n' > "${task}_test.go"
+    printf '\n' >> "${task}_test.go"
+    git add "${task}_test.go" >/dev/null
+  else
+    printf 'built by %s\n' "$task" > "$task.txt"
+    git add "$task.txt" >/dev/null
+  fi
   git commit -q -m "$task: build the change" >/dev/null
   printf 'task_id: "%s"\nstatus: ready_for_review\n' "$task" > .wf/transient/review-ready.yaml
   ;;
@@ -167,13 +139,20 @@ exit 0
 """
 
 CAPS = """\
-# CAPABILITIES — the durable why.
+# CAPABILITIES — the durable why, each in-flight entry carrying the scenario set that
+# would prove it. Shipped-ness is never stored: it derives from the [SYS-TC:] tags.
 version: 1
 capabilities:
   - id: "CAP-001"
     statement: "A caller can be greeted."
     value: "The scratch repo has one observable behaviour."
     status: planned
+    system_tests:
+      - id: SYS-TC-1
+        title: "a caller is greeted end to end"
+        given: "a running scratch service"
+        when: "a caller asks to be greeted"
+        then: "the greeting comes back"
 """
 
 SECOND_CAP = """\
@@ -181,6 +160,22 @@ SECOND_CAP = """\
     statement: "A caller can be greeted by name."
     value: "The scratch repo has a second observable behaviour."
     status: planned
+    system_tests:
+      - id: SYS-TC-2
+        title: "a caller is greeted by name end to end"
+        given: "a running scratch service"
+        when: "a named caller asks to be greeted"
+        then: "the greeting carries the name"
+"""
+
+ARCHITECTURE = """\
+# Architecture map
+
+The structural DELTA only — what the repo has not reached yet.
+
+## Components
+
+- **greeting** (planned) — Holds the greeting behind one seam. Depends on: nothing.
 """
 
 
@@ -206,12 +201,12 @@ class EndToEndTest(support.TempProject):
             path = self.root / ".claude/agents" / f"{role}.md"
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(f"# {role}\n")
-        for role in ("wf-designer", "wf-tl"):
-            path = self.root / ".claude/skills" / role / "SKILL.md"
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(f"# {role}\n")
+        path = self.root / ".claude/skills/wf-designer/SKILL.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("# wf-designer\n")
         self.cfg.path("capabilities").write_text(CAPS)
         self.cfg.path("learnings").write_text("version: 1\nlearnings: []\n")
+        self.cfg.path("architecture").write_text(ARCHITECTURE)
         # the telemetry sink is TRACKED, exactly as wf-init's scaffold leaves it: rows
         # appended after a commit dirty the working tree, which the loop must survive
         self.cfg.path("telemetry").parent.mkdir(parents=True, exist_ok=True)
@@ -227,28 +222,32 @@ class EndToEndTest(support.TempProject):
              "--config", str(self.cfg.config_path), *args],
             capture_output=True, text=True, timeout=600, cwd=str(self.root))
 
-    def test_one_sprint_designs_builds_merges_drains_and_ships(self):
+    def test_one_sprint_cuts_builds_merges_drains_and_ships(self):
         done = self.run_driver("--once")
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
 
         roles = [line.split()[0] for line in self.stub_log.read_text().splitlines()]
-        self.assertEqual(roles[:3], ["wf-discover", "wf-designer", "wf-tl"])
+        self.assertEqual(roles[:2], ["wf-discover", "wf-designer"])
         self.assertEqual(roles.count("wf-build"), 2)
         self.assertEqual(roles.count("wf-review"), 2)
+        # one cut, then the PR: the stage landed a SYS-TC, which is the boundary
+        self.assertEqual(roles.count("wf-designer"), 1)
         self.assertIn("wf-adequacy", roles)
         self.assertIn("wf-retrospective", roles)
 
         # the sprint branch carries both tasks' merges
         log = support.git(self.root, "log", "--oneline", "sprint/s1")
-        self.assertIn("T1: merge", log)
-        self.assertIn("T2: merge", log)
+        self.assertIn("S7-T1: merge", log)
+        self.assertIn("S7-T2: merge", log)
         self.assertEqual(support.git(self.root, "branch", "--show-current"), "sprint/s1")
 
-        # the adequate verdict drained the capability, and the archive kept a copy
+        # the shipped scenario completed the capability, the adequate verdict drained it
         self.assertNotIn("CAP-001", self.cfg.path("capabilities").read_text())
         archived = list(self.cfg.path("archive").rglob("*"))
         self.assertTrue([p for p in archived if "capabilities" in p.name])
-        self.assertTrue([p for p in archived if "sprint" in p.name])
+        # the stage artifact left the working set at its own merge
+        self.assertTrue([p for p in archived if "stage" in p.name])
+        self.assertFalse(self.cfg.path("stage").exists())
 
         # shipped: one push, one PR against the base branch
         self.assertIn("sprint/s1", support.git(self.root, "branch", "-r"))
@@ -256,13 +255,13 @@ class EndToEndTest(support.TempProject):
         self.assertIn("pr create", gh_args)
         self.assertIn("--base main", gh_args)
         self.assertIn("--head sprint/s1", gh_args)
-        self.assertIn("s1: Design-slice — the greeting seam", gh_args)
+        self.assertIn("s1: CAP-001", gh_args)
 
-        # the PR body carries the slice's decision log, read before the close archived it
-        body = (self.cfg.path("transient") / "pr-body-s1.md").read_text()
-        self.assertIn("## Decision log", body)
+        # the PR body is the accumulator the stage close appended to, folded in at ship
+        body = self.cfg.path("pr_body").read_text()
+        self.assertIn("## Stage 7", body)
         self.assertIn("CAP-001 read as one caller at a time", body)
-        self.assertNotIn("Ships in the sprint PR body", body)
+        self.assertIn("greeting a caller demonstrably works", body)
 
         # the run state is reset and the driver is ready for the next sprint
         state = self.cfg.state_file.read_text()
@@ -279,6 +278,9 @@ class EndToEndTest(support.TempProject):
         self.assertIn("sprint_start", events)
         self.assertIn("merge", events)
         self.assertIn("ship", events)
+        # mean stage width is the watch item for a role cutting too conservatively
+        widths = [r["width"] for r in rows if r["event"] == "stage_done"]
+        self.assertEqual(widths, [2])
         dispatches = [r for r in rows if r["event"] == "dispatch"]
         self.assertTrue(dispatches)
         self.assertTrue(all(r["agent"] == r["role"] and "duration_s" in r
@@ -292,9 +294,8 @@ class EndToEndTest(support.TempProject):
         # the run narrates itself: a dispatch writes nothing to the terminal, so without
         # this a live run and a hung one look identical
         for expected in ("wf loop starting", "sprint s1", "designing",
-                         "increment 1", "sub-layer 1", "closeout",
-                         "wf-designer (originate)", "wf-build · T1",
-                         "T1 merged", "shipped s1"):
+                         "stage 7", "closeout", "wf-designer",
+                         "wf-build · S7-T1", "S7-T1 merged", "shipped s1"):
             self.assertIn(expected, done.stdout, done.stdout)
         # verb-level detail is --verbose only
         self.assertNotIn("wf pipeline next", done.stdout)
@@ -349,15 +350,15 @@ class EndToEndTest(support.TempProject):
         self.assertEqual(support.git(self.root, "rev-parse", "sprint/s1"),
                          support.git(self.root, "rev-parse", "origin/main^2"))
 
-        # s2 built its own work and shipped a PR against the base branch, not against
-        # the merged-and-deleted s1
-        self.assertIn("T1: merge", s2_log)
-        self.assertIn("T2: merge", s2_log)
+        # s2 built its own work — the stage number is repo-lifetime monotonic, so its
+        # ids never collide with s1's — and shipped a PR against the base branch
+        self.assertIn("S8-T1: merge", s2_log)
+        self.assertIn("S8-T2: merge", s2_log)
         prs = [line for line in self.gh_log.read_text().splitlines()
                if "pr create" in line]
         self.assertEqual(len(prs), 2)
         self.assertIn("--base main --head sprint/s2", prs[1])
-        self.assertIn("s2: Design-slice — the greeting seam 2", prs[1])
+        self.assertIn("s2: CAP-002", prs[1])
 
         # both capabilities drained — the second sprint served the one s1 left behind
         remaining = self.cfg.path("capabilities").read_text()

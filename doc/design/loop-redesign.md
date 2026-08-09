@@ -12,6 +12,12 @@ skill, wf-spec-fix, EARS/REQ layer, human-gated per-design SA sessions).
 **Governing ruling:** this is a considered end-state redesign, not incremental
 scope growth — build the complete new concept; the failure mode is wholesale
 revert with learnings carried back. No half-way points.
+**Amended 2026-08-08 by `stage-horizon.md`:** §5.1's four-level hierarchy, §5.2's
+slice, §5.3's home for SYS-TC and §6.3's PR unit are superseded. Design is cut one
+**stage** at a time against the merged tree; `increment` and `sub-layer` are deleted
+as units and `sprint` means the PR packaging only. Read `stage-horizon.md` for
+anything about units, the slice, the design horizon, or when a PR ships; the rest of
+this document stands.
 
 ---
 

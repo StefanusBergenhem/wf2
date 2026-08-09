@@ -74,7 +74,7 @@ A performance, security, or reliability criterion is verifiable only with all fi
 2. **Metric** — the unit (`milliseconds, p95`).
 3. **Threshold** — the bound (`≤ 200`).
 4. **Condition** — the operating point (`at 200 concurrent requests`).
-5. **Source** — where the number came from (`the slice's NFR envelope`, `SLA`).
+5. **Source** — where the number came from (`the stage's NFR envelope`, `SLA`).
 
 > *For 1,000 concurrent users, median response is ≤ 180 ms and p99 ≤ 250 ms over a 5-minute window.*
 
@@ -84,7 +84,7 @@ Not: *"the system performs well under load."*
 
 Run each criterion past these before it ships:
 
-- **Necessary** — the increment's goal or checkpoint actually needs it? No driver, cut it.
+- **Necessary** — the stage's goal or checkpoint actually needs it? No driver, cut it.
 - **Unambiguous** — one reading only? Smell: "fast", "as needed", a pronoun with two
   possible referents.
 - **Complete** — stands alone, with its trigger and its condition stated? Smell: a dangling
@@ -92,7 +92,7 @@ Run each criterion past these before it ships:
 - **Singular** — one behaviour?
 - **Feasible** — the code this task touches can do it within its constraints?
 - **Verifiable** — a test could demonstrate it, or a named gate observes it?
-- **Correct** — states what the increment needs, not an adjacent guess?
+- **Correct** — states what the stage needs, not an adjacent guess?
 
 For the **set**: every part of the task's story is covered, no two criteria conflict, and
 nothing is stated twice.

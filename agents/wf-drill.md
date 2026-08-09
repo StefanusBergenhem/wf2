@@ -46,6 +46,8 @@ and `<utc>` is `date -u +%Y%m%dT%H%M%SZ`:
 ```markdown
 # Drill: <the question>
 **Target:** <component/path>   **Date:** <utc>   **Confidence:** <high|medium|low — why>
+**Taken at:** <git rev-parse HEAD>
+**Targets:** <repo-relative path>, <repo-relative path>
 
 ## Summary
 <2–4 sentences directly answering the question.>
@@ -63,6 +65,11 @@ and `<utc>` is `date -u +%Y%m%dT%H%M%SZ`:
 ## Gotchas
 - <a surprise, footgun, or sharp edge a change here would hit> — or "none observed".
 ```
+
+**Taken at** is `git rev-parse HEAD`, and **Targets** lists every source file you actually
+read, repo-relative. A later run prunes this digest when any of those files changed since
+that commit, so a digest that names no targets is never trusted again, and one that names
+files it did not read is trusted after the code under it moved. List exactly what you read.
 
 Fill every section. If a section is genuinely empty, write "none observed" — do not
 drop it. Set **Confidence** honestly: `low` when you could not find defending tests

@@ -26,16 +26,18 @@ class StateTest(support.TempProject):
 
     def test_round_trip_through_disk(self):
         st = driver_state.load(self.cfg)
-        st.phase = "increment_loop"
+        st.phase = "stage_run"
         st.sprint_id = "s7"
         st.sprint_branch = "sprint/s7"
-        st.increment = 3
+        st.stage = 12
+        st.stages_shipped = 2
         st.save()
         again = driver_state.load(self.cfg)
-        self.assertEqual(again.phase, "increment_loop")
+        self.assertEqual(again.phase, "stage_run")
         self.assertEqual(again.sprint_id, "s7")
         self.assertEqual(again.sprint_branch, "sprint/s7")
-        self.assertEqual(again.increment, 3)
+        self.assertEqual(again.stage, 12)
+        self.assertEqual(again.stages_shipped, 2)
 
     def test_save_writes_the_configured_path_and_stamps_it(self):
         st = driver_state.load(self.cfg)
@@ -55,15 +57,24 @@ class StateTest(support.TempProject):
         self.assertEqual(before, self.cfg.state_file.stat().st_mtime_ns)
 
     def test_start_sprint_resets_the_per_sprint_fields(self):
+        # stages_shipped counts what the PR in flight carries; carrying it into a new
+        # sprint would ship the next PR early, on stages that are already merged.
         st = driver_state.load(self.cfg)
         st.phase = "closeout"
-        st.increment = 4
+        st.stage = 12
+        st.stages_shipped = 4
         st.stop_reason = "manual_stop"
         st.start_sprint("s9", "sprint/s9")
         self.assertEqual(st.phase, "sprint_start")
         self.assertEqual(st.sprint_id, "s9")
-        self.assertEqual(st.increment, 1)
+        self.assertIsNone(st.stage)
+        self.assertEqual(st.stages_shipped, 0)
         self.assertIsNone(st.stop_reason)
+
+    def test_an_unknown_phase_is_refused(self):
+        st = driver_state.load(self.cfg)
+        with self.assertRaises(ValueError):
+            st.enter("increment_loop")
 
     def test_malformed_state_file_does_not_crash_the_load(self):
         self.cfg.state_file.parent.mkdir(parents=True, exist_ok=True)

@@ -83,27 +83,27 @@ at a real artifact, field, or step; a vague "could be clearer" is noise — omit
   with the exact fix. Code smells belong in `--repo-observation`, not here.
   *(Feeds a proposed AGENTS.md edit.)*
 
-## 3 — The unit hierarchy
+## 3 — The units of work
 
-Work is nested four deep. Use these words for these things — meaning one level and saying
-another sends the next role at the wrong altitude.
+Use these words for these things — meaning one unit and saying another sends the next role
+at the wrong altitude.
 
-- **Sprint** — one loop iteration: one branch, one PR, one slice.
-- **Increment** — a design milestone inside the sprint: a component allocation, an
-  end-to-end flow, and an observable checkpoint. Increments run in the order the slice
-  gives them; each one's tasks merge before the next is planned.
-- **Sub-layer** — the tasks of one increment with no dependency between them; they build in
-  parallel worktrees and merge together.
+- **Sprint** — packaging only: one branch, one PR, one closeout. It carries no design
+  meaning. It ends when a stage lands a SYS-TC scenario, or at
+  `driver.max_stages_per_sprint`, whichever comes first.
+- **Stage** — the design unit: one cut, made against the merged tree, holding the tasks
+  with no dependency between them. They build in parallel worktrees and merge together.
+  Exactly one stage is designed ahead; nothing beyond it is forecast.
 - **Task** — one contract, one build agent, one review chain.
 
-Three artifacts carry direction across sprints: `paths.charter` (where the system is
-going), `paths.architecture` (the structure the repo has not reached yet — what exists is
-derived from discover, never listed there), and `paths.plan` (the next few milestones,
-re-validated every sprint). None is yours to write unless your own instructions say so.
+Four durable artifacts carry direction: `paths.charter` (where the system is going),
+`paths.architecture` (the structure the repo has not reached yet — what exists is derived
+from discover, never listed there), `paths.plan` (the next few milestones, re-validated at
+every cut), and `paths.capabilities` (each open promise, carrying the SYS-TC scenario set
+that would prove it once the capability is taken up). None is yours to write unless your
+own instructions say so.
 
-The slice states its **claimed scope** — what this sprint delivers of each capability's
-promise and what it knowingly leaves. No role declares a capability complete; the
-close-time adequacy gate detects that.
+No role declares a capability complete; the close-time adequacy gate detects that.
 
 ## 4 — You are running headless
 

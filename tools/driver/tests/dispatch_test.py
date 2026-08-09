@@ -28,10 +28,10 @@ class PromptTest(support.TempProject):
 
     def test_prompt_names_the_role_file_and_its_parameters(self):
         cfg = self.cfg()
-        prompt = driver_dispatch.build_prompt(cfg, "wf-designer", {"Mode": "originate"})
+        prompt = driver_dispatch.build_prompt(cfg, "wf-designer", {"Mode": "resume"})
         self.assertIn(str(self.root / ".claude/skills/wf-designer/SKILL.md"), prompt)
         self.assertIn("and follow it", prompt)
-        self.assertIn("Mode: originate", prompt)
+        self.assertIn("Mode: resume", prompt)
 
     def test_prompt_for_an_uninstalled_role_is_fatal(self):
         cfg = self.cfg()
@@ -116,13 +116,13 @@ class LaunchTest(support.TempProject):
             self.root, agent_cmd='bash -c "true" "{prompt}"')))
         tele = driver_events.Telemetry(cfg)
         d = driver_dispatch.Dispatcher(cfg, tele)
-        d.launch("wf-build", {}, task_id="T9", increment=2, mode="fix")
+        d.launch("wf-build", {}, task_id="T9", stage=7, mode="fix")
         rows = [json.loads(x) for x in cfg.path("telemetry").read_text().splitlines()]
         self.assertEqual(rows[-1]["event"], "dispatch")
         self.assertEqual(rows[-1]["role"], "wf-build")
         self.assertEqual(rows[-1]["agent"], "wf-build")
         self.assertEqual(rows[-1]["task"], "T9")
-        self.assertEqual(rows[-1]["increment"], 2)
+        self.assertEqual(rows[-1]["stage"], 7)
         self.assertEqual(rows[-1]["mode"], "fix")
         self.assertEqual(rows[-1]["rc"], 0)
         self.assertTrue(rows[-1]["started_at"].endswith("Z"))
@@ -158,7 +158,7 @@ class CheckLaunchTest(support.TempProject):
         log = self.root / "role.log"
         if body is not None:
             log.write_text(body)
-        return driver_dispatch.Launched("wf-tl", rc, 0, False, log, "cmd", {})
+        return driver_dispatch.Launched("wf-designer", rc, 0, False, log, "cmd", {})
 
     def test_a_clean_exit_lets_the_caller_draw_its_own_conclusion(self):
         driver_dispatch.check_launch(self.launched(0, "fine"))       # no raise
@@ -170,7 +170,7 @@ class CheckLaunchTest(support.TempProject):
                 self.launched(1, "starting\n\nYou've hit your session limit\n"))
         self.assertEqual(caught.exception.reason, "launch_failed")
         self.assertIn("session limit", caught.exception.detail)
-        self.assertIn("wf-tl exited 1", caught.exception.detail)
+        self.assertIn("wf-designer exited 1", caught.exception.detail)
 
     def test_a_failed_launch_with_no_log_still_pauses(self):
         with self.assertRaises(driver_runtime.Pause):
@@ -202,7 +202,7 @@ class CheckLaunchTest(support.TempProject):
 
 # The two shapes a rate-limited harness leaves in the log: the event it emits the
 # moment it refuses, and the result line it exits on. Both are real, copied from the
-# dems run that stopped increment 4.
+# dems run that stopped the sprint.
 def limit_event(resets_at) -> str:
     return ('{"type":"rate_limit_event","rate_limit_info":{"status":"rejected",'
             f'"resetsAt":{resets_at},"rateLimitType":"five_hour"}}}}')

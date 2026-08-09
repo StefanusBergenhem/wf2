@@ -14,8 +14,8 @@ mark, never reused). After a scenario retires, a lingering tag is a historical
 breadcrumb, never an error.
 
 Component requirements are NOT tagged in code: an acceptance criterion IS the
-requirement, and it lives in the transient slice → task contract chain, drained from
-the merge record at sprint close (`wf pipeline complete-sprint`). This harvester
+requirement, and it lives in the transient stage → task contract chain, drained from
+the merge record (`wf pipeline complete-sprint`). This harvester
 ignores any legacy `[REQ:...]` token.
 
 Coverage is not correctness: a tag proves a proving test EXISTS and is committed.

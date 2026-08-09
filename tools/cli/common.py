@@ -10,6 +10,7 @@ them through here.
 from __future__ import annotations
 
 import argparse
+import datetime
 import json
 import re
 import subprocess
@@ -27,6 +28,11 @@ def die(msg: str, code: int = 2) -> "NoReturn":  # type: ignore[name-defined]
     """Mechanical failure: message to stderr, exit non-zero."""
     sys.stderr.write(f"wf: {msg}\n")
     sys.exit(code)
+
+
+def now() -> str:
+    """The UTC stamp every history entry and artifact timestamp carries."""
+    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 # Every subprocess this CLI starts carries an explicit bound. Git plumbing answers in
@@ -49,7 +55,7 @@ def git_out(args, timeout: int = GIT_TIMEOUT_S) -> "str | None":
 # Test-file heuristic (deliberately simple + language-agnostic): a path is a
 # plausible test home when a directory segment is a conventional test dir, or the
 # filename carries test/spec as a delimited token (covers *_test.*, test_*.*,
-# *.test.*, *.spec.*, *-test.* ...). Shared by `sprint check` (C3) and `impact`.
+# *.test.*, *.spec.*, *-test.* ...). Shared by `stage check` and `impact`.
 _TEST_DIRS = {"test", "tests", "__tests__", "spec", "specs", "testdata"}
 _TEST_NAME_RE = re.compile(r"(^|[._-])(test|spec)s?([._-]|$)", re.IGNORECASE)
 
@@ -76,6 +82,21 @@ def load_yaml(path: Path, optional: bool = False) -> dict:
         return yaml.safe_load(path.read_text()) or {}
     except yaml.YAMLError as exc:
         die(f"could not parse {path}: {exc}")
+
+
+def write_yaml(path: Path, doc) -> None:
+    """Atomic YAML write: render to a sibling temp file, then os-replace it in.
+    Concurrent readers (and parallel-worktree appenders) never see a partial write.
+    A render identical to what is already on disk is not written at all — a no-op
+    rewrite churns mtimes and diffs for nothing (L-106)."""
+    rendered = yaml.safe_dump(doc, sort_keys=False, default_flow_style=False,
+                              allow_unicode=True)
+    if path.exists() and path.read_text() == rendered:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(rendered)
+    tmp.replace(path)
 
 
 def config_doc(config_path: str) -> dict:

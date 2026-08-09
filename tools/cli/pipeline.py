@@ -1,279 +1,149 @@
 """wf pipeline — the orchestration decision brain.
 
-The driver holds no scheduling logic of its own: it asks this module what to do
-next. A sprint runs as ordered **increments**; one increment at a time is
-decomposed into tasks, and those tasks are layered into dependency **sub-layers**
-run one at a time with a barrier between, parallel within under a concurrency cap:
+The driver holds no scheduling logic of its own: it asks this module what to do next.
+A sprint is PR packaging; the unit of work is one **stage** — the set of tasks with no
+dependency between them, cut fresh at every design pass and run in one batch:
 
-  - ``increments`` reports the increments the sprint declares, with their task
-    counts and how far each has settled — the driver's position in the sprint.
-  - ``compute-stages --increment N`` topologically layers *that increment's* tasks
-    into ordered sub-layers and stores the plan. Idempotent on resume; naming a
-    different increment recomputes.
-  - ``next`` returns the current sub-layer's dispatch frontier (the pending tasks
-    it can start now, capped to free slots) plus whether the sub-layer is settled,
-    the increment is done, and the sprint is done. The driver drives off
-    ``terminal``.
+  - ``load-stage`` reads the stage artifact and records, in the run state, its task list
+    and its repo-lifetime-monotonic id.
+  - ``next`` returns that stage's dispatch frontier (the pending tasks, capped to free
+    slots) plus ``terminal.stage_done``. There is no layering and no dependency graph, so
+    a blocked task dooms nothing: the stage closes with what merged and the rest re-enters
+    at the next cut.
+  - the close-time verbs that drain the working set — ``capability-complete``,
+    ``drain-capability``, ``append-residuals``, ``complete-sprint`` — live in ``drain``,
+    whose command table is merged into this one so the whole surface stays ``wf pipeline``.
 
-Everything mechanical lives here so the driver never schedules by hand. State
-*mutations* (transition / dispatch / complete-task / …) and *advancing* the
-sub-layer are separate verbs (see the run-state section); return *routing* lives
-in the inspect helpers.
+State *mutations* (transition / dispatch / complete-task / …) and return *routing* are
+separate verbs. Everything mechanical lives here so the driver never schedules by hand.
 """
 from __future__ import annotations
 
 import datetime
 import re
-import sys
 from pathlib import Path
 
-import archive
 import common
-import slice as slice_checks
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "reconcile"))
-from reconcile import DEFAULT_TEST_GLOBS, harvest  # noqa: E402
+import drain
 
 # Effective task status → bucket. Live state (pipeline_state.task_states[id].status)
-# wins; otherwise the sprint-authored status; otherwise "pending".
-_COMPLETED = {"completed", "done"}          # done = sprint.yaml's authored terminal-OK
+# wins; otherwise the stage-authored status; otherwise "pending".
+_COMPLETED = {"completed", "done"}          # done = the stage's authored terminal-OK
 _OCCUPIES_SLOT = {"building", "reviewing", "dispatching"}  # active; counts against the cap
-_PARKED = {"design_issue"}                  # hit a design issue; resolved at end_of_stage
-_ESCALATED = {"escalated"}                  # terminal failure — dependents are doomed
-_BLOCKED = {"blocked"}                      # a dependency is doomed; can never run
-_APPROVED = {"approved"}                    # passed all review passes; awaiting the end_of_stage batch merge
+_PARKED = {"design_issue"}                  # hit a design issue; re-enters at the next cut
+_ESCALATED = {"escalated"}                  # terminal failure for this task
+_BLOCKED = {"blocked"}                      # terminal failure for this task
+_APPROVED = {"approved"}                    # passed every review pass; awaiting the batch merge
 
 
-def _now() -> str:
-    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def _effective_status(task_id, sprint_status, task_states):
-    """Live state wins; fall back to the sprint-authored status; default pending."""
+def _effective_status(task_id, authored_status, task_states):
+    """Live state wins; fall back to the stage-authored status; default pending."""
     live = (task_states.get(task_id) or {}).get("status")
-    return live or sprint_status or "pending"
+    return live or authored_status or "pending"
 
 
-def _detect_cycle(deps_of):
-    """Return the ids forming a dependency cycle, or [] if acyclic. ``deps_of`` maps
-    each task id to its in-graph dependency ids (unknown deps already filtered out)."""
-    WHITE, GREY, BLACK = 0, 1, 2
-    color = {tid: WHITE for tid in deps_of}
-    path: list = []
-
-    def visit(tid):
-        color[tid] = GREY
-        path.append(tid)
-        for dep in deps_of.get(tid, []):
-            if dep not in color:
-                continue
-            if color[dep] == GREY:
-                return path[path.index(dep):] + [dep]
-            if color[dep] == WHITE:
-                found = visit(dep)
-                if found:
-                    return found
-        path.pop()
-        color[tid] = BLACK
-        return None
-
-    for tid in deps_of:
-        if color[tid] == WHITE:
-            found = visit(tid)
-            if found:
-                return found
-    return []
+def _covers_of(entry):
+    cov = (entry or {}).get("covers")
+    if cov is None:
+        return []
+    return [str(c) for c in (cov if isinstance(cov, list) else [cov])]
 
 
-def _sprint_graph(sprint):
-    """Return (ordered_ids, deps_of) for the sprint. deps_of is filtered to in-graph
-    edges only (a depends_on naming an unknown task is dropped, not an error)."""
-    tasks = [t for t in (sprint.get("tasks") or []) if isinstance(t, dict) and t.get("id")]
+# ── The stage artifact ───────────────────────────────────────────────────────
+
+
+def _stage_doc(args, paths=None):
+    """The stage artifact, or {}. It is archived and deleted the moment its stage merges,
+    so every close-time read has to tolerate its absence."""
+    paths = paths if paths is not None else (common.config_doc(args.config).get("paths") or {})
+    if not paths.get("stage"):
+        return {}
+    return common.load_yaml(common.resolve_path(args.config, "stage", None), optional=True)
+
+
+def _stage_tasks(stage_doc):
+    return [t for t in (stage_doc.get("tasks") or []) if isinstance(t, dict) and t.get("id")]
+
+
+def _serves_of(stage_doc):
+    raw = stage_doc.get("serves") or []
+    return [str(s).strip() for s in (raw if isinstance(raw, list) else [raw]) if str(s).strip()]
+
+
+def _stage_id(stage_doc):
+    """The stage's repo-lifetime-monotonic id, minted from ``id_counters.stage``. It keys
+    the task ids, the archive filename and the stage-timing state — a number that restarts
+    is what produced the s1 run's phantom multi-day sub-layers."""
+    raw = stage_doc.get("stage")
+    if raw is None:
+        common.die("the stage artifact declares no `stage:` id — mint one from "
+                   "id_counters.stage")
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        common.die(f"stage id {raw!r} is not a number — id_counters.stage is a monotonic "
+                   f"integer high-water mark")
+
+
+def _loaded_stage(doc):
+    """(id, task_ids) for the stage the run state carries."""
+    stage = doc.get("stage")
+    ids = [t for t in ((stage or {}).get("tasks") or []) if t] if isinstance(stage, dict) else []
+    if not isinstance(stage, dict) or stage.get("id") is None or not ids:
+        common.die("no stage loaded — run 'wf pipeline load-stage'")
+    return int(stage["id"]), ids
+
+
+def _load_stage(rest):
+    """Record what the driver runs next: the stage artifact's task list and its stage id.
+
+    Idempotent — a re-load of the same file keeps every task's live state, so a resumed
+    run does not restart its in-flight work. Nothing from an earlier stage is dropped or
+    renumbered: each cut is a fresh file with fresh ids, and the merge record of what
+    already shipped is what the close-time drain reads."""
+    args = common.base_parser("pipeline load-stage").parse_args(rest)
+
+    stage_doc = common.load_yaml(common.resolve_path(args.config, "stage", None))
+    stage_id = _stage_id(stage_doc)
+    tasks = _stage_tasks(stage_doc)
+    if not tasks:
+        common.die("the stage artifact declares no tasks — nothing to run")
     ids = [t["id"] for t in tasks]
-    id_set = set(ids)
-    deps_of = {
-        t["id"]: [d for d in (t.get("depends_on") or []) if d in id_set] for t in tasks
-    }
-    return tasks, ids, deps_of
 
-
-def _declared_increments(sprint):
-    """The increment labels the sprint's tasks declare, in build order."""
-    numbers = {t.get("increment") for t in (sprint.get("tasks") or [])
-               if isinstance(t, dict) and t.get("increment") is not None}
-    return sorted(numbers, key=slice_checks.increment_key)
-
-
-def _layer_stages(ids, deps_of, completed, excluded):
-    """Topologically layer ids into ordered stages. A task lands in the lowest stage
-    where every dependency is either already ``completed`` or placed in an earlier
-    stage. ``completed`` tasks occupy no stage (their dependents are freed); tasks in
-    ``excluded`` (blocked) and anything transitively depending on them are not placed
-    — returned as ``unplaceable``.
-
-    Returns (stages, unplaceable): stages is a list of sorted id-lists."""
-    remaining = [t for t in ids if t not in completed and t not in excluded]
-    satisfied = set(completed)
-    stages: list[list[str]] = []
-    while remaining:
-        layer = [t for t in remaining if all(d in satisfied for d in deps_of[t])]
-        if not layer:
-            break  # leftover tasks depend on excluded/blocked work — unplaceable
-        layer.sort()
-        stages.append(layer)
-        satisfied.update(layer)
-        remaining = [t for t in remaining if t not in satisfied]
-    return stages, remaining
-
-
-# ── Stage computation (preparing) ───────────────────────────────────────────
-
-
-def _compute_stages(rest):
-    """Layer ONE increment's tasks into ordered dependency sub-layers and store the
-    plan in pipeline_state (stages.increment / definitions / current / total). The TL
-    is dispatched per increment, so only its tasks exist to layer; a dependency on an
-    earlier increment is already merged and satisfied. Idempotent: an existing plan
-    for the SAME increment is preserved (keeping an in-flight ``current``) unless
-    --force; naming a different increment always recomputes. HALTs on a dependency
-    cycle — a cyclic graph is unschedulable."""
-    p = common.base_parser("pipeline compute-stages")
-    p.add_argument("--increment", required=True,
-                   help="the increment whose tasks to layer")
-    p.add_argument("--force", action="store_true",
-                   help="recompute even if a plan for this increment already exists")
-    args = p.parse_args(rest)
-
-    sprint = common.load_yaml(common.resolve_path(args.config, "sprint", None))
     doc = _load_state(args)
-    increment = _as_increment(args.increment)
+    prior = doc.get("stage") or {}
+    changed = prior.get("id") != stage_id or list(prior.get("tasks") or []) != ids
 
-    existing = doc.get("stages") or {}
-    if (existing.get("definitions") and not args.force
-            and existing.get("increment") == increment):
-        common.emit({
-            "increment": increment,
-            "stages": existing.get("definitions"),
-            "total": existing.get("total"),
-            "current": existing.get("current", 1),
-            "recomputed": False,
-        }, args.format)
-        return 0
+    states = doc.setdefault("task_states", {})
+    for task in tasks:
+        # `covers` is recorded per task because the stage file dies at its own merge:
+        # by the PR's close-time drain the run state is the only record of what the
+        # sprint's earlier stages built.
+        covers = _covers_of(task)
+        entry = states.setdefault(task["id"], {})
+        if covers:
+            entry["covers"] = covers
+    doc["stage"] = {"id": stage_id, "tasks": ids}
 
-    tasks, all_ids, all_deps = _sprint_graph(sprint)
-    cycle = _detect_cycle(all_deps)
-    if cycle:
-        common.die(f"dependency cycle: {' -> '.join(cycle)}")
-
-    task_states = doc.get("task_states") or {}
-    status_of = {t["id"]: _effective_status(t["id"], t.get("status"), task_states) for t in tasks}
-    in_increment = [t["id"] for t in tasks if _as_increment(t.get("increment")) == increment]
-    if not in_increment:
-        common.die(f"no task declares increment {increment} — run the TL for it first")
-    scope = set(in_increment)
-
-    deps_of = {tid: [d for d in all_deps[tid] if d in scope] for tid in in_increment}
-    completed = {tid for tid in in_increment if status_of[tid] in _COMPLETED}
-    excluded = {tid for tid in in_increment if status_of[tid] in _BLOCKED}
-    # A dependency OUTSIDE this increment is an earlier increment's task: merged at its
-    # boundary, so satisfied. One that is not completed cannot be waited on here — this
-    # increment's sub-layers only order its own tasks.
-    stranded = {tid for tid in in_increment
-                if any(d not in scope and status_of.get(d) not in _COMPLETED
-                       for d in all_deps[tid])}
-    excluded |= stranded
-
-    stages, unplaceable = _layer_stages(in_increment, deps_of, completed, excluded)
-    unplaceable = sorted(set(unplaceable) | stranded)
-
-    # Sub-layer numbers restart at 1 every increment, and a summary is keyed by that
-    # number alone — so a summary outlives the plan it describes and the next increment's
-    # stage 1 reads the last one's. stage-start then preserves that inherited origin
-    # (idempotent by design, to survive a resume) and stage-end measures a fresh
-    # completed_at against it. Dropping the old plan's summaries here is what keeps the
-    # two honest; a re-layer of the SAME increment is a continuation and keeps them.
-    if (existing.get("definitions") or {}) and existing.get("increment") != increment:
-        doc.pop("stage_summaries", None)
-    doc["stages"] = {"increment": increment, "definitions": stages, "current": 1,
-                     "total": len(stages)}
-    # Tasks that can never run (they depend on a blocked task, or on an earlier
-    # increment's task that never merged) are recorded as blocked so the status view
-    # and the boundary's propagation agree with the plan.
-    if unplaceable:
-        blocked = doc.setdefault("blocked_tasks", {})
-        for tid in unplaceable:
-            reason = next((d for d in all_deps[tid]
-                           if d in excluded or status_of.get(d) not in _COMPLETED), "blocked")
-            if isinstance(blocked, list):
-                blocked.append({"task_id": tid, "blocked_by": reason})
-            else:
-                blocked.setdefault(tid, {"blocked_by": reason})
-    doc.setdefault("history", []).append({
-        "ts": _now(), "event": "stages_computed", "increment": increment,
-        "total": len(stages), "blocked": sorted(unplaceable),
-    })
+    served = [str(s) for s in (doc.get("serves") or [])]
+    served += [s for s in _serves_of(stage_doc) if s not in served]
+    if served:
+        doc["serves"] = served
+    if changed:
+        doc.setdefault("history", []).append({
+            "ts": common.now(), "event": "stage_loaded", "stage": stage_id, "tasks": ids,
+        })
     _save_state(args, doc)
 
-    common.emit({
-        "increment": increment,
-        "stages": stages,
-        "total": len(stages),
-        "current": 1,
-        "blocked": sorted(unplaceable),
-        "recomputed": True,
-    }, args.format)
+    common.emit({"stage": stage_id, "tasks": ids, "count": len(ids)}, args.format)
     return 0
 
 
-def _as_increment(value):
-    """Normalise an increment label: numeric where possible (so `--increment 2` and a
-    YAML `increment: 2` are the same increment), else the raw string."""
-    if value is None:
-        return None
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return str(value)
+# ── The frontier query ───────────────────────────────────────────────────────
 
 
-def _increments(rest):
-    """The sprint's declared increments, each with its task count and how far it has
-    settled — the driver's position in the sprint. `current` is the increment the
-    stored stage plan belongs to; `next` is the first increment that is not fully
-    completed, i.e. where the loop goes when this one closes."""
-    args = common.base_parser("pipeline increments").parse_args(rest)
-    sprint = common.load_yaml(common.resolve_path(args.config, "sprint", None))
-    doc = _load_state(args)
-    task_states = doc.get("task_states") or {}
-    tasks = [t for t in (sprint.get("tasks") or []) if isinstance(t, dict) and t.get("id")]
-
-    out = []
-    for number in _declared_increments(sprint):
-        members = [t for t in tasks if _as_increment(t.get("increment")) == _as_increment(number)]
-        statuses = [_effective_status(t["id"], t.get("status"), task_states) for t in members]
-        out.append({
-            "increment": number,
-            "tasks": len(members),
-            "completed": sum(1 for s in statuses if s in _COMPLETED),
-            "done": all(s in _COMPLETED for s in statuses) if statuses else False,
-        })
-    common.emit({
-        "increments": out,
-        "current": (doc.get("stages") or {}).get("increment"),
-        "next": next((i["increment"] for i in out if not i["done"]), None),
-    }, args.format)
-    return 0
-
-
-# ── The frontier query (running_stage) ───────────────────────────────────────
-
-
-def _dispatch_entry(task, worktree_base, sprint_id):
-    tid = task["id"]
-    return {
-        "task_id": tid,
-        "worktree": f"{worktree_base}/{sprint_id}-{tid}",
-    }
+def _dispatch_entry(task_id, worktree_base, sprint_id):
+    return {"task_id": task_id, "worktree": f"{worktree_base}/{sprint_id}-{task_id}"}
 
 
 def _in_flight_entry(task_id, task_status, history):
@@ -303,21 +173,19 @@ def _elapsed_s(ts):
 
 
 def _next(rest):
-    """Return the current sub-layer's dispatch frontier + settlement signals.
+    """The loaded stage's dispatch frontier + its settlement signal.
 
-    ``dispatch`` is the set of pending current-sub-layer tasks to start now (capped to
-    free slots); ``ready`` is the overflow that will dispatch as slots free.
-    ``terminal.stage_done`` is true when nothing in the sub-layer is still pending or
-    in-flight (the driver then runs the batch merge); ``terminal.increment_done`` adds
-    "and this is the increment's last sub-layer" (the driver then runs the boundary
-    checks); ``terminal.sprint_done`` adds "and no later increment is declared".
-    ``terminal.halt`` is set only when something is structurally wrong (stages not
-    computed, or an out-of-range current). ``in_flight`` entries carry the dispatch
-    that started them and its age, so a task whose agent was never actually spawned
-    stops looking like a slow one."""
+    ``dispatch`` is the set of pending tasks to start now (capped to free slots); ``ready``
+    is the overflow that dispatches as slots free. The whole stage goes at once — its tasks
+    are independent by construction, so ``driver.max_parallel`` is the only thing
+    serialising them.
+
+    ``terminal.stage_done`` is true when nothing is still pending or in-flight; the driver
+    then runs the batch merge. An approved, parked, escalated or blocked task does not hold
+    the stage open and dooms nothing — the stage closes with what merged and the rest
+    re-enters at the next cut. ``terminal.halt`` is set only when no stage is loaded."""
     args = common.base_parser("pipeline next").parse_args(rest)
 
-    sprint = common.load_yaml(common.resolve_path(args.config, "sprint", None))
     state = common.load_yaml(
         common.resolve_path(args.config, "pipeline_state", None), optional=True
     )
@@ -325,87 +193,51 @@ def _next(rest):
     cap = int((cfg.get("driver") or {}).get("max_parallel") or 4)
     worktree_base = (cfg.get("parallel") or {}).get("worktree_base") \
         or ".wf/transient/worktrees"
-    sprint_id = state.get("sprint_id") or sprint.get("sprint_id") or "sprint"
+    sprint_id = state.get("sprint_id") or "sprint"
 
-    tasks_by_id = {
-        t["id"]: t
-        for t in (sprint.get("tasks") or [])
-        if isinstance(t, dict) and t.get("id")
-    }
+    stage = state.get("stage") if isinstance(state.get("stage"), dict) else {}
+    stage_ids = [t for t in (stage.get("tasks") or []) if t]
+    if stage.get("id") is None or not stage_ids:
+        common.emit(_halt_frontier("no stage loaded; run 'wf pipeline load-stage'"),
+                    args.format)
+        return 0
+
+    authored = {t["id"]: t.get("status") for t in _stage_tasks(_stage_doc(args, cfg.get("paths")))}
     task_states = state.get("task_states") or {}
-    stages = state.get("stages") or {}
-    defs = stages.get("definitions")
-    cur = int(stages.get("current", 1) or 1)
-    total = int(stages.get("total", len(defs) if defs else 0) or 0)
-
-    if not defs:
-        common.emit(_halt_frontier("stages not computed; run 'wf pipeline compute-stages'"),
-                    args.format)
-        return 0
-    if cur < 1 or cur > total:
-        common.emit(_halt_frontier(f"current stage {cur} out of range 1..{total}"),
-                    args.format)
-        return 0
-
-    stage_ids = list(defs[cur - 1])
 
     def status(tid):
-        sprint_status = (tasks_by_id.get(tid) or {}).get("status")
-        return _effective_status(tid, sprint_status, task_states)
+        return _effective_status(tid, authored.get(tid), task_states)
 
     history = state.get("history") or []
     in_flight = [_in_flight_entry(t, status(t), history)
                  for t in stage_ids if status(t) in _OCCUPIES_SLOT]
-    repairing = [t for t in stage_ids if status(t) in _PARKED]
-    escalated = [t for t in stage_ids if status(t) in _ESCALATED]
-    blocked = [t for t in stage_ids if status(t) in _BLOCKED]
-    approved = [t for t in stage_ids if status(t) in _APPROVED]
-    pending = [t for t in stage_ids if status(t) not in (
-        _COMPLETED | _OCCUPIES_SLOT | _PARKED | _ESCALATED | _BLOCKED | _APPROVED)]
-    pending.sort()
+    pending = sorted(t for t in stage_ids if status(t) not in (
+        _COMPLETED | _OCCUPIES_SLOT | _PARKED | _ESCALATED | _BLOCKED | _APPROVED))
 
     slots = max(0, cap - len(in_flight))
-    dispatch = [
-        _dispatch_entry(tasks_by_id[t], worktree_base, sprint_id) for t in pending[:slots]
-    ]
+    dispatch = [_dispatch_entry(t, worktree_base, sprint_id) for t in pending[:slots]]
     ready = pending[slots:]
 
-    # The sub-layer is settled once nothing is pending or running. approved tasks
-    # (awaiting the batch merge), parked design-issue, escalated and blocked tasks do
-    # NOT hold it open — the boundary merges the approved set, resolves design issues,
-    # and propagates blocks before advancing.
-    stage_done = not (dispatch or ready or in_flight)
-    increment_done = stage_done and cur >= total
-    increment = stages.get("increment")
-    later = [n for n in _declared_increments(sprint)
-             if slice_checks.increment_key(n) > slice_checks.increment_key(increment)]
-    sprint_done = increment_done and not later
-
-    out = {
-        "increment": increment,
-        "stage": {"index": cur, "total": total, "tasks": stage_ids},
+    common.emit({
+        "stage": {"id": int(stage["id"]), "tasks": stage_ids},
         "dispatch": dispatch,
         "ready": ready,
         "in_flight": in_flight,
-        "approved": approved,
-        "repairing": repairing,
-        "escalated": escalated,
-        "blocked": blocked,
-        "terminal": {"stage_done": stage_done, "increment_done": increment_done,
-                     "sprint_done": sprint_done, "halt": None},
-    }
-    common.emit(out, args.format)
+        "approved": [t for t in stage_ids if status(t) in _APPROVED],
+        "repairing": [t for t in stage_ids if status(t) in _PARKED],
+        "escalated": [t for t in stage_ids if status(t) in _ESCALATED],
+        "blocked": [t for t in stage_ids if status(t) in _BLOCKED],
+        "terminal": {"stage_done": not (dispatch or ready or in_flight), "halt": None},
+    }, args.format)
     return 0
 
 
 def _halt_frontier(reason):
     return {
-        "increment": None,
         "stage": None,
         "dispatch": [], "ready": [], "in_flight": [],
-        "repairing": [], "escalated": [], "blocked": [],
-        "terminal": {"stage_done": False, "increment_done": False, "sprint_done": False,
-                     "halt": {"reason": reason}},
+        "approved": [], "repairing": [], "escalated": [], "blocked": [],
+        "terminal": {"stage_done": False, "halt": {"reason": reason}},
     }
 
 
@@ -422,62 +254,20 @@ def _load_state(args) -> dict:
     return common.load_yaml(_state_path(args), optional=True)
 
 
-def _write_yaml(path: Path, doc) -> None:
-    """Atomic YAML write: render to a sibling temp file, then os-replace it in.
-    Concurrent readers (and parallel-worktree appenders) never see a partial write.
-    A render identical to what is already on disk is not written at all — a no-op
-    rewrite churns mtimes and diffs for nothing (L-106)."""
-    import yaml as _yaml
-
-    rendered = _yaml.safe_dump(doc, sort_keys=False, default_flow_style=False,
-                               allow_unicode=True)
-    if path.exists() and path.read_text() == rendered:
-        return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(rendered)
-    tmp.replace(path)
-
-
 def _save_state(args, doc) -> None:
-    _write_yaml(_state_path(args), doc)
-
-
-def merged_task_ids(args, ids) -> list:
-    """The subset of ``ids`` the run state records as merged: ``complete-task`` stamps the
-    merge commit, and the completed status is that same fact. A merged task's contract is
-    the sprint's merge record — nothing may drop it."""
-    states = _load_state(args).get("task_states") or {}
-    return [tid for tid in ids
-            if isinstance(states.get(tid), dict)
-            and (states[tid].get("merge_commit") or states[tid].get("status") in _COMPLETED)]
-
-
-def drop_task_states(args, ids) -> list:
-    """Remove ``ids`` from ``task_states``; returns the ids removed. A task whose contract
-    is pruned loses its state with it — the run state keys by id sprint-wide, so a re-cut
-    id inheriting the old entry would come back pre-completed."""
-    doc = _load_state(args)
-    states = doc.get("task_states") or {}
-    dropped = [tid for tid in ids if tid in states]
-    if dropped:
-        for tid in dropped:
-            del states[tid]
-        _save_state(args, doc)
-    return dropped
+    common.write_yaml(_state_path(args), doc)
 
 
 def _current_phase(rest):
     args = common.base_parser("pipeline current-phase").parse_args(rest)
     doc = _load_state(args)
-    stages = doc.get("stages") or {}
+    stage = doc.get("stage") if isinstance(doc.get("stage"), dict) else {}
     common.emit(
         {
             "phase": doc.get("current_phase", "idle"),
             "sprint_branch": doc.get("sprint_branch")
             or common.current_branch(common.project_root(args.config)),
-            "stage": stages.get("current") if stages.get("definitions") else None,
-            "total_stages": stages.get("total") if stages.get("definitions") else None,
+            "stage": stage.get("id"),
         },
         args.format,
     )
@@ -527,23 +317,6 @@ def _unresolved_design_issues(rest):
     return 0
 
 
-def _blocked_tasks(rest):
-    args = common.base_parser("pipeline blocked-tasks").parse_args(rest)
-    doc = _load_state(args)
-    raw = doc.get("blocked_tasks", {}) or {}
-    tasks = []
-    if isinstance(raw, dict):
-        for k, v in raw.items():
-            entry = {"task_id": k}
-            if isinstance(v, dict):
-                entry.update(v)
-            tasks.append(entry)
-    elif isinstance(raw, list):
-        tasks = [t for t in raw if isinstance(t, dict)]
-    common.emit({"count": len(tasks), "tasks": tasks}, args.format)
-    return 0
-
-
 def _attempt_counter(rest):
     p = common.base_parser("pipeline attempt-counter")
     p.add_argument("task_id")
@@ -576,9 +349,9 @@ def _transition(rest):
     entering.
 
     ``--sprint-id`` stamps whose sprint this run state belongs to (the driver passes it
-    when it opens one). Without it `next` falls back to the sprint file's own id, and a
-    worktree is then named for a sprint the driver is not running. Omitting the flag
-    leaves an already-recorded id alone."""
+    when it opens one). It names the per-task worktrees, so without it they are named for
+    a sprint the driver is not running. Omitting the flag leaves an already-recorded id
+    alone."""
     p = common.base_parser("pipeline transition")
     p.add_argument("--to", dest="to_phase", required=True)
     p.add_argument("--reason")
@@ -590,8 +363,8 @@ def _transition(rest):
     if args.sprint_id:
         doc["sprint_id"] = args.sprint_id
     doc["current_phase"] = args.to_phase
-    doc["last_transition"] = {"to": args.to_phase, "timestamp": _now(), "reason": args.reason}
-    entry = {"ts": _now(), "event": "transition", "to_phase": args.to_phase}
+    doc["last_transition"] = {"to": args.to_phase, "timestamp": common.now(), "reason": args.reason}
+    entry = {"ts": common.now(), "event": "transition", "to_phase": args.to_phase}
     if args.reason:
         entry["reason"] = args.reason
     doc.setdefault("history", []).append(entry)
@@ -622,7 +395,7 @@ def _dispatch(rest):
     ts["status"] = _DISPATCH_STATE.get(args.agent, "reviewing")
     if args.pass_index is not None:
         ts["pass_index"] = args.pass_index
-    entry = {"ts": _now(), "event": "dispatch", "agent": args.agent,
+    entry = {"ts": common.now(), "event": "dispatch", "agent": args.agent,
              "task_id": args.task, "attempt": int(args.attempt)}
     if args.pass_index is not None:
         entry["pass_index"] = args.pass_index
@@ -649,7 +422,7 @@ def _complete_task(rest):
     ts["build_commit"] = args.commit
     ts["merge_commit"] = args.merge
     doc.setdefault("history", []).append({
-        "ts": _now(), "event": "task_completed", "task_id": args.task_id,
+        "ts": common.now(), "event": "task_completed", "task_id": args.task_id,
         "build_commit": args.commit, "merge_commit": args.merge,
     })
     _save_state(args, doc)
@@ -660,7 +433,7 @@ def _complete_task(rest):
 
 def _approve_task(rest):
     """Mark a task as having passed every review pass — built and approved, awaiting
-    the end_of_stage batch merge. Distinct from completed (which records the merge)."""
+    the batch merge at stage close. Distinct from completed (which records the merge)."""
     p = common.base_parser("pipeline approve-task")
     p.add_argument("task_id")
     p.add_argument("--commit", required=True)
@@ -671,7 +444,7 @@ def _approve_task(rest):
     ts["status"] = "approved"
     ts["build_commit"] = args.commit
     doc.setdefault("history", []).append({
-        "ts": _now(), "event": "task_approved", "task_id": args.task_id,
+        "ts": common.now(), "event": "task_approved", "task_id": args.task_id,
         "build_commit": args.commit,
     })
     _save_state(args, doc)
@@ -693,7 +466,7 @@ def _reject_task(rest):
     ts["status"] = "building"
     ts["pass_index"] = 0  # a rejection restarts the pass pipeline at build (fix mode)
     doc.setdefault("history", []).append({
-        "ts": _now(), "event": "task_rejected", "task_id": args.task_id,
+        "ts": common.now(), "event": "task_rejected", "task_id": args.task_id,
         "feedback_path": args.feedback, "next_attempt": ts["attempt_counter"],
     })
     _save_state(args, doc)
@@ -718,7 +491,7 @@ def _retry_task(rest):
     ts["status"] = "building"
     ts["pass_index"] = 0
     doc.setdefault("history", []).append({
-        "ts": _now(), "event": "task_retried", "task_id": args.task_id,
+        "ts": common.now(), "event": "task_retried", "task_id": args.task_id,
         "reason": args.reason, "next_attempt": ts["attempt_counter"],
     })
     _save_state(args, doc)
@@ -728,6 +501,10 @@ def _retry_task(rest):
 
 
 def _block_task(rest):
+    """Give up on ONE task. Terminal for that task and nothing else: a stage's tasks are
+    independent, so a block dooms no sibling — the stage closes with the rest and the
+    blocked work re-enters at the next cut. The reason is kept because the driver reads it
+    back into the design issue that carries the work forward."""
     p = common.base_parser("pipeline block-task")
     p.add_argument("task_id")
     p.add_argument("--reason", required=True)
@@ -741,61 +518,11 @@ def _block_task(rest):
         blocked[args.task_id] = {"reason": args.reason}
     doc.setdefault("task_states", {}).setdefault(args.task_id, {})["status"] = "blocked"
     doc.setdefault("history", []).append({
-        "ts": _now(), "event": "task_blocked", "task_id": args.task_id, "reason": args.reason,
+        "ts": common.now(), "event": "task_blocked", "task_id": args.task_id, "reason": args.reason,
     })
     _save_state(args, doc)
     common.emit({"ok": True, "event": "task_blocked", "task_id": args.task_id,
                  "status": "blocked"}, args.format)
-    return 0
-
-
-def _unblock_task(rest):
-    """Reverse a block, once its cause is fixed: the named task and every task
-    ``propagate-blocks`` doomed BECAUSE of it go back to pending, and the stage pointer
-    rewinds to the earliest sub-layer the freed work sits in. The rewind is half the job —
-    ``compute-stages`` preserves an existing plan, so nothing else moves ``current``, and a
-    run resumed without it re-enters a sub-layer whose work never ran. A root blocked for
-    its own reason keeps its own chain. Attempt counters survive: what a task has already
-    cost is not undone by unblocking it."""
-    p = common.base_parser("pipeline unblock-task")
-    p.add_argument("task_id")
-    args = p.parse_args(rest)
-
-    doc = _load_state(args)
-    raw = doc.get("blocked_tasks") or {}
-    entries = raw if isinstance(raw, dict) else {
-        b.get("task_id"): b for b in raw if isinstance(b, dict)}
-    if args.task_id not in entries:
-        common.die(f"{args.task_id} is not blocked")
-
-    freed = {args.task_id}
-    changed = True
-    while changed:
-        changed = False
-        for tid, entry in entries.items():
-            if tid not in freed and (entry or {}).get("blocked_by") in freed:
-                freed.add(tid)
-                changed = True
-
-    for tid in freed:
-        entries.pop(tid, None)
-        doc.setdefault("task_states", {}).setdefault(tid, {})["status"] = "pending"
-    doc["blocked_tasks"] = entries
-
-    stages = doc.get("stages") or {}
-    current = int(stages.get("current") or 1)
-    earliest = next((i for i, layer in enumerate(stages.get("definitions") or [], 1)
-                     if any(t in freed for t in layer)), None)
-    if earliest is not None and earliest < current:
-        stages["current"] = current = earliest
-
-    doc.setdefault("history", []).append({
-        "ts": _now(), "event": "task_unblocked", "task_id": args.task_id,
-        "freed": sorted(freed), "stage": current,
-    })
-    _save_state(args, doc)
-    common.emit({"ok": True, "event": "task_unblocked", "task_id": args.task_id,
-                 "freed": sorted(freed), "stage": current}, args.format)
     return 0
 
 
@@ -805,16 +532,15 @@ def _reclaim_stale(rest):
     is NOT bumped — an external disruption is not a task failure."""
     args = common.base_parser("pipeline reclaim-stale").parse_args(rest)
     doc = _load_state(args)
-    stale = _OCCUPIES_SLOT
     reclaimed = []
     for tid, ts in (doc.get("task_states") or {}).items():
-        if (ts or {}).get("status") in stale:
+        if (ts or {}).get("status") in _OCCUPIES_SLOT:
             ts["status"] = "pending"
             reclaimed.append({"task_id": tid, "from_status": ts.get("status", "")})
     if reclaimed:
         hist = doc.setdefault("history", [])
         for r in reclaimed:
-            hist.append({"ts": _now(), "event": "reclaimed_stale_dispatch",
+            hist.append({"ts": common.now(), "event": "reclaimed_stale_dispatch",
                          "task_id": r["task_id"]})
         _save_state(args, doc)
     common.emit({"reclaimed": reclaimed}, args.format)
@@ -824,14 +550,14 @@ def _reclaim_stale(rest):
 def _record_design_issue(rest):
     p = common.base_parser("pipeline record-design-issue")
     p.add_argument("di_id")
-    # An increment-boundary DI is task-less — it names no sprint task, so --task is
-    # optional. Omit it and NO task is parked: there is nothing to park, and a phantom
-    # task_states entry is exactly the synthetic-task trap a task-less DI exists to avoid.
+    # A stage-boundary DI is task-less — it names no task, so --task is optional. Omit it
+    # and NO task is parked: there is nothing to park, and a phantom task_states entry is
+    # exactly the synthetic-task trap a task-less DI exists to avoid.
     p.add_argument("--task", default=None)
     p.add_argument("--severity", required=True)
-    # Build/review/stage-repair raise a BARE issue — no fix_kind. The design role's repair
-    # mode classifies it and writes the kind back to the host artifact; this run-state
-    # twin only tracks status.
+    # Build/review/stage-repair raise a BARE issue — no fix_kind. The design role
+    # classifies it at the next cut and writes the kind back to the host artifact; this
+    # run-state twin only tracks status.
     p.add_argument("--fix_kind", default=None)
     args = p.parse_args(rest)
 
@@ -848,7 +574,7 @@ def _record_design_issue(rest):
     if args.task:
         doc.setdefault("task_states", {}).setdefault(args.task, {})["status"] = "design_issue"
     doc.setdefault("history", []).append({
-        "ts": _now(), "event": "design_issue_recorded", "di_id": args.di_id,
+        "ts": common.now(), "event": "design_issue_recorded", "di_id": args.di_id,
         "task_id": args.task, "fix_kind": args.fix_kind, "severity": args.severity,
     })
     _save_state(args, doc)
@@ -859,7 +585,7 @@ def _record_design_issue(rest):
 
 def _resolve_design_issue(rest):
     """Mark a recorded design issue resolved in pipeline_state so the stage boundary
-    stops re-routing it (the HOST design-issues artifact is the fix agent's record;
+    stops re-routing it (the HOST design-issues artifact is the design role's record;
     this is the run-state's)."""
     p = common.base_parser("pipeline resolve-design-issue")
     p.add_argument("di_id")
@@ -880,15 +606,14 @@ def _resolve_design_issue(rest):
     if not isinstance(entry, dict):
         common.die(f"unknown design issue: {args.di_id}")
     entry["status"] = "resolved"
-    # Un-park the implicated task (design_issue → pending) so the scheduler can place
-    # it again — e.g. behind a component_defect follow-up task after a re-layer. A task
-    # that already moved on (re-dispatched → building, blocked, …) is left alone.
+    # Un-park the implicated task (design_issue → pending) so it can be placed again. A
+    # task that already moved on (re-dispatched → building, blocked, …) is left alone.
     tid = entry.get("task_id")
     ts = (doc.get("task_states") or {}).get(tid) if tid else None
     if isinstance(ts, dict) and ts.get("status") == "design_issue":
         ts["status"] = "pending"
     doc.setdefault("history", []).append({
-        "ts": _now(), "event": "design_issue_resolved", "di_id": args.di_id,
+        "ts": common.now(), "event": "design_issue_resolved", "di_id": args.di_id,
     })
     _save_state(args, doc)
     common.emit({"ok": True, "event": "design_issue_resolved", "di_id": args.di_id,
@@ -896,102 +621,36 @@ def _resolve_design_issue(rest):
     return 0
 
 
-# ── Staged-model mutations ───────────────────────────────────────────────────
+# ── Stage close: timing, summary, the PR body and the history spill ──────────
 
 
-def _advance_stage(rest):
-    """Move to the next stage (current += 1). No-op (advanced: false) when already on
-    the last stage — that is sprint_done, the controller's signal to end_of_sprint."""
-    args = common.base_parser("pipeline advance-stage").parse_args(rest)
-    doc = _load_state(args)
-    stages = doc.get("stages") or {}
-    cur = int(stages.get("current", 1) or 1)
-    total = int(stages.get("total", 0) or 0)
-    if cur >= total:
-        common.emit({"advanced": False, "current": cur, "total": total}, args.format)
-        return 0
-    stages["current"] = cur + 1
-    doc["stages"] = stages
-    doc.setdefault("history", []).append({
-        "ts": _now(), "event": "stage_advanced", "from_stage": cur, "to_stage": cur + 1,
-    })
-    _save_state(args, doc)
-    common.emit({"advanced": True, "current": cur + 1, "total": total}, args.format)
-    return 0
-
-
-def _propagate_blocks(rest):
-    """Mark every task transitively depending on an escalated/blocked task as blocked.
-    The staged-model escalation propagation: an escalated dependency dooms its dependents
-    in any later stage, so they are never dispatched. Mechanical — recomputes the doomed
-    set over the sprint DAG and records the newly-doomed as blocked."""
-    args = common.base_parser("pipeline propagate-blocks").parse_args(rest)
-    sprint = common.load_yaml(common.resolve_path(args.config, "sprint", None))
-    doc = _load_state(args)
-    tasks, ids, deps_of = _sprint_graph(sprint)
-    task_states = doc.get("task_states") or {}
-    status_of = {t["id"]: _effective_status(t["id"], t.get("status"), task_states) for t in tasks}
-
-    doomed = {tid for tid in ids if status_of[tid] in (_ESCALATED | _BLOCKED)}
-    raw_blocked = doc.get("blocked_tasks") or {}
-    if isinstance(raw_blocked, dict):
-        doomed |= set(raw_blocked)
-    elif isinstance(raw_blocked, list):
-        doomed |= {b.get("task_id") for b in raw_blocked if isinstance(b, dict)}
-
-    changed = True
-    while changed:
-        changed = False
-        for tid in ids:
-            if tid in doomed or status_of[tid] in _COMPLETED:
-                continue
-            if any(d in doomed for d in deps_of[tid]):
-                doomed.add(tid)
-                changed = True
-
-    newly = []
-    blocked = doc.setdefault("blocked_tasks", {})
-    for tid in ids:
-        if tid in doomed and status_of[tid] not in (_ESCALATED | _BLOCKED | _COMPLETED):
-            reason = next((d for d in deps_of[tid] if d in doomed), "blocked")
-            if isinstance(blocked, list):
-                blocked.append({"task_id": tid, "blocked_by": reason})
-            else:
-                blocked.setdefault(tid, {"blocked_by": reason})
-            doc.setdefault("task_states", {}).setdefault(tid, {})["status"] = "blocked"
-            newly.append(tid)
-    if newly:
-        doc.setdefault("history", []).append({
-            "ts": _now(), "event": "blocks_propagated", "blocked": sorted(newly),
-        })
-        _save_state(args, doc)
-    common.emit({"blocked": sorted(newly)}, args.format)
-    return 0
+def _stage_timing(doc):
+    """(id, timing) for the loaded stage. Keyed by the repo-lifetime-monotonic stage id,
+    so no later stage can ever inherit an earlier one's wall-clock origin."""
+    stage_id, _ = _loaded_stage(doc)
+    return stage_id, doc.setdefault("stage_summaries", {}).setdefault(
+        stage_id, {}).setdefault("timing", {})
 
 
 def _stage_start(rest):
-    """Record stage start time (idempotent — preserves an existing started_at so a
-    resumed stage keeps its original wall-clock origin)."""
-    p = common.base_parser("pipeline stage-start")
-    p.add_argument("--stage", required=True, type=int)
-    args = p.parse_args(rest)
+    """Record the loaded stage's start time (idempotent — a resumed stage keeps its
+    original wall-clock origin)."""
+    args = common.base_parser("pipeline stage-start").parse_args(rest)
     doc = _load_state(args)
-    timing = doc.setdefault("stage_summaries", {}).setdefault(args.stage, {}).setdefault("timing", {})
+    stage_id, timing = _stage_timing(doc)
     if not timing.get("started_at"):
-        timing["started_at"] = _now()
+        timing["started_at"] = common.now()
         _save_state(args, doc)
-    common.emit({"stage": args.stage, "started_at": timing["started_at"]}, args.format)
+    common.emit({"stage": stage_id, "started_at": timing["started_at"]}, args.format)
     return 0
 
 
 def _stage_end(rest):
-    """Record stage completion time + duration_seconds against the recorded start."""
-    p = common.base_parser("pipeline stage-end")
-    p.add_argument("--stage", required=True, type=int)
-    args = p.parse_args(rest)
+    """Record the loaded stage's completion time + duration_seconds against its start."""
+    args = common.base_parser("pipeline stage-end").parse_args(rest)
     doc = _load_state(args)
-    timing = doc.setdefault("stage_summaries", {}).setdefault(args.stage, {}).setdefault("timing", {})
-    end = _now()
+    stage_id, timing = _stage_timing(doc)
+    end = common.now()
     timing["completed_at"] = end
     started = timing.get("started_at")
     if started:
@@ -1002,23 +661,17 @@ def _stage_end(rest):
         except ValueError:
             pass
     _save_state(args, doc)
-    common.emit({"stage": args.stage, "timing": timing}, args.format)
+    common.emit({"stage": stage_id, "timing": timing}, args.format)
     return 0
 
 
 def _stage_summary(rest):
-    """Write a compact summary of a stage by deriving completed/escalated/design_issue
-    task lists from the live task_states for that stage's tasks. The context-hygiene
-    anchor: at stage close the controller writes this and stops re-reading the stage's
-    per-task detail."""
-    p = common.base_parser("pipeline stage-summary")
-    p.add_argument("--stage", required=True, type=int)
-    args = p.parse_args(rest)
+    """Write a compact summary of the loaded stage, deriving the task lists from the live
+    task_states. The context-hygiene anchor: at stage close the driver writes this and
+    stops re-reading the stage's per-task detail."""
+    args = common.base_parser("pipeline stage-summary").parse_args(rest)
     doc = _load_state(args)
-    defs = (doc.get("stages") or {}).get("definitions") or []
-    if args.stage < 1 or args.stage > len(defs):
-        common.die(f"stage {args.stage} out of range 1..{len(defs)}")
-    stage_ids = defs[args.stage - 1]
+    stage_id, stage_ids = _loaded_stage(doc)
     task_states = doc.get("task_states") or {}
 
     def st(tid):
@@ -1037,14 +690,51 @@ def _stage_summary(rest):
             for t in completed if (task_states.get(t) or {}).get("merge_commit")
         ],
     }
-    ss = doc.setdefault("stage_summaries", {}).setdefault(args.stage, {})
-    ss.update(summary)
+    doc.setdefault("stage_summaries", {}).setdefault(stage_id, {}).update(summary)
     _save_state(args, doc)
-    common.emit({"stage": args.stage, **summary}, args.format)
+    common.emit({"stage": stage_id, **summary}, args.format)
     return 0
 
 
-# ── Sprint lifecycle ─────────────────────────────────────────────────────────
+def _pr_body_block(stage_doc, stage_id):
+    """One stage's contribution to the PR body: what it serves, the end-to-end fact it
+    crossed, and the decisions taken below the escalation gate."""
+    block = [f"## Stage {stage_id}", ""]
+    served = _serves_of(stage_doc)
+    if served:
+        block += [f"**Serves:** {', '.join(served)}", ""]
+    checkpoint = str(stage_doc.get("checkpoint") or "").strip()
+    if checkpoint:
+        block += [f"**Checkpoint:** {checkpoint}", ""]
+    decisions = [str(d).strip() for d in (stage_doc.get("decisions") or []) if str(d).strip()]
+    if decisions:
+        block += ["**Decisions:**"] + [f"- {d}" for d in decisions] + [""]
+    return block
+
+
+def _append_pr_body(rest):
+    """Append the stage's serves / checkpoint / decisions to paths.pr_body — called at
+    stage merge, so the accumulator holds every stage the PR batches and the ship step
+    folds it in whole. Idempotent per stage: a block already carried appends nothing."""
+    args = common.base_parser("pipeline append-pr-body").parse_args(rest)
+
+    stage_doc = common.load_yaml(common.resolve_path(args.config, "stage", None))
+    stage_id = _stage_id(stage_doc)
+    path = common.resolve_path(args.config, "pr_body", None)
+    existing = path.read_text() if path.exists() else ""
+
+    result = {"stage": stage_id, "path": str(path)}
+    if re.search(rf"^## Stage {stage_id}\s*$", existing, re.MULTILINE):
+        result["appended"] = False
+        common.emit(result, args.format)
+        return 0
+
+    block = "\n".join(_pr_body_block(stage_doc, stage_id)).rstrip("\n") + "\n"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text((existing.rstrip("\n") + "\n\n" if existing.strip() else "") + block)
+    result["appended"] = True
+    common.emit(result, args.format)
+    return 0
 
 
 def _archive_history(rest):
@@ -1065,541 +755,25 @@ def _archive_history(rest):
     history_path.parent.mkdir(parents=True, exist_ok=True)
     prior = common.load_yaml(history_path, optional=True)
     prior_entries = prior.get("history", []) if isinstance(prior, dict) else []
-    _write_yaml(history_path, {"history": prior_entries + spill})
+    common.write_yaml(history_path, {"history": prior_entries + spill})
 
     doc["history"] = keep
     doc.setdefault("history", []).append({
-        "ts": _now(), "event": "history_archived", "spilled_count": spill_count,
+        "ts": common.now(), "event": "history_archived", "spilled_count": spill_count,
         "archive_path": str(history_path),
     })
     _save_state(args, doc)
     return 0
 
 
-# ── The close-time drain ─────────────────────────────────────────────────────
-#
-# Two signals close a sprint's working set. The slice's `**Serves:**` header names
-# what the sprint set out to serve; the merge record (which tasks completed, and what
-# they cover) says what actually shipped. A learning drains when every task covering
-# it merged. A capability does NOT drain here — that takes the adequacy judgment,
-# which arrives as its own artifact and drives `drain-capability`.
-
-_DRIVER_ID_RE = re.compile(r"\b(?:CAP|L)-\d+\b")
-_LIST_ITEM_RE = re.compile(r"^(\s*)-\s")
-_ENTRY_ID_RE = re.compile(r"^\s*(?:-\s+)?id:\s*[\"']?([\w.-]+)")
-_ADEQUACY_HEAD_RE = re.compile(r"^#\s*Adequacy:\s*(CAP-\d+)\s*[—\-–:]+\s*(\w+)", re.MULTILINE)
-_QUESTION_LINE_RE = re.compile(r"^\*\*Question:\*\*\s*(.*)$", re.MULTILINE)
-# An adequacy digest's residual lines, its stamp, and the notes field they append to.
-_RESIDUAL_LINE_RE = re.compile(r"^\s*[-*]\s+(.*\bRESIDUAL\b.*)$", re.MULTILINE)
-_DIGEST_STAMP_RE = re.compile(r"-(\d{8}T\d{6}Z)\.md$")
-_DIGEST_DATE_RE = re.compile(r"^\*\*Date:\*\*\s*([^\s*]+)", re.MULTILINE)
-_NOTES_RE = re.compile(r"^(\s*)notes:(.*)$")
-_QUOTES = "\"'"
-# The two questions wf-adequacy stamps into a digest filename.
-_FULL_PROMISE = "full-promise"
-_ITERATION_CLAIM = "iteration-claim"
-
-
-def _covers_of(task):
-    cov = task.get("covers")
-    if cov is None:
-        return []
-    return [str(c) for c in (cov if isinstance(cov, list) else [cov])]
-
-
-def _completed_tasks(sprint_doc, task_states):
-    tasks = [t for t in (sprint_doc.get("tasks") or []) if isinstance(t, dict) and t.get("id")]
-    return [t for t in tasks
-            if _effective_status(t["id"], t.get("status"), task_states) in _COMPLETED]
-
-
-def _shipped_scenarios(completed):
-    """{systc id: {description, covers}} from the merged tasks — the scenario register
-    this sprint added, and the evidence the adequacy review reads."""
-    scenarios = {}
-    for t in completed:
-        for st in t.get("system_tests") or []:
-            if isinstance(st, dict) and st.get("id"):
-                scenarios[st["id"]] = {"description": st.get("description", ""),
-                                       "covers": list(st.get("covers") or [])}
-    return scenarios
-
-
-def _drop_yaml_entries(text, ids):
-    """Remove the list entries whose ``id:`` is in ``ids``, editing the file as TEXT.
-    Round-tripping through PyYAML would strip the header comments these durable files
-    carry and normalise their unicode, so the drain rewrites lines instead (L-106).
-    Returns (new_text, dropped_ids)."""
-    lines = text.splitlines(keepends=True)
-    out, dropped, i = [], [], 0
-    while i < len(lines):
-        m = _LIST_ITEM_RE.match(lines[i])
-        if not m:
-            out.append(lines[i])
-            i += 1
-            continue
-        indent, block, pending, j = len(m.group(1)), [lines[i]], [], i + 1
-        while j < len(lines):
-            nxt = lines[j]
-            if not nxt.strip():
-                pending.append(nxt)
-                j += 1
-                continue
-            if len(nxt) - len(nxt.lstrip()) <= indent:
-                break
-            block.extend(pending)
-            pending = []
-            block.append(nxt)
-            j += 1
-        entry_id = next((mm.group(1) for mm in
-                         (_ENTRY_ID_RE.match(b) for b in block) if mm), None)
-        if entry_id in ids:
-            dropped.append(entry_id)
-        else:
-            out.extend(block)
-        out.extend(pending)
-        i = j
-    return "".join(out), dropped
-
-
-def drop_entries(path, ids):
-    """Drop ``ids`` from a YAML list file in place; returns the ids actually removed.
-    A no-op leaves the file untouched (L-106)."""
-    text = path.read_text()
-    new_text, dropped = _drop_yaml_entries(text, set(ids))
-    if dropped and new_text != text:
-        path.write_text(new_text)
-    return dropped
-
-
-def _slice_serves(args, paths):
-    """The CAP/L ids on the slice's `**Serves:**` header — what this sprint set out
-    to serve. [] when no slice is on disk."""
-    if not paths.get("design_slice"):
-        return []
-    sp = common.resolve_path(args.config, "design_slice", None)
-    return slice_checks.serves_ids(sp.read_text()) if sp.exists() else []
-
-
-def _superseded_sys_tc_survivors(slice_text, args):
-    """Every SYS-TC id the slice's Supersessions section retires that is STILL tagged in
-    the test tree — the build was required to remove it; a survivor is a finding for the
-    next slice. Retiring a shipped scenario is above the escalation gate, so this only
-    ever fires on a slice written after a human ruled on one."""
-    ids = re.findall(r"\bSYS-TC-\d+\b",
-                     slice_checks.section(slice_text, "Supersessions"))
-    if not ids:
-        return []
-    ids = list(dict.fromkeys(ids))
-    cfg_tests = (common.config_doc(args.config).get("paths") or {}).get("tests")
-    roots = [cfg_tests] if isinstance(cfg_tests, str) else list(cfg_tests or [])
-    root_dir = common.project_root(args.config)
-    dirs = [d for d in (root_dir / r for r in roots) if d.is_dir()]
-    if not dirs:
-        return []
-    harvested = harvest(dirs, DEFAULT_TEST_GLOBS)
-    return [{"id": rid, "files": sorted(set(harvested[rid]["files"]))}
-            for rid in ids if rid in harvested]
-
-
-def _drain_working_set(args, doc, sprint_doc, paths):
-    """Run the close-time drain; returns the drain summary (empty when no sprint is on
-    disk — nothing shipped, nothing to drain)."""
-    if not sprint_doc:
-        return {}
-    task_states = doc.get("task_states") or {}
-    tasks = [t for t in (sprint_doc.get("tasks") or []) if isinstance(t, dict) and t.get("id")]
-    completed = _completed_tasks(sprint_doc, task_states)
-    completed_ids = {t["id"] for t in completed}
-    scenarios = _shipped_scenarios(completed)
-    served = _slice_serves(args, paths)
-
-    survivors = []
-    if paths.get("design_slice"):
-        sp = common.resolve_path(args.config, "design_slice", None)
-        if sp.exists():
-            survivors = _superseded_sys_tc_survivors(sp.read_text(), args)
-
-    # A learning drains when the sprint served it AND every task covering it merged.
-    # Partial ship is not proof, and a served id no task covered was never built.
-    drained_learnings, partially_served = [], []
-    for ident in served:
-        if not ident.startswith("L-"):
-            continue
-        owners = [t for t in tasks if ident in _covers_of(t)]
-        if not owners:
-            partially_served.append({"id": ident, "reason": "no task covered it"})
-        elif all(t["id"] in completed_ids for t in owners):
-            drained_learnings.append(ident)
-        else:
-            partially_served.append({
-                "id": ident,
-                "reason": "unmerged tasks: " + ", ".join(
-                    sorted(t["id"] for t in owners if t["id"] not in completed_ids)),
-            })
-    if drained_learnings and paths.get("learnings"):
-        lp = common.resolve_path(args.config, "learnings", None)
-        drained_learnings = drop_entries(lp, drained_learnings) if lp.exists() else []
-
-    # Capabilities never drain on the merge record: the close-time adequacy review is
-    # the only thing that can. They leave here as candidates, with the scenarios this
-    # sprint shipped for them.
-    candidates = [{"capability": cid,
-                   "shipped_scenarios": [{"id": sid, **info}
-                                         for sid, info in sorted(scenarios.items())
-                                         if cid in info["covers"]]}
-                  for cid in served if cid.startswith("CAP-")]
-
-    return {
-        "served": served,
-        "merged_tasks": sorted(completed_ids),
-        "adequacy_candidates": candidates,
-        "learnings_drained": drained_learnings,
-        "learnings_retained": partially_served,
-        "superseded_survivors": survivors,
-    }
-
-
-def _append_drain_report(args, paths, sprint_id, drain):
-    if not paths.get("drain_report") or not any(drain.values()):
-        return None
-    rp = common.resolve_path(args.config, "drain_report", None)
-    doc = common.load_yaml(rp, optional=True)
-    doc.setdefault("reports", []).append({"sprint_id": sprint_id, "closed_at": _now(), **drain})
-    _write_yaml(rp, doc)
-    return str(rp)
-
-
-def _drain_capability(rest):
-    """Drain one capability on a close-time adequacy verdict. The verdict is READ FROM
-    THE DIGEST wf-adequacy left on disk — never from an agent's prose — and only
-    ``adequate`` drains: the capability is snapshotted into paths.archive and removed
-    from paths.capabilities. Any other verdict mutates nothing and exits 1.
-
-    Only a FULL-PROMISE digest can drain. An iteration-claim review judges one slice's
-    claim, so it can never answer whether the whole promise is covered; consuming one
-    here would drain a capability on a question nobody asked."""
-    p = common.base_parser("pipeline drain-capability")
-    p.add_argument("capability")
-    p.add_argument("--verdict", help="path to the adequacy digest (default: the newest "
-                                     "adequacy-<cap>-full-promise-*.md under "
-                                     "paths.drill_cache)")
-    args = p.parse_args(rest)
-
-    path = Path(args.verdict) if args.verdict else _newest_adequacy_digest(args)
-    if path is None or not path.is_file():
-        msg = (f"no full-promise adequacy digest for {args.capability}"
-               + (f" at {path}" if path else " under paths.drill_cache"))
-        # A digest whose name carries neither question marker cannot be assumed to answer
-        # the whole promise, so it is right that the glob passes it over — but silently
-        # passing it over leaves a capability undrained against a verdict that is on disk,
-        # with nothing on screen to say the file is even there.
-        unstamped = _unstamped_digests(args)
-        if unstamped:
-            msg += ("; " + ", ".join(p.name for p in unstamped)
-                    + " name no question — pass --verdict <path> to drain on one")
-        common.die(msg)
-    text = path.read_text(errors="replace")
-    if _is_iteration_claim(path, text):
-        common.die(f"{path} answers the iteration-claim question — only a full-promise "
-                   f"review can drain {args.capability}")
-    head = _ADEQUACY_HEAD_RE.search(text)
-    if not head:
-        common.die(f"{path} carries no '# Adequacy: <CAP-id> — <verdict>' heading")
-    reviewed, verdict = head.group(1), head.group(2).lower()
-    if reviewed != args.capability:
-        common.die(f"{path} reviews {reviewed}, not {args.capability}")
-
-    result = {"capability": args.capability, "verdict": verdict, "digest": str(path)}
-    if verdict != "adequate":
-        result["drained"] = False
-        common.emit(result, args.format)
-        return 1
-
-    cap_path = common.resolve_path(args.config, "capabilities", None)
-    if not cap_path.exists():
-        common.die(f"capabilities file not found: {cap_path}")
-    paths = common.config_doc(args.config).get("paths") or {}
-    if paths.get("archive"):
-        root = common.resolve_path(args.config, "archive", None)
-        result["archived"] = str(archive.snapshot(root, "capabilities", cap_path, move=False))
-    dropped = drop_entries(cap_path, [args.capability])
-    if not dropped:
-        common.die(f"{args.capability} is not open in {cap_path}")
-    result["drained"] = True
-    common.emit(result, args.format)
-    return 0
-
-
-def _append_residuals(rest):
-    """Carry one inadequate adequacy review's residuals onto the capability's ``notes:``
-    — the §7 branch that feeds the next design. Each residual is a path inside the
-    promise that no scenario reaches; parked on the capability, it is what the next plan
-    revision reads.
-
-    The edit is TEXT, like every other write to a durable file: comments, ordering and
-    unicode survive (L-106). It is idempotent per digest — the appended block is stamped
-    with the digest's own timestamp, and a digest already carried over appends nothing."""
-    p = common.base_parser("pipeline append-residuals")
-    p.add_argument("capability")
-    p.add_argument("--digest", help="path to the adequacy digest (default: the newest "
-                                    "adequacy-<cap>-full-promise-*.md under "
-                                    "paths.drill_cache)")
-    args = p.parse_args(rest)
-
-    path = Path(args.digest) if args.digest else _newest_adequacy_digest(args)
-    if path is None or not path.is_file():
-        common.die(f"no adequacy digest for {args.capability}"
-                   + (f" at {path}" if path else " under paths.drill_cache"))
-    text = path.read_text(errors="replace")
-    head = _ADEQUACY_HEAD_RE.search(text)
-    if not head:
-        common.die(f"{path} carries no '# Adequacy: <CAP-id> — <verdict>' heading")
-    if head.group(1) != args.capability:
-        common.die(f"{path} reviews {head.group(1)}, not {args.capability}")
-
-    cap_path = common.resolve_path(args.config, "capabilities", None)
-    if not cap_path.exists():
-        common.die(f"capabilities file not found: {cap_path}")
-    residuals = _digest_residuals(text)
-    result = {"capability": args.capability, "digest": str(path),
-              "verdict": head.group(2).lower(), "residuals": len(residuals)}
-    if not residuals:
-        result["appended"] = False
-        common.emit(result, args.format)
-        return 0
-
-    stamp = _digest_stamp(path, text)
-    block = [f"[adequacy {stamp}] residuals from the {head.group(2).lower()} review:"]
-    block += [f"- {line}" for line in residuals]
-    original = cap_path.read_text()
-    new_text = _append_notes(original, args.capability, block, marker=f"[adequacy {stamp}]")
-    if new_text is None:
-        common.die(f"{args.capability} is not open in {cap_path}")
-    if new_text == original:
-        result["appended"] = False
-        common.emit(result, args.format)
-        return 0
-    import yaml as _yaml
-    try:
-        _yaml.safe_load(new_text)
-    except _yaml.YAMLError as exc:
-        common.die(f"appending to {args.capability} would not parse: {exc}")
-    cap_path.write_text(new_text)
-    result["appended"] = True
-    common.emit(result, args.format)
-    return 0
-
-
-def _digest_residuals(text) -> list:
-    """The residual lines a digest reports: its own ``## Residuals`` section when it has
-    one, else every bullet on the falsifying-paths list flagged RESIDUAL."""
-    body = slice_checks.section(text, "Residuals")
-    lines = [ln.strip().lstrip("-*").strip()
-             for ln in body.splitlines() if ln.strip().startswith(("-", "*"))]
-    if lines:
-        return lines
-    return [m.group(1).strip() for m in _RESIDUAL_LINE_RE.finditer(text)]
-
-
-def _digest_stamp(path, text) -> str:
-    """The digest's own timestamp — from the filename wf-adequacy stamps, else its
-    ``**Date:**`` line. It keys the idempotency check, so it must not be "now"."""
-    m = _DIGEST_STAMP_RE.search(path.name)
-    if m:
-        return m.group(1)
-    m = _DIGEST_DATE_RE.search(text)
-    return m.group(1).strip() if m else _now()
-
-
-def _entry_blocks(lines):
-    """[(start, end, indent)] for every list entry in a YAML list file."""
-    out, i = [], 0
-    while i < len(lines):
-        m = _LIST_ITEM_RE.match(lines[i])
-        if not m:
-            i += 1
-            continue
-        indent, j = len(m.group(1)), i + 1
-        while j < len(lines):
-            nxt = lines[j]
-            if nxt.strip() and len(nxt) - len(nxt.lstrip()) <= indent:
-                break
-            j += 1
-        out.append((i, j, indent))
-        i = j
-    return out
-
-
-def _append_notes(text, entry_id, block, marker):
-    """Append ``block`` to one entry's ``notes:`` as TEXT. Returns the new text, the
-    text unchanged when ``marker`` is already in the entry, or None when no such entry
-    exists. A missing or empty ``notes:`` becomes a literal block; an existing one is
-    extended in place."""
-    lines = text.splitlines(keepends=True)
-    for start, end, indent in _entry_blocks(lines):
-        ident = next((m.group(1) for m in
-                      (_ENTRY_ID_RE.match(b) for b in lines[start:end]) if m), None)
-        if ident != entry_id:
-            continue
-        if any(marker in ln for ln in lines[start:end]):
-            return text
-        field_indent = " " * (indent + 2)
-        note_at = next((i for i in range(start, end)
-                        if _NOTES_RE.match(lines[i])), None)
-        if note_at is None:
-            body = [f"{field_indent}notes: |\n"]
-            body += [f"{field_indent}  {ln}\n" for ln in block]
-            return "".join(lines[:start + 1] + body + lines[start + 1:])
-
-        head = _NOTES_RE.match(lines[note_at])
-        value = head.group(2).strip()
-        # an existing block sets the body indent; a new one is two past the key
-        first_body = next((ln for ln in lines[note_at + 1:end]
-                           if ln.strip() and ln.startswith(head.group(1) + " ")), None)
-        body_indent = (first_body[:len(first_body) - len(first_body.lstrip())]
-                       if value and first_body else f"{head.group(1)}  ")
-        tail = note_at + 1
-        while tail < end and (not lines[tail].strip()
-                              or lines[tail].startswith(body_indent)):
-            tail += 1
-        while tail > note_at + 1 and not lines[tail - 1].strip():
-            tail -= 1                      # keep trailing blank lines below the block
-        prefix = list(lines[:note_at])
-        if value in ("", "|", "|-", "|+", ">", ">-"):
-            kept = lines[note_at + 1:tail] if value else []
-            prefix += [f"{head.group(1)}notes: |\n"] + list(kept)
-        else:
-            # a one-line scalar: keep its text as the block's first line
-            kept_value = value.strip(_QUOTES)
-            prefix += [f"{head.group(1)}notes: |\n",
-                       f"{body_indent}{kept_value}\n"]
-        body = [f"{body_indent}{ln}\n" for ln in block]
-        return "".join(prefix + body + lines[tail:])
-    return None
-
-
-def _newest_adequacy_digest(args):
-    """The most recent ``adequacy-<cap>-full-promise-<utc>.md`` under paths.drill_cache
-    — the stamped filename orders them, so the latest full-promise review wins. An
-    iteration-claim digest is never a candidate, however recent it is."""
-    rel = (common.config_doc(args.config).get("paths") or {}).get("drill_cache")
-    if not rel:
-        return None
-    cache = (common.project_root(args.config) / rel).resolve()
-    pattern = f"adequacy-{args.capability}-{_FULL_PROMISE}-*.md"
-    hits = sorted(cache.glob(pattern)) if cache.is_dir() else []
-    return hits[-1] if hits else None
-
-
-def _unstamped_digests(args):
-    """This capability's adequacy digests whose names carry neither question marker —
-    written before the naming split, so no glob can tell which question they answer."""
-    rel = (common.config_doc(args.config).get("paths") or {}).get("drill_cache")
-    if not rel:
-        return []
-    cache = (common.project_root(args.config) / rel).resolve()
-    if not cache.is_dir():
-        return []
-    return sorted(p for p in cache.glob(f"adequacy-{args.capability}-*.md")
-                  if _FULL_PROMISE not in p.name and _ITERATION_CLAIM not in p.name)
-
-
-def _is_iteration_claim(path, text):
-    """True when the digest itself says it answers the iteration-claim question —
-    named in the filename wf-adequacy stamps, or on its ``**Question:**`` line. Guards
-    the explicit ``--verdict`` path, which no filename glob filters."""
-    if _ITERATION_CLAIM in path.name:
-        return True
-    line = _QUESTION_LINE_RE.search(text)
-    return bool(line and "iteration" in line.group(1).lower())
-
-
-def _complete_sprint(rest):
-    """Close the sprint and reset the pipeline for the next one. Run during ship, before
-    the push, so its archive snapshots and working-set trims commit into the PR.
-
-    The drain: from the slice's `**Serves:**` header and the merge record (which tasks
-    completed, and what they cover), drain every learning whose covering tasks all
-    merged, sweep the slice's superseded SYS-TC ids for surviving tags, and append the
-    drain report (paths.drain_report) the ship step folds into the PR body. Capabilities
-    are NOT drained here — only an adequacy verdict drains one (`drain-capability`).
-
-    When paths.archive is set, snapshot the working set into paths.archive/<sprint_id>/:
-    learnings + capabilities + the final run state are copied (learnings pre-drain), and
-    the sprint, design-slice and design-issues files are moved out (drained). The slice
-    carries the sprint's decision log, which the ship step reads into the PR body before
-    this runs. The archive is a write-only maintainer sink; no role reads it. Then reset
-    pipeline_state to a bare ``idle``. When paths.archive is unset the working-set slots
-    are simply cleared — the drain itself runs either way.
-
-    Git is intentionally NOT touched — a pure file/state mutation."""
-    args = common.base_parser("pipeline complete-sprint").parse_args(rest)
-
-    doc = _load_state(args)
-    sprint_path = common.resolve_path(args.config, "sprint", None)
-    sprint_doc = common.load_yaml(sprint_path, optional=True)
-    sprint_id = sprint_doc.get("sprint_id") or doc.get("sprint_id") or "sprint"
-
-    paths = common.config_doc(args.config).get("paths") or {}
-    archived = {}
-    root = common.resolve_path(args.config, "archive", None) if paths.get("archive") else None
-
-    # Pre-drain snapshots: the archive keeps the durable files as the sprint left them.
-    if root:
-        for key in ("learnings", "capabilities"):
-            if paths.get(key):
-                p = common.resolve_path(args.config, key, None)
-                if p.exists():
-                    archived[key] = str(archive.snapshot(root, sprint_id, p, move=False))
-
-    drain = _drain_working_set(args, doc, sprint_doc, paths)
-    report_path = _append_drain_report(args, paths, sprint_id, drain)
-
-    if root:
-        # sprint + slice + design-issues + decision report drain out of the working set;
-        # the final run state is a snapshot.
-        if sprint_path.exists():
-            archived["sprint"] = str(archive.snapshot(root, sprint_id, sprint_path, move=True))
-        for key, label in (("design_slice", "slice"),
-                           ("design_issues", "design_issues")):
-            if paths.get(key):
-                p = common.resolve_path(args.config, key, None)
-                if p.exists():
-                    archived[label] = str(archive.snapshot(root, sprint_id, p, move=True))
-        if _state_path(args).exists():
-            archived["pipeline_state"] = str(archive.snapshot(root, sprint_id, _state_path(args), move=False))
-    else:
-        # no archive configured — clear the active working-set slots
-        if sprint_path.exists():
-            sprint_path.unlink()
-        for key in ("design_slice", "design_issues"):
-            if paths.get(key):
-                p = common.resolve_path(args.config, key, None)
-                if p.exists():
-                    p.unlink()
-
-    _save_state(args, {"current_phase": "idle"})
-    common.emit({
-        "sprint_id": sprint_id,
-        "archived": archived,
-        "drain": drain,
-        "drain_report": report_path,
-        "pipeline_state_reset": str(_state_path(args)),
-    }, args.format)
-    return 0
-
-
 COMMANDS = {
-    # increment + sub-layer computation, and the frontier
-    ("pipeline", "increments"): _increments,
-    ("pipeline", "compute-stages"): _compute_stages,
+    # the stage and its frontier
+    ("pipeline", "load-stage"): _load_stage,
     ("pipeline", "next"): _next,
     # reads
     ("pipeline", "current-phase"): _current_phase,
     ("pipeline", "task-state"): _task_state,
     ("pipeline", "unresolved-design-issues"): _unresolved_design_issues,
-    ("pipeline", "blocked-tasks"): _blocked_tasks,
     ("pipeline", "attempt-counter"): _attempt_counter,
     ("pipeline", "history-tail"): _history_tail,
     # run-state mutations
@@ -1610,19 +784,14 @@ COMMANDS = {
     ("pipeline", "reject-task"): _reject_task,
     ("pipeline", "retry-task"): _retry_task,
     ("pipeline", "block-task"): _block_task,
-    ("pipeline", "unblock-task"): _unblock_task,
     ("pipeline", "reclaim-stale"): _reclaim_stale,
     ("pipeline", "record-design-issue"): _record_design_issue,
     ("pipeline", "resolve-design-issue"): _resolve_design_issue,
-    # staged-model mutations
-    ("pipeline", "advance-stage"): _advance_stage,
-    ("pipeline", "propagate-blocks"): _propagate_blocks,
+    # stage close
     ("pipeline", "stage-start"): _stage_start,
     ("pipeline", "stage-end"): _stage_end,
     ("pipeline", "stage-summary"): _stage_summary,
-    # sprint lifecycle
+    ("pipeline", "append-pr-body"): _append_pr_body,
     ("pipeline", "archive-history"): _archive_history,
-    ("pipeline", "complete-sprint"): _complete_sprint,
-    ("pipeline", "drain-capability"): _drain_capability,
-    ("pipeline", "append-residuals"): _append_residuals,
 }
+COMMANDS.update(drain.COMMANDS)

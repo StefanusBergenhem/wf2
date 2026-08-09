@@ -68,8 +68,15 @@ class FakeGit:
     (``dirty=[]`` is the pristine tree, which a real run essentially never has)."""
 
     def __init__(self, *, clean=True, stack=None, sprint_id="s1", base="main",
-                 dirty=None, fetch_ok=True, telemetry=TELEMETRY_PATH, absent=None):
+                 dirty=None, fetch_ok=True, telemetry=TELEMETRY_PATH, absent=None,
+                 changed=None, rebase_conflicts=()):
         self.telemetry = telemetry
+        # {sha: [repo-relative paths changed since it]} — what the drill-cache prune
+        # derives staleness from. A sha with no entry is one git does not have.
+        self.changed = dict(changed or {})
+        # Branches whose rebase onto the sprint tip conflicts, so the salvage falls back.
+        self.rebase_conflicts = set(rebase_conflicts)
+        self.salvaged = []
         # Branches git does NOT have. Real-world default is empty: a resumed run's sprint
         # branch is there, because a real sprint_start cut it. `absent=["sprint/s1"]`
         # models the one case where it is not — a position recorded but never reached.
@@ -136,6 +143,21 @@ class FakeGit:
     def worktree_add(self, path, branch, base):
         self.worktrees.append((str(path), branch, base))
         Path(path).mkdir(parents=True, exist_ok=True)
+
+    def worktree_from(self, path, branch, source, onto):
+        """The salvage: cut the successor's worktree from a blocked attempt's branch and
+        rebase it onto the sprint tip. False when the branch is gone or the rebase
+        conflicted — the caller then falls back to a fresh worktree from the tip."""
+        if source in self.absent or source in self.rebase_conflicts:
+            return False
+        self.salvaged.append((str(path), branch, source, onto))
+        self.worktrees.append((str(path), branch, source))
+        Path(path).mkdir(parents=True, exist_ok=True)
+        return True
+
+    def changed_since(self, sha):
+        """The paths that changed since ``sha``, or None when git does not have it."""
+        return self.changed.get(sha)
 
     def worktree_remove(self, path, branch=""):
         self.removed.append(str(path))
@@ -206,10 +228,10 @@ class FakeAgents:
         self.exit_codes[role] = rc
         self.logs[role] = log
 
-    def launch(self, role, params, *, cwd=None, task_id=None, increment=None,
+    def launch(self, role, params, *, cwd=None, task_id=None, stage=None,
                mode=None):
         self.launches.append({"role": role, "params": params, "task_id": task_id,
-                              "mode": mode, "increment": increment,
+                              "mode": mode, "stage": stage,
                               "cwd": str(cwd) if cwd else None})
         queue = self.effects.get(role)
         if queue:
@@ -227,9 +249,10 @@ class FakeAgents:
         return [x["role"] for x in self.launches]
 
 
-def resolve_issues(cfg, fix_kind="contract_amendment"):
-    """The side effect a real design-role repair leaves: every open entry in the host
-    design-issues file comes back resolved, carrying the kind of fix it made."""
+def resolve_issues(cfg, fix_kind="contract_amendment", task=None):
+    """The side effect a real design cut leaves behind: every open entry in the host
+    design-issues file comes back resolved, carrying the kind of fix it made and — the
+    mechanical half of the drain — the successor task that answers it."""
     import yaml
 
     def effect(agents, role, params, task_id):
@@ -241,6 +264,8 @@ def resolve_issues(cfg, fix_kind="contract_amendment"):
             if isinstance(item, dict) and str(item.get("status") or "open") == "open":
                 item["status"] = "resolved"
                 item["fix_kind"] = fix_kind
+                if task:
+                    item["task"] = task
         path.write_text(yaml.safe_dump(doc, sort_keys=False))
     return effect
 
@@ -248,20 +273,27 @@ def resolve_issues(cfg, fix_kind="contract_amendment"):
 def raise_design_issue(cfg, di_id="DI-9", task_id=None, summary="cannot be built",
                        **fields):
     """The side effect a role that rejects its input leaves: an open entry in the host
-    design-issues file. ``fields`` carries the rest of the entry (e.g. the ``increment``
-    a Tech Lead's slice rejection names)."""
+    design-issues file. ``fields`` carries the rest of the entry."""
     import yaml
 
     def effect(agents, role, params, task_id_arg):
-        path = cfg.path("design_issues")
-        path.parent.mkdir(parents=True, exist_ok=True)
-        doc = yaml.safe_load(path.read_text()) if path.exists() else {}
-        doc = doc or {}
-        doc.setdefault("issues", []).append(
-            {"id": di_id, "task_id": task_id, "severity": "high", "status": "open",
-             "summary": summary, **fields})
-        path.write_text(yaml.safe_dump(doc, sort_keys=False))
+        write_design_issue(cfg, di_id=di_id, task_id=task_id, summary=summary, **fields)
     return effect
+
+
+def write_design_issue(cfg, *, di_id="DI-9", task_id=None, summary="cannot be built",
+                       status="open", **fields) -> None:
+    """Append one entry to the host design-issues file — what the driver's own
+    ``issues.record`` leaves when a task blocks, and what the design role resolves."""
+    import yaml
+
+    path = cfg.path("design_issues")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    doc = (yaml.safe_load(path.read_text()) if path.exists() else {}) or {}
+    doc.setdefault("issues", []).append(
+        {"id": di_id, "task_id": task_id, "severity": "high", "status": status,
+         "summary": summary, **fields})
+    path.write_text(yaml.safe_dump(doc, sort_keys=False))
 
 
 def runtime(cfg, cli=None, git=None, agents=None, state=None, telemetry=None,

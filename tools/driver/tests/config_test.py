@@ -36,6 +36,7 @@ class ConfigTest(support.TempProject):
         cfg = self.load()
         self.assertEqual(cfg.driver("max_parallel"), 2)
         self.assertEqual(cfg.driver("max_unmerged_sprints"), 3)
+        self.assertEqual(cfg.driver("max_stages_per_sprint"), 4)
         self.assertEqual(cfg.agent_cmd, 'echo "{prompt}"')
         self.assertEqual(cfg.stop_file, (self.root / ".wf/transient/STOP").resolve())
         self.assertEqual(cfg.state_file,
@@ -52,11 +53,11 @@ class ConfigTest(support.TempProject):
         cfg = self.load(stage_check="make e2e")
         self.assertEqual(cfg.review_passes, ["wf-review"])
         self.assertEqual(cfg.max_attempts, 3)
-        self.assertEqual(cfg.closeout, ["wf-retrospective", "adequacy", "ship"])
+        self.assertEqual(cfg.closeout, ["wf-retrospective", "ship"])
         self.assertEqual(cfg.base_branch, "main")
         self.assertEqual(cfg.command("stage_check"), "make e2e")
         self.assertEqual(cfg.command("preflight"), "")
-        self.assertEqual(cfg.limit("increments_per_sprint"), 4)
+        self.assertEqual(cfg.limit("tasks_per_stage"), 10)
 
     def test_agent_cmd_overrides_pin_one_role_and_leave_the_rest(self):
         pinned = "claude --model opus {prompt}"
