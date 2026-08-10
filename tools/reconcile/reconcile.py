@@ -53,15 +53,69 @@ def _is_test_file(name, test_globs):
 # Comment closers a description may drag along when the tag lives in a block comment
 # (/* ... */ or <!-- ... -->); stripped so the harvested text is the description alone.
 _COMMENT_CLOSERS = ("*/", "-->")
+# Block comments, mapped to the closer that ends them. Checked before the line markers
+# below, because `<!--` would otherwise match `--`.
+_BLOCK_COMMENTS = (("/*", "*/"), ("<!--", "-->"))
+# Line-comment markers a description may wrap under. `;` is deliberately absent: it ends
+# a statement in far more languages than it opens a comment in, so it would read a
+# trailing tag on a line of code as commented.
+_LINE_COMMENTS = ("//", "#", "--")
 
 
-def _statement(line, tag_end):
-    """The trailing text after the tag on its line — the description the tag carries."""
-    text = line[tag_end:].strip()
+def _strip_closers(text):
     for closer in _COMMENT_CLOSERS:
         if text.endswith(closer):
             text = text[: -len(closer)].strip()
     return text
+
+
+def _statement(line, tag_end):
+    """The text after the tag on its own line — where the description starts."""
+    return _strip_closers(line[tag_end:].strip())
+
+
+def _comment_of(prefix):
+    """The comment the tag sits inside, read from the text before it on its line:
+    ("block", <closer>), ("line", <marker>), or (None, None) when it is in no comment."""
+    for opener, closer in _BLOCK_COMMENTS:
+        if opener in prefix:
+            return "block", closer
+    found = max(((prefix.rfind(m), m) for m in _LINE_COMMENTS), key=lambda p: p[0])
+    return ("line", found[1]) if found[0] >= 0 else (None, None)
+
+
+def _wrapped(lines, idx, prefix):
+    """The continuation lines of a description that wraps below its tag, in order.
+
+    A scenario description is one sentence of Given/When/Then prose and routinely runs
+    past one line. Reading only the tag's own line captures it truncated, and the
+    register is the durable proof record — a silent truncation there disagrees with the
+    work-set entry holding the full text and raises a false drift.
+
+    The wrap ends at the first line that is no longer the same comment: code, a blank
+    line, a paragraph break, the block's closer, or a line opening a tag of its own.
+    An unterminated block comment does not stop it — that is a compile error upstream."""
+    kind, token = _comment_of(prefix)
+    if kind is None or (kind == "block" and token in lines[idx]):
+        return []
+    out = []
+    for line in lines[idx + 1:]:
+        text = line.strip()
+        if not text or TAG_RE.search(text):
+            break
+        closing = kind == "block" and token in text
+        if kind == "line":
+            if not text.startswith(token):
+                break
+            text = text[len(token):].strip()
+        else:
+            text = _strip_closers(text).lstrip("*").strip()
+        if not text:
+            break
+        out.append(text)
+        if closing:
+            break
+    return out
 
 
 def harvest(tests_roots, test_globs=DEFAULT_TEST_GLOBS):
@@ -86,11 +140,20 @@ def harvest(tests_roots, test_globs=DEFAULT_TEST_GLOBS):
                         text = fh.read()
                 except OSError:
                     continue
-                for line in text.splitlines():
-                    for match in TAG_RE.finditer(line):
+                lines = text.splitlines()
+                for idx, line in enumerate(lines):
+                    matches = list(TAG_RE.finditer(line))
+                    for pos, match in enumerate(matches):
+                        statement = _statement(line, match.end())
+                        if pos == len(matches) - 1:  # only the last tag owns the wrap
+                            statement = " ".join(
+                                part for part in
+                                [statement, *_wrapped(lines, idx, line[: match.start()])]
+                                if part
+                            )
                         entry = covered.setdefault(
                             match.group(1), {"files": [], "statements": []}
                         )
                         entry["files"].append(os.path.relpath(path, tests_root))
-                        entry["statements"].append(_statement(line, match.end()))
+                        entry["statements"].append(statement)
     return covered

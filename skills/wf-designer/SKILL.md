@@ -275,6 +275,14 @@ here returns you to Phase 5; do not paper it over.
 4. Continue at the file's `resume_at` and run through to the end, including every gate. A
    `di_id` in the file names the design issue to close in this stage.
 
+**The ruling replaces the instruction it answers, and nothing else. It never ends the
+run.** A ruling that bounds a loop ("run one more adequacy round") replaces that loop's own
+stop condition — you leave the loop when its bound is reached, then continue to the end of
+the phase and every phase after it, exactly as step 4 says. Stop early only where the
+ruling says in words to stop. Ending a resume with work the ruling did not decide left
+undone reports a stage that was never cut, and the next dispatch has no brief to re-enter
+on.
+
 ## Telemetry (REQUIRED)
 
 Your last action, always. Run the `wf-basics` §2 `record_session.py` command with

@@ -60,7 +60,7 @@ def sprint_start(rt, resume: bool = False) -> None:
     rt.cli.mutate("pipeline", "transition", "--to", "preparing",
                   "--reason", f"driver sprint {sprint_id}", "--sprint-id", sprint_id)
 
-    launched = rt.agents.launch("wf-discover", {"mode": "refresh"}, mode="refresh")
+    launched = rt.agents.launch("wf-discover", {}, mode="refresh")
     brief = rt.cfg.path_opt("discover_brief")
     if not rt.dry_run and (not brief or not brief.exists()):
         dispatch.check_launch(launched)

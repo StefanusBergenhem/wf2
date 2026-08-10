@@ -59,6 +59,18 @@ class PhaseTest(support.TempProject):
         self.assertIn("wf-discover", rt.agents.roles())
         self.assertEqual(rt.state.phase, "designing")
 
+    def test_sprint_start_dispatches_discover_with_no_parameters(self):
+        """Every param becomes a line of the role's prompt, so one the role defines
+        nowhere is an instruction it cannot follow. wf-discover takes none — `refresh`
+        labels the dispatch for telemetry, it does not parameterize the run."""
+        self.cfg.path("discover_brief").parent.mkdir(parents=True, exist_ok=True)
+        self.cfg.path("discover_brief").write_text("brief\n")
+        rt = self.rt(git=fakes.FakeGit(sprint_id="s2"))
+        phases.sprint_start(rt)
+        launch = next(x for x in rt.agents.launches if x["role"] == "wf-discover")
+        self.assertEqual(launch["params"], {})
+        self.assertEqual(launch["mode"], "refresh")
+
     def test_sprint_start_resets_the_pr_body_accumulator(self):
         """It is appended to at every stage merge, so a sprint that started on the last
         one's leftovers would open a PR describing work that is already merged."""

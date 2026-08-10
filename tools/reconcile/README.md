@@ -22,6 +22,9 @@ An e2e test proving a system test case stamps the id **plus its scenario descrip
 
 - A plain comment token — **any language, any comment style** (`//`, `#`, `/* */`,
   `<!-- -->`). The harvester greps text, so it is language-agnostic.
+- **The description may wrap.** It continues onto the comment lines directly under the
+  tag and is harvested whole; it ends at the first line that is no longer that comment —
+  code, a blank line, a blank comment line, the block's closer, or another tag.
 - **The description rides the tag.** A test's description describes the test, so it
   cannot rot apart from it; the shipped scenario set is the durable
   proof-of-capability record. When two occurrences of one id carry **different

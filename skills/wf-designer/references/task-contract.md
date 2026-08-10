@@ -101,10 +101,11 @@ Phrase every criterion per `references/criterion-syntax.md`.
 Each criterion carries either `tests` or `verified_by` — never neither, never both.
 
 - **`level: unit`** — proven against a single target in isolation; `target:
-  "<file>:<function>"` names it. Every criterion provable in isolation gets one.
+  "<file>:<function>"` names **the code under test**, which already exists or this task
+  creates it. Every criterion provable in isolation gets one.
 - **`level: integration`** — proven across a real seam; `seam:` names the external
   dependency (database, network, filesystem, queue, cache), the new exposed interface, or
-  the cross-component wiring exercised, and `target:` names the test function.
+  the cross-component wiring exercised, and `target:` names **the test function to write**.
   **Required** on at least one criterion whenever the task crosses such a seam — the seam
   is exercised for real, never mocked.
 - A criterion may carry both levels when it needs proving in isolation *and* across the seam.
@@ -114,9 +115,10 @@ Each criterion carries either `tests` or `verified_by` — never neither, never 
   so the reviewer can check it. Never use it for something a test could prove — the
   reviewer treats that as an unmet criterion.
 
-**Every `target` must be a test function name that does not already exist in its package.**
-Grep the tree before you name one: a duplicate name collides at merge with a sibling task's
-test and one of the two silently disappears.
+**An `integration` target must not already exist in its package.** Grep the tree before you
+name one: a duplicate test-function name collides at merge with a sibling task's test and
+one of the two silently disappears. A `unit` target is the opposite — it names code, so
+grep to confirm the file and function are the ones you mean.
 
 ## Boundaries
 
