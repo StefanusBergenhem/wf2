@@ -10,8 +10,8 @@ fires; delete it when resolved.
 ## C8 — Agent frontmatter is Claude-format; pi/opencode untested
 
 **Date:** 2026-06-15
-**Context:** `install.sh` now renders the `agents/` category per harness (the first
-agent is `wf-drill`). The render path (copy + token-subst) is harness-agnostic, but
+**Context:** `install.sh` renders the `agents/` category per harness (seven agents as of
+2026-08-10). The render path (copy + token-subst) is harness-agnostic, but
 the agent **frontmatter** (`name`/`description`/`tools: Read, Grep, Glob, Bash`) is
 written in **Claude's** schema. Rendering to `.pi/agents/` or `.opencode/agents/`
 copies that Claude frontmatter verbatim — pi and opencode may expect a different
@@ -29,33 +29,20 @@ harness's agent-definition schema and, where it differs, guard the frontmatter w
 
 ---
 
-## C9 — Retrospective: telemetry-distil + cross-task run analysis BUILT; MEMORY.yaml store deferred
+## C9 — a maintained `MEMORY.yaml` lessons store
 
-**Date:** 2026-06-20 (re-anchored 2026-07-31 for the continuous-loop redesign)
-**Context:** `wf-retrospective` ships as the **dogfoodable slice**: read the telemetry
-session log, distil `repo_observation` → `paths.learnings` (project learnings the design
-role reads as drivers) and `wf_friction` → `paths.wf_learnings` (toolkit friction), dedup by
-the `sources` provenance set, create-only `open` entries. It runs against the telemetry
-PO/SA/TL/drill already write — no orchestration needed.
+**Date:** 2026-06-20 (compressed 2026-08-10 — every other half of this entry has shipped)
+**Context:** `wf-retrospective` ships whole. It distils the telemetry session log into the two
+learnings streams (`repo_observation` → `paths.learnings`, `wf_friction` →
+`paths.wf_learnings`), clusters friction by `friction_kind` and design issues by `fix_kind`
+before judging, and both streams drain mechanically: `wf pipeline complete-sprint` removes a
+learning only when the stage's `serves:` header named it *and* every task covering it merged.
 
-**Built since (2026-06-22):** the sprint-execution analysis now lands as **cross-task pattern
-detection** — `wf-retrospective` reads `pipeline_state` (recurring rejections, design-issue
-clusters by `fix_kind`, escalation/block causes) and distils the patterns no single session
-can see into the same learnings streams, sourced by `sprint_id`. Per-task velocity/counts are
-reported transiently, not stored. **2026-07-10:** feedback gained a `friction_kind` enum, so
-the friction clustering step is now a mechanical groupby before judgement. **Still
-deferred:** the maintained `MEMORY.yaml` lessons store (dedup, capacity-cap, confidence,
-reinforcement) — wf1's governor-ish overreach, and nothing in wf2 consumes a
-distilled-lessons store.
+**Still deferred:** the maintained `MEMORY.yaml` lessons store (dedup, capacity-cap,
+confidence, reinforcement). It was wf1's governor-ish overreach, and nothing in wf2 consumes
+a distilled-lessons store — the two open streams suffice.
 
-**The optimistic-close half resolved 2026-07-25:** learnings drain mechanically at sprint
-close — `wf pipeline complete-sprint` removes a learning only when the slice's `serves:`
-header named it *and* every task covering it merged (the merge record), so "designed but
-never landed" can no longer close one.
-
-**Trigger to act:** the orchestration half is done. Build the `MEMORY.yaml` store only if a
-real consumer for a maintained lessons store appears (none today — the open learnings streams
-suffice).
+**Trigger to act:** a real consumer for a maintained lessons store appears. None today.
 
 ---
 
@@ -74,21 +61,20 @@ capability → user-need), which regulated industries genuinely require.
 toolkit should hoard by default — baking "keep every capability forever for audit"
 into wf2 over-fits to one class of repo.
 
-**Likely shape when built:** don't graduate completed capabilities into oblivion but
-into a **trace store** (an archived capability ledger keyed to the requirement tags
-that realize it), or reconstruct the chain on demand from preserved `[REQ]` tags + an
-append-only graduation log. Pairs with **C11 (product description)** as its likely
-host layer — both are the durable *external/record* tier sitting above the open
-work-set.
+**Likely shape when built:** don't graduate completed capabilities into oblivion but into
+a **trace store** — an archived capability ledger keyed to whatever realizes it — paired
+with **C11 (product description)** as its likely host layer. Both are the durable
+*external/record* tier sitting above the open work-set.
 
-**State 2026-07-31 (post loop-redesign):** nothing requirement-shaped persists in the
-tree — the EARS/REQ layer is gone entirely, and the acceptance criterion in a transient
-task contract is the only requirement-grade statement there ever is. What a trace can be
-built from: the **SYS-TC lane** (each shipped scenario's user-voice description in the
-test itself, readable via `tools/reconcile/register.py`), and `paths.archive`, whose
-snapshots of the slice, sprint contracts, and drained capabilities hold the full
-statements and the design narrative at drain time. If a compliance mandate ever fires
-this trigger, the trace is built from those two — nothing else exists.
+**What the trace can actually be built from (2026-07-31, post loop-redesign):** nothing
+requirement-shaped persists in the tree. The EARS/REQ tag layer is gone entirely — so any
+earlier "reconstruct from `[REQ]` tags" sketch is dead — and the acceptance criterion in a
+transient task contract is the only requirement-grade statement there ever is. Two sources
+survive: the **SYS-TC lane** (each shipped scenario's user-voice description sits in the
+test itself, readable via `tools/reconcile/register.py`), and **`paths.archive`**, whose
+snapshots of each merged stage — task contracts inlined — and of every drained capability
+hold the full statements and the design narrative as of drain time. If a compliance mandate
+ever fires this trigger, the trace is built from those two; nothing else exists.
 
 **Trigger to act:** when a project with a real audit/traceability mandate adopts wf2
 (the user works in such industries and expects to need it — but no current run does).
@@ -240,50 +226,38 @@ introduced, contract-forced awkwardness flagged during implementation) instead o
 the checklist unconditionally — or drop it and leave TDD's refactor step to builder
 judgement.
 
-**Trigger to act:** dogfood-2 evidence — the token adapter now measures per-session cost, so
-the pass's price can be weighed against refactors actually produced; a second zero-yield run
-promotes this.
+**Still live 2026-08-10:** `skills/wf-build/SKILL.md` still carries the unconditional
+`### Refactor` pass, and s1 + s2 have run since without anyone counting its yield. The
+measurement is now cheap and unrun: per-dispatch cost lands in `driver-logs` via
+`dispatch.py`'s `_RESULT_FIELDS`, and a refactor-only commit is greppable in the merged
+sprint branches.
+
+**Trigger to act:** take the measurement — s1's 34 tasks and s2's 7 are sitting there. A
+second observed zero-yield run promotes this; a non-zero yield closes it.
 
 ---
 
 ## C24 — `human_intervention` telemetry field (autonomy measurement)
 
-**Date:** 2026-07-10
+**Date:** 2026-07-10 (narrowed 2026-08-10 — the driver now measures most of what this wanted)
 **Context:** declined when `friction_kind` shipped. dems required repeated mid-session human
 interventions (manual worktree recreation, hand-edited config, re-running roles) that are
 invisible in telemetry — the sessions still ended `completed`. Autonomy is the metric wf2
-actually optimizes, and today it is anecdotal.
+actually optimizes, and it was anecdotal.
 
-**Likely shape when built:** a count + reason field in the session feedback (enum'd reason
-if patterns emerge), written by the role when the human had to step in mid-session.
+**What shipped instead, and it covers the bigger half.** The driver appends a `kind:
+driver_event` row per dispatch/routing/stop (`tools/driver/events.py`), so *blocked* time is
+now an exact derivation with no new field: s2's post-mortem read **19h04m of a 27h21m run
+halted waiting for a human** straight off those rows (C43). Halt-wait is the dominant autonomy
+cost, and it is already measured.
 
-**Trigger to act:** autonomy measurement becomes a question actually being asked of the
-telemetry (e.g. comparing dogfood runs, or claiming an orchestration change reduced
-babysitting).
+**The residual is narrower than the original entry:** intervention *inside* a running session
+— the human fixing a worktree or re-running a role while the dispatch is live. The driver
+cannot see that; only the role can report it. dems L-119 is the shape (a build session that
+spent its own turns on a `ps` investigation and reported the incident in prose).
 
----
-
-## C25 — Worktree dependency provisioning (the second half of L-004)
-
-**Date:** 2026-07-10 (rewritten 2026-07-31 for the continuous-loop redesign)
-**Context:** dogfood run 1 — task worktrees lacked gitignored dependency dirs
-(`node_modules`); preflight never installs them, so the human copied them by hand. The
-stale-base half of the recovery shipped 2026-07-10 (`GitOps.add_worktree`). The
-judgement-level provision instruction ("run the project's install command, or copy the dir
-from the main checkout") lived only in wf-orchestrate's `GIT_OPERATIONS.md` asset, deleted
-2026-08-08 with that skill — the driver creates worktrees with **no** provisioning step, so
-nothing covers this at all now. The **mechanical** twin was deliberately
-not built: a blanket copy-any-top-level-gitignored-dir rule is dangerous (`cp -al`
-hardlinks let a worktree build corrupt the host copy; a copied Python `.venv` resolves
-against the host checkout via embedded absolute paths; multi-GB cache copies recreate the
-very stall), and doing it honestly needs a per-project declaration of what to provision.
-
-**Likely shape when built:** a config-declared provision command (e.g. a
-`commands.provision` the driver runs in each fresh/recreated worktree), captured by
-wf-init from repo evidence like the other commands — not a dir-copy heuristic.
-
-**Trigger to act:** the first driver sprint whose task builds fail or stall on missing
-gitignored deps in a fresh worktree.
+**Trigger to act:** a run whose autonomy story is not explained by halt-wait — i.e. the
+driver-event derivation says the loop was busy while the human remembers babysitting it.
 
 ---
 
@@ -326,12 +300,12 @@ into the scout prompt. Must stay derive-friendly: the override is intent (small,
 hand-authored), the partition it shapes stays transient and regenerated each run.
 
 **Trigger to act:** a driver sprint where the machine partition demonstrably misleads the
-design role (a slice mis-allocates components along the wrong subsystem seam), or a second
+design role (a stage mis-allocates components along the wrong subsystem seam), or a second
 run where a manual regroup would have paid for itself.
 
 ---
 
-## C34 — mechanically gate shipped-SYS-TC supersessions in the slice
+## C34 — mechanically gate shipped-SYS-TC supersessions in the stage
 
 **Date:** 2026-07-14 (rewritten 2026-08-08 for the stage-horizon revision)
 **Context:** superseding a *shipped* SYS-TC scenario is escalation-gate criterion 3:
@@ -420,7 +394,7 @@ than bolting checks onto the next consumer. That rule was written about the slic
 skills themselves.
 
 **2026-07-24 — the PILOT-SIDE deployment of the role half SHIPPED as `wf-adequacy`**
-(spec-layer-redesign; see `doc/notes/spec-layer-redesign-20260724.md`). Trigger evidence: dems
+(spec-layer-redesign; see `doc/archive/spec-layer-redesign-20260724.md`). Trigger evidence: dems
 drained CAP-023 four times with every covering SYS-TC present and passing — each scenario proved
 the design's decomposition, not the capability's promise; only adversarial source-grounded drills
 found the residuals. `wf-adequacy` is that drill as a standing role, dispatched by wf-sa at the
@@ -428,6 +402,30 @@ capability-drain gate and at design validation. **Still open here:** (a) the `wf
 linter half, unchanged; (b) the **wf2-side deployment** — an adversarial reviewer for wf2's own
 skill prose (this file's original evidence) is still manual practice, not a role. Do not mark C37
 resolved on the pilot-side ship alone.
+
+**2026-08-10 — the evidence base widened, and the cost was feature-shaped.** The adequacy agent
+stated its output line form exactly and ignored it in **10 of 10** dems digests, which blocked the
+only mechanical convergence signal available to L-125's stop rule. **C38** already concluded its
+two residual members are subsumed by this entry's role half rather than by a fifth point-fix. The
+cheapest first move is no longer the linter: it is a **format gate on the one output another tool
+parses**, because that class is mechanically decidable and it is where a prose miss costs a
+feature rather than a re-read.
+
+**That first move shipped 2026-08-10** as `wf adequacy check` — the adequacy digest now carries a
+`**Residuals:** <n>` header, the agent runs the gate on its own file before it finishes, and the
+gate rejects a verdict its enumeration contradicts. It is the first mechanical check on agent
+prose anywhere in wf2, and it is worth copying at every other seam where a role's output is
+parsed rather than read. **Both original halves remain open:** the `wf skills check` linter, and
+the wf2-side adversarial reviewer for wf2's own skill prose.
+
+**The premise "the Python is the trustworthy half" is now falsified, though.** A 2026-08-10 review
+of `tools/` found the same semantic-contradiction class *inside the TDD'd code*, three times, each
+a docstring asserting a consumer that does not exist: `drain.py:520` says the ship step folds
+`paths.drain_report` into the PR body (nothing reads that file), `State.resume_phase` documents
+itself as routing resumes (written and cleared, read only by a test), and `stages.py:50-57`
+explains the resume gap it leaves while missing four steps that gap also skips. Tests do not check
+that a comment is true, so the surface with no mechanical check is wider than skill prose — it is
+**every load-bearing claim written in prose**, wherever it lives.
 
 ---
 
@@ -445,10 +443,14 @@ contract deletes `implementation_notes` and the per-task `interface_contract` (B
 leaving one home per fact.
 
 **The residual — two members C11 still cannot reach:**
-- a **bare qualified type claim** carries no path to resolve against, so C11 is blind to it. Its
-  surviving surfaces are the slice's `## Interface contracts` section and a contract's
-  `boundaries` (fixed interfaces). Recurred four times as `interface_contract` type names that
-  exist nowhere (`domain.RuleConflict` 2026-07-20, `domain.AttachmentTarget` 2026-07-27).
+- a **bare qualified type claim** carries no path to resolve against, so C11 is blind to it.
+  Its habitat narrowed with the stage-horizon cut: the slice's `## Interface contracts` section
+  is deleted along with the slice, and `stage check` B9 rejects a per-task `interface_contract`
+  outright (`tools/cli/stage.py:349`), so the **one surviving surface is a contract's
+  `boundaries`** prose. Recurred four times as `interface_contract` type names that existed
+  nowhere (`domain.RuleConflict` 2026-07-20, `domain.AttachmentTarget` 2026-07-27) — that
+  vehicle is gone, but nothing stops the same claim being written into `boundaries` instead,
+  and no rule reads it.
 - a **compound acceptance criterion** whose `tests[]` prove only one of its branches (L-050) —
   now sharper, because the AC *is* the requirement: nothing else states the behaviour, so an
   unproven branch has no second representation to catch it.
@@ -470,28 +472,30 @@ residual members without needing a heuristic that can tell "the task creates thi
 ## C39 — Tree-derivation scans must prune the transient tree
 
 **Date:** 2026-08-06
-**Context:** dogfood run 2 (first parallel driver run). `wf slice check`'s `adr_index`
+**Context:** dogfood run 2 (first parallel driver run). The check verb's `adr_index`
 did an `rglob("ADR-*.md")` over the whole repo with a `_SKIP_DIRS` set that deliberately
 does **not** skip `.wf` (the canonical ADR home is `.wf/adrs`). It therefore walked into
 `.wf/transient/worktrees/`, where each per-task worktree is a **whole checkout carrying
 its own copy of every ADR** — so every cited ADR came back defined in three "ADR sets"
 and A5-collided with itself. On a resume with two live worktrees the driver halted with
-`slice_check_red: the slice on disk no longer passes its gate`, on a slice that had been
-green at sprint start. Only reachable once worktrees can be alive at slice-check time —
-i.e. the continuous loop's resume path, which is why it never surfaced before.
-Fixed for `adr_index` (prunes `paths.transient`).
+`stage_check_red` on a design unit that had been green at sprint start. Only reachable
+once worktrees can be alive at check time — i.e. the continuous loop's resume path,
+which is why it never surfaced before. Fixed: `adr_index` now takes `paths.transient`
+and prunes it (`tools/cli/stage.py:608`).
 
 **The general shape:** any derivation that walks the repo tree is now walking N+1 copies
-of it whenever tasks are in flight. Audited at fix time: `impact.py`'s two scans skip
-`.wf` wholesale (safe); `pipeline.py`/`adequacy.py` glob a named cache dir, not the tree.
-The one remaining exposure is `impact.py:89`, which globs **config-authored** `add`
-patterns against the repo root — a rule written as `**/*.yaml` would match inside every
-live worktree.
+of it whenever tasks are in flight. Audited at fix time and re-audited 2026-08-10:
+`impact.py`'s two scans skip `.wf` wholesale (safe); `pipeline.py`/`adequacy.py` glob a
+named cache dir, not the tree. The one remaining exposure is **`tools/cli/impact.py:88`**,
+which globs **config-authored** `add` patterns against the repo root with no prune — a
+rule written as `**/*.yaml` matches inside every live worktree.
 
 **Trigger to act:** an `impact` rule is authored with a `**` pattern, or any new
 tree-walking derivation is added. The fix is the same three lines each time; the real
 candidate is whether tree-walking derivations should share one pruned walker instead of
 each re-deriving the skip set.
+
+---
 
 ## C41 — nothing stops two drivers from running on one repo
 
@@ -622,36 +626,103 @@ would have). Recurrence so far: **1** (2026-08-10, 2 of 7 entries).
 
 ---
 
-## C45 — the adequacy digest's residual set is prose, so convergence cannot be counted
+## C46 — task size is ungated: increments wearing a task costume
 
-**Date:** 2026-08-10
-**Context:** `agents/wf-adequacy.md` specifies the residual line form exactly —
-`- <path, file:line> → RESIDUAL: <promise clause it falsifies> · <one-line sketch>` — and
-**zero of the ten** `proposed-set` digests dems wrote for CAP-015 used it. The word
-"RESIDUAL" appears in all ten; counting the specified arrow form gives 0 every time, and
-counting list items gives 11, 4, 3, 6, 0, 0, 0, 0, 0, 4 — five digests where a real
-residual set exists but nothing countable was written. Each digest instead grows its own
-sections (`## RESIDUALS` in one, `## Falsifying paths → coverage` in another).
+**Date:** 2026-08-10 (harvested from the s1 handover as it was archived)
+**Context:** s1's median task was 1–3 files and ~330 insertions. Three were not:
+T31 (37 files, +1,113/−738, 3 builds, $25.59), T29 (34 files), T19 (18 files, 4 builds,
+$26.16). **All three reworked** — the correlation between size and rework is the whole
+finding, and rework was $96 of $417 task spend across the run.
 
-**Why it matters:** it blocks the only mechanical answer to L-125 (the three-round
-adequacy stop firing on round count rather than on whether the residual set is
-converging). `tools/driver/adequacy.py` already derives the close-time stop from these
-same files — stamped filenames for order, a heading regex for the verdict, a trailing-run
-count for the park — so a `residual_trend()` beside `consecutive_inadequate()` is a small
-addition. It just cannot be written while the count it would read is prose. Any
-convergence rule built today would be an LLM re-reading its own narrative, which is the
-thing the stop rule already got wrong.
+**Why it survived the stage-horizon cut:** that revision fixed the *design* horizon, not
+task width. `limits.tasks_per_stage: 10` bounds how *many* tasks a stage carries and is
+documented as a mis-cut detector; nothing bounds how *big* one is. `stage check` validates
+a contract's shape (four sections present, grounding pointers resolvable) and never its
+scope.
 
-It is also a **format-compliance** miss, not a logic bug: the agent file states the form
-and the agent ignores it, which is C37's territory (skill prose is the one wf2 surface
-with no mechanical check) showing up in a place where it costs a feature.
+**Shape when acted on — the open question is where the judgement lives.** A mechanical cap
+at cut time has no honest unit (files touched is unknown at cut time; acceptance-criterion
+count is gameable), so the likely answer is a designer-side heuristic plus a *post-hoc*
+detector: flag at stage close any merged task whose diff or rebuild count sits far off the
+stage's median, and route it to the retrospective rather than gating the cut.
 
-**Shape of the fix:** the cheap version is a single machine-readable header the agent must
-emit — `residuals: <n>` beside the existing `**Question:**` line — rather than legislating
-the whole enumeration's shape; the digest body stays free prose for the human. The
-stronger version validates the line form at digest write, which needs a gate wf-adequacy
-does not currently run.
+**Corroborated 2026-08-10, from a direction s1 could not see.** The C48 context measurement
+makes wf-build — not the designer — the context outlier of the whole system: `context_max`
+peaked at **601 k in s2** and 316 k in the live run, against a designer that peaks at 232 k
+and a reviewer at 165 k. Nothing in the redesign predicted that, and no threshold anywhere
+watches it. A build session at 600 k is a task whose contract, tree reading and rework do
+not fit one context — which is this entry's "increment wearing a task costume", measured at
+the other end. The build is also where the money goes (s1: $417 of task spend, 23% of it
+rework), so this is the expensive outlier, not a curiosity.
 
-**Trigger to act:** a second run's digests miss the form, or the moment L-125's convergence
-stop is taken up — whichever comes first; that fix cannot start until this one lands.
-Recurrence so far: **1** (2026-08-10, 10 of 10 digests).
+**Trigger to act:** a third oversized-and-reworked task lands in a driver sprint, or the
+rework share of task spend exceeds s1's 23% in a later run. The cheap detector is now
+obvious and shares C48's machinery: flag a merged task whose build `context_max` sits far
+off the stage's median.
+
+---
+
+## C47 — every dispatch pays ~33 k tokens of harness before it does anything
+
+**Date:** 2026-08-10 (harvested from the s1 handover as it was archived)
+**Context:** measured on s1 — each headless dispatch started at **~33 k tokens** of fixed
+context: 147 tools, 44 skills, 12 agents, a plugin and an MCP server, none of which any wf
+role uses. That is the maintainer's personal Claude Code environment leaking into every
+launch `driver.agent_cmd` makes. For a review peaking at 92 k it is a third of the context
+window, and it is paid once per dispatch across every task, every attempt, every sprint.
+
+**Why it is a wf2 candidate and not just an environment gripe:** `driver.agent_cmd` is
+wf2's own config field, wf2 already reaches into it to deny the wait-for-a-later-turn tools,
+and the same field is what an adopter inherits. It also **contaminates the measurement** —
+every `context_max` figure in every run analysis carries this constant, so the stage-horizon
+context-budget target below cannot be read honestly until it is separated out.
+
+**Shape when acted on:** render `agent_cmd` with the harness's own scoping flags so a
+dispatch loads only the wf role it was launched for, and re-measure. Cheap to try, and the
+before/after is a single number per dispatch.
+
+**Trigger to act:** any role's `context_max` approaches its window, or the next time a run
+analysis needs `context_max` to mean something. Cf. **C48**.
+
+---
+
+## C48 — the stage-horizon design made four predictions and nobody has measured them
+
+**Date:** 2026-08-10 (harvested from `doc/archive/stage-horizon.md` §15 as it was archived)
+**Context:** the stage-horizon revision shipped as an **end-state cut** — no half-way
+points, the stated failure mode being wholesale revert. It named four residual risks as
+things dogfooding should check. s1 and s2 have both run. Two are now answered by the
+evidence, two are not:
+
+- **Answered — stage width.** §15 feared a trend toward 1 task per stage. s2's stage 1
+  carried 7 tasks. No action.
+- **Answered — stage close as the dominant serial term.** s2 merged all 7 tasks in 4h14m
+  against a 27h21m run; close was not the bottleneck. Human halt-wait was (C43).
+- **Answered 2026-08-10 — the context budget. The prediction held; the threshold did
+  not.** Measured with `wf telemetry roles` over the s2 archive and the live sink:
+
+  | wf-designer | s2 (10 runs) | live run (2 runs) |
+  |---|---|---|
+  | `context_max` avg | 164 k | 128 k |
+  | `context_max` max | 232 k | 143 k |
+
+  The comparison §15 actually set up is favourable: the merged role peaks at 232 k against
+  the deleted wf-tl's 267 k of a 281 k window, and its *average* is far below wf-tl's peak
+  rather than pressed against the ceiling. Net of C47's ~33 k harness constant the live run
+  averages ~95 k, on `loop-redesign.md` §11's ≈100 k target. But s2's average of 164 k is
+  over the 150 k line §15 called a design failure — and s2 is exactly the run whose ten
+  designer dispatches were mostly the CAP-015 scenario churn (C43), not stage cutting. So:
+  **not a design failure, but the threshold is not clear either, and the clean sample is
+  two runs.** Re-read it once the live run has cut several stages.
+- **Open — does the role actually read the merged tree?** Three deletions (claimed scope,
+  interface contracts, the design narrative) were all replaced by one behaviour: the
+  designer grounds by reading merged source. If it grounds on the plan instead, the
+  revision traded a stale forecast for **no** forecast, which is worse. s2 is weak evidence
+  either way — its design phase spent four dispatches on scenario prose (C43), which says
+  nothing about how it grounded when it finally cut.
+
+**Trigger to act:** one item remains — the grounding question, which needs an adversarial
+read of a cut stage against the tree it was cut from. Telemetry cannot answer it (a role
+that reads the plan and one that reads the tree both just show tokens); run it at the next
+cut. The context measurement is taken and is re-read cheaply whenever it matters.
+
