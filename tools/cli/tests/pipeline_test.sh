@@ -979,6 +979,28 @@ AR="$("$PYTHON" "$WF" pipeline append-residuals CAP-3 --config "$P/.wf/config.ya
 [ "$(jget "$AR" "'20260731T090000Z' in d['digest']")" = "True" ] \
     && ok "append-residuals: falls back to the newest full-promise digest" || bad "append-residuals newest" "$AR"
 
+# ── module structure ──
+#
+# pipeline and drain must not reach into each other. The cycle they used to form
+# (pipeline imports drain at module scope; drain imports pipeline back from inside six
+# functions) forced every shared helper to be read through a private name across the
+# seam, so a rename in either file broke the other silently.
+HITS="$(grep -n 'import pipeline\|pipeline\._' "$CLI/drain.py" || true)"
+[ -z "$HITS" ] && ok "drain reaches into no pipeline internals" \
+    || bad "drain reaches into no pipeline internals" "$HITS"
+
+HITS="$(grep -n 'import drain\|drain\._' "$CLI/pipeline.py" || true)"
+[ -z "$HITS" ] && ok "pipeline reaches into no drain internals" \
+    || bad "pipeline reaches into no drain internals" "$HITS"
+
+# Both must import cleanly on their own — a cycle broken by lazy imports still
+# deadlocks whichever module is imported first by a third party.
+for mod in pipeline drain runstate; do
+    OUT="$("$PYTHON" -c "import sys; sys.path.insert(0, sys.argv[1]); import $mod" \
+        "$CLI" 2>&1)"
+    [ -z "$OUT" ] && ok "$mod imports standalone" || bad "$mod imports standalone" "$OUT"
+done
+
 # ── summary ──
 echo ""
 echo "  pipeline brain: $pass passed, $fail failed"

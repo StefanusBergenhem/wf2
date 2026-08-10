@@ -24,50 +24,9 @@ import re
 from pathlib import Path
 
 import common
-import drain
-
-# Effective task status → bucket. Live state (pipeline_state.task_states[id].status)
-# wins; otherwise the stage-authored status; otherwise "pending".
-_COMPLETED = {"completed", "done"}          # done = the stage's authored terminal-OK
-_OCCUPIES_SLOT = {"building", "reviewing", "dispatching"}  # active; counts against the cap
-_PARKED = {"design_issue"}                  # hit a design issue; re-enters at the next cut
-_ESCALATED = {"escalated"}                  # terminal failure for this task
-_BLOCKED = {"blocked"}                      # terminal failure for this task
-_APPROVED = {"approved"}                    # passed every review pass; awaiting the batch merge
-
-
-def _effective_status(task_id, authored_status, task_states):
-    """Live state wins; fall back to the stage-authored status; default pending."""
-    live = (task_states.get(task_id) or {}).get("status")
-    return live or authored_status or "pending"
-
-
-def _covers_of(entry):
-    cov = (entry or {}).get("covers")
-    if cov is None:
-        return []
-    return [str(c) for c in (cov if isinstance(cov, list) else [cov])]
-
+import runstate
 
 # ── The stage artifact ───────────────────────────────────────────────────────
-
-
-def _stage_doc(args, paths=None):
-    """The stage artifact, or {}. It is archived and deleted the moment its stage merges,
-    so every close-time read has to tolerate its absence."""
-    paths = paths if paths is not None else (common.config_doc(args.config).get("paths") or {})
-    if not paths.get("stage"):
-        return {}
-    return common.load_yaml(common.resolve_path(args.config, "stage", None), optional=True)
-
-
-def _stage_tasks(stage_doc):
-    return [t for t in (stage_doc.get("tasks") or []) if isinstance(t, dict) and t.get("id")]
-
-
-def _serves_of(stage_doc):
-    raw = stage_doc.get("serves") or []
-    return [str(s).strip() for s in (raw if isinstance(raw, list) else [raw]) if str(s).strip()]
 
 
 def _stage_id(stage_doc):
@@ -105,12 +64,12 @@ def _load_stage(rest):
 
     stage_doc = common.load_yaml(common.resolve_path(args.config, "stage", None))
     stage_id = _stage_id(stage_doc)
-    tasks = _stage_tasks(stage_doc)
+    tasks = runstate.stage_tasks(stage_doc)
     if not tasks:
         common.die("the stage artifact declares no tasks — nothing to run")
     ids = [t["id"] for t in tasks]
 
-    doc = _load_state(args)
+    doc = runstate.load_state(args)
     prior = doc.get("stage") or {}
     changed = prior.get("id") != stage_id or list(prior.get("tasks") or []) != ids
 
@@ -119,21 +78,21 @@ def _load_stage(rest):
         # `covers` is recorded per task because the stage file dies at its own merge:
         # by the PR's close-time drain the run state is the only record of what the
         # sprint's earlier stages built.
-        covers = _covers_of(task)
+        covers = runstate.covers_of(task)
         entry = states.setdefault(task["id"], {})
         if covers:
             entry["covers"] = covers
     doc["stage"] = {"id": stage_id, "tasks": ids}
 
     served = [str(s) for s in (doc.get("serves") or [])]
-    served += [s for s in _serves_of(stage_doc) if s not in served]
+    served += [s for s in runstate.serves_of(stage_doc) if s not in served]
     if served:
         doc["serves"] = served
     if changed:
         doc.setdefault("history", []).append({
             "ts": common.now(), "event": "stage_loaded", "stage": stage_id, "tasks": ids,
         })
-    _save_state(args, doc)
+    runstate.save_state(args, doc)
 
     common.emit({"stage": stage_id, "tasks": ids, "count": len(ids)}, args.format)
     return 0
@@ -202,17 +161,17 @@ def _next(rest):
                     args.format)
         return 0
 
-    authored = {t["id"]: t.get("status") for t in _stage_tasks(_stage_doc(args, cfg.get("paths")))}
+    authored = {t["id"]: t.get("status") for t in runstate.stage_tasks(runstate.stage_doc(args, cfg.get("paths")))}
     task_states = state.get("task_states") or {}
 
     def status(tid):
-        return _effective_status(tid, authored.get(tid), task_states)
+        return runstate.effective_status(tid, authored.get(tid), task_states)
 
     history = state.get("history") or []
     in_flight = [_in_flight_entry(t, status(t), history)
-                 for t in stage_ids if status(t) in _OCCUPIES_SLOT]
+                 for t in stage_ids if status(t) in runstate.OCCUPIES_SLOT]
     pending = sorted(t for t in stage_ids if status(t) not in (
-        _COMPLETED | _OCCUPIES_SLOT | _PARKED | _ESCALATED | _BLOCKED | _APPROVED))
+        runstate.COMPLETED | runstate.OCCUPIES_SLOT | runstate.PARKED | runstate.ESCALATED | runstate.BLOCKED | runstate.APPROVED))
 
     slots = max(0, cap - len(in_flight))
     dispatch = [_dispatch_entry(t, worktree_base, sprint_id) for t in pending[:slots]]
@@ -223,10 +182,10 @@ def _next(rest):
         "dispatch": dispatch,
         "ready": ready,
         "in_flight": in_flight,
-        "approved": [t for t in stage_ids if status(t) in _APPROVED],
-        "repairing": [t for t in stage_ids if status(t) in _PARKED],
-        "escalated": [t for t in stage_ids if status(t) in _ESCALATED],
-        "blocked": [t for t in stage_ids if status(t) in _BLOCKED],
+        "approved": [t for t in stage_ids if status(t) in runstate.APPROVED],
+        "repairing": [t for t in stage_ids if status(t) in runstate.PARKED],
+        "escalated": [t for t in stage_ids if status(t) in runstate.ESCALATED],
+        "blocked": [t for t in stage_ids if status(t) in runstate.BLOCKED],
         "terminal": {"stage_done": not (dispatch or ready or in_flight), "halt": None},
     }, args.format)
     return 0
@@ -244,23 +203,9 @@ def _halt_frontier(reason):
 # ── Run-state reads ──────────────────────────────────────────────────────────
 
 
-def _state_path(args) -> Path:
-    return common.resolve_path(args.config, "pipeline_state", None)
-
-
-def _load_state(args) -> dict:
-    """Read pipeline_state.yaml — empty doc if it does not exist yet (a fresh sprint
-    has no state file; the first mutation creates it)."""
-    return common.load_yaml(_state_path(args), optional=True)
-
-
-def _save_state(args, doc) -> None:
-    common.write_yaml(_state_path(args), doc)
-
-
 def _current_phase(rest):
     args = common.base_parser("pipeline current-phase").parse_args(rest)
-    doc = _load_state(args)
+    doc = runstate.load_state(args)
     stage = doc.get("stage") if isinstance(doc.get("stage"), dict) else {}
     common.emit(
         {
@@ -278,7 +223,7 @@ def _task_state(rest):
     p = common.base_parser("pipeline task-state")
     p.add_argument("task_id")
     args = p.parse_args(rest)
-    doc = _load_state(args)
+    doc = runstate.load_state(args)
     ts = (doc.get("task_states", {}) or {}).get(args.task_id) or {}
     common.emit(
         {
@@ -297,7 +242,7 @@ def _task_state(rest):
 
 def _unresolved_design_issues(rest):
     args = common.base_parser("pipeline unresolved-design-issues").parse_args(rest)
-    doc = _load_state(args)
+    doc = runstate.load_state(args)
     raw = doc.get("design_issues", {}) or {}
     issues = []
     items = raw.items() if isinstance(raw, dict) else (
@@ -321,7 +266,7 @@ def _attempt_counter(rest):
     p = common.base_parser("pipeline attempt-counter")
     p.add_argument("task_id")
     args = p.parse_args(rest)
-    ts = (_load_state(args).get("task_states", {}) or {}).get(args.task_id) or {}
+    ts = (runstate.load_state(args).get("task_states", {}) or {}).get(args.task_id) or {}
     common.emit({"value": ts.get("attempt_counter", 0)}, args.format)
     return 0
 
@@ -330,7 +275,7 @@ def _history_tail(rest):
     p = common.base_parser("pipeline history-tail")
     p.add_argument("n", nargs="?", default="20")
     args = p.parse_args(rest)
-    hist = _load_state(args).get("history", []) or []
+    hist = runstate.load_state(args).get("history", []) or []
     try:
         n = int(args.n)
     except (TypeError, ValueError):
@@ -359,7 +304,7 @@ def _transition(rest):
                    help="record the sprint this run state belongs to")
     args = p.parse_args(rest)
 
-    doc = _load_state(args)
+    doc = runstate.load_state(args)
     if args.sprint_id:
         doc["sprint_id"] = args.sprint_id
     doc["current_phase"] = args.to_phase
@@ -368,7 +313,7 @@ def _transition(rest):
     if args.reason:
         entry["reason"] = args.reason
     doc.setdefault("history", []).append(entry)
-    _save_state(args, doc)
+    runstate.save_state(args, doc)
     return 0
 
 
@@ -390,7 +335,7 @@ def _dispatch(rest):
                    help="review-pass index this dispatch advances to (N-pass loop)")
     args = p.parse_args(rest)
 
-    doc = _load_state(args)
+    doc = runstate.load_state(args)
     ts = doc.setdefault("task_states", {}).setdefault(args.task, {})
     ts["status"] = _DISPATCH_STATE.get(args.agent, "reviewing")
     if args.pass_index is not None:
@@ -400,7 +345,7 @@ def _dispatch(rest):
     if args.pass_index is not None:
         entry["pass_index"] = args.pass_index
     doc.setdefault("history", []).append(entry)
-    _save_state(args, doc)
+    runstate.save_state(args, doc)
     conf = {"ok": True, "event": "dispatch", "task_id": args.task, "agent": args.agent,
             "status": ts["status"], "attempt": int(args.attempt)}
     if args.pass_index is not None:
@@ -416,7 +361,7 @@ def _complete_task(rest):
     p.add_argument("--merge", required=True)
     args = p.parse_args(rest)
 
-    doc = _load_state(args)
+    doc = runstate.load_state(args)
     ts = doc.setdefault("task_states", {}).setdefault(args.task_id, {})
     ts["status"] = "completed"
     ts["build_commit"] = args.commit
@@ -425,7 +370,7 @@ def _complete_task(rest):
         "ts": common.now(), "event": "task_completed", "task_id": args.task_id,
         "build_commit": args.commit, "merge_commit": args.merge,
     })
-    _save_state(args, doc)
+    runstate.save_state(args, doc)
     common.emit({"ok": True, "event": "task_completed", "task_id": args.task_id,
                  "status": "completed"}, args.format)
     return 0
@@ -439,7 +384,7 @@ def _approve_task(rest):
     p.add_argument("--commit", required=True)
     args = p.parse_args(rest)
 
-    doc = _load_state(args)
+    doc = runstate.load_state(args)
     ts = doc.setdefault("task_states", {}).setdefault(args.task_id, {})
     ts["status"] = "approved"
     ts["build_commit"] = args.commit
@@ -447,7 +392,7 @@ def _approve_task(rest):
         "ts": common.now(), "event": "task_approved", "task_id": args.task_id,
         "build_commit": args.commit,
     })
-    _save_state(args, doc)
+    runstate.save_state(args, doc)
     common.emit({"ok": True, "event": "task_approved", "task_id": args.task_id,
                  "status": "approved"}, args.format)
     return 0
@@ -460,7 +405,7 @@ def _reject_task(rest):
     p.add_argument("--feedback", required=True)
     args = p.parse_args(rest)
 
-    doc = _load_state(args)
+    doc = runstate.load_state(args)
     ts = doc.setdefault("task_states", {}).setdefault(args.task_id, {})
     ts["attempt_counter"] = int(ts.get("attempt_counter", 0)) + 1
     ts["status"] = "building"
@@ -469,7 +414,7 @@ def _reject_task(rest):
         "ts": common.now(), "event": "task_rejected", "task_id": args.task_id,
         "feedback_path": args.feedback, "next_attempt": ts["attempt_counter"],
     })
-    _save_state(args, doc)
+    runstate.save_state(args, doc)
     common.emit({"ok": True, "event": "task_rejected", "task_id": args.task_id,
                  "status": "building", "attempt": ts["attempt_counter"]}, args.format)
     return 0
@@ -485,7 +430,7 @@ def _retry_task(rest):
     p.add_argument("--reason", required=True)
     args = p.parse_args(rest)
 
-    doc = _load_state(args)
+    doc = runstate.load_state(args)
     ts = doc.setdefault("task_states", {}).setdefault(args.task_id, {})
     ts["attempt_counter"] = int(ts.get("attempt_counter", 0)) + 1
     ts["status"] = "building"
@@ -494,7 +439,7 @@ def _retry_task(rest):
         "ts": common.now(), "event": "task_retried", "task_id": args.task_id,
         "reason": args.reason, "next_attempt": ts["attempt_counter"],
     })
-    _save_state(args, doc)
+    runstate.save_state(args, doc)
     common.emit({"ok": True, "event": "task_retried", "task_id": args.task_id,
                  "status": "building", "attempt": ts["attempt_counter"]}, args.format)
     return 0
@@ -510,7 +455,7 @@ def _block_task(rest):
     p.add_argument("--reason", required=True)
     args = p.parse_args(rest)
 
-    doc = _load_state(args)
+    doc = runstate.load_state(args)
     blocked = doc.setdefault("blocked_tasks", {})
     if isinstance(blocked, list):
         blocked.append({"task_id": args.task_id, "reason": args.reason})
@@ -520,7 +465,7 @@ def _block_task(rest):
     doc.setdefault("history", []).append({
         "ts": common.now(), "event": "task_blocked", "task_id": args.task_id, "reason": args.reason,
     })
-    _save_state(args, doc)
+    runstate.save_state(args, doc)
     common.emit({"ok": True, "event": "task_blocked", "task_id": args.task_id,
                  "status": "blocked"}, args.format)
     return 0
@@ -531,10 +476,10 @@ def _reclaim_stale(rest):
     an interrupted run back to pending so `next` re-surfaces them. The attempt counter
     is NOT bumped — an external disruption is not a task failure."""
     args = common.base_parser("pipeline reclaim-stale").parse_args(rest)
-    doc = _load_state(args)
+    doc = runstate.load_state(args)
     reclaimed = []
     for tid, ts in (doc.get("task_states") or {}).items():
-        if (ts or {}).get("status") in _OCCUPIES_SLOT:
+        if (ts or {}).get("status") in runstate.OCCUPIES_SLOT:
             ts["status"] = "pending"
             reclaimed.append({"task_id": tid, "from_status": ts.get("status", "")})
     if reclaimed:
@@ -542,7 +487,7 @@ def _reclaim_stale(rest):
         for r in reclaimed:
             hist.append({"ts": common.now(), "event": "reclaimed_stale_dispatch",
                          "task_id": r["task_id"]})
-        _save_state(args, doc)
+        runstate.save_state(args, doc)
     common.emit({"reclaimed": reclaimed}, args.format)
     return 0
 
@@ -561,7 +506,7 @@ def _record_design_issue(rest):
     p.add_argument("--fix_kind", default=None)
     args = p.parse_args(rest)
 
-    doc = _load_state(args)
+    doc = runstate.load_state(args)
     issues = doc.setdefault("design_issues", {})
     entry = {
         "issue_id": args.di_id, "task_id": args.task, "severity": args.severity,
@@ -577,7 +522,7 @@ def _record_design_issue(rest):
         "ts": common.now(), "event": "design_issue_recorded", "di_id": args.di_id,
         "task_id": args.task, "fix_kind": args.fix_kind, "severity": args.severity,
     })
-    _save_state(args, doc)
+    runstate.save_state(args, doc)
     common.emit({"ok": True, "event": "design_issue_recorded", "di_id": args.di_id,
                  "task_id": args.task, "status": "open"}, args.format)
     return 0
@@ -591,7 +536,7 @@ def _resolve_design_issue(rest):
     p.add_argument("di_id")
     args = p.parse_args(rest)
 
-    doc = _load_state(args)
+    doc = runstate.load_state(args)
     issues = doc.get("design_issues") or {}
     if isinstance(issues, dict):
         entry = issues.get(args.di_id)
@@ -615,7 +560,7 @@ def _resolve_design_issue(rest):
     doc.setdefault("history", []).append({
         "ts": common.now(), "event": "design_issue_resolved", "di_id": args.di_id,
     })
-    _save_state(args, doc)
+    runstate.save_state(args, doc)
     common.emit({"ok": True, "event": "design_issue_resolved", "di_id": args.di_id,
                  "status": "resolved"}, args.format)
     return 0
@@ -636,11 +581,11 @@ def _stage_start(rest):
     """Record the loaded stage's start time (idempotent — a resumed stage keeps its
     original wall-clock origin)."""
     args = common.base_parser("pipeline stage-start").parse_args(rest)
-    doc = _load_state(args)
+    doc = runstate.load_state(args)
     stage_id, timing = _stage_timing(doc)
     if not timing.get("started_at"):
         timing["started_at"] = common.now()
-        _save_state(args, doc)
+        runstate.save_state(args, doc)
     common.emit({"stage": stage_id, "started_at": timing["started_at"]}, args.format)
     return 0
 
@@ -648,7 +593,7 @@ def _stage_start(rest):
 def _stage_end(rest):
     """Record the loaded stage's completion time + duration_seconds against its start."""
     args = common.base_parser("pipeline stage-end").parse_args(rest)
-    doc = _load_state(args)
+    doc = runstate.load_state(args)
     stage_id, timing = _stage_timing(doc)
     end = common.now()
     timing["completed_at"] = end
@@ -660,7 +605,7 @@ def _stage_end(rest):
             timing["duration_seconds"] = int(delta.total_seconds())
         except ValueError:
             pass
-    _save_state(args, doc)
+    runstate.save_state(args, doc)
     common.emit({"stage": stage_id, "timing": timing}, args.format)
     return 0
 
@@ -670,28 +615,28 @@ def _stage_summary(rest):
     task_states. The context-hygiene anchor: at stage close the driver writes this and
     stops re-reading the stage's per-task detail."""
     args = common.base_parser("pipeline stage-summary").parse_args(rest)
-    doc = _load_state(args)
+    doc = runstate.load_state(args)
     stage_id, stage_ids = _loaded_stage(doc)
     task_states = doc.get("task_states") or {}
 
     def st(tid):
         return (task_states.get(tid) or {}).get("status", "pending")
 
-    completed = [t for t in stage_ids if st(t) in _COMPLETED]
+    completed = [t for t in stage_ids if st(t) in runstate.COMPLETED]
     summary = {
         "tasks": list(stage_ids),
         "completed": completed,
-        "approved": [t for t in stage_ids if st(t) in _APPROVED],
-        "escalated": [t for t in stage_ids if st(t) in _ESCALATED],
-        "design_issue": [t for t in stage_ids if st(t) in _PARKED],
-        "blocked": [t for t in stage_ids if st(t) in _BLOCKED],
+        "approved": [t for t in stage_ids if st(t) in runstate.APPROVED],
+        "escalated": [t for t in stage_ids if st(t) in runstate.ESCALATED],
+        "design_issue": [t for t in stage_ids if st(t) in runstate.PARKED],
+        "blocked": [t for t in stage_ids if st(t) in runstate.BLOCKED],
         "merged": [
             {"task_id": t, "merge_commit": (task_states.get(t) or {}).get("merge_commit")}
             for t in completed if (task_states.get(t) or {}).get("merge_commit")
         ],
     }
     doc.setdefault("stage_summaries", {}).setdefault(stage_id, {}).update(summary)
-    _save_state(args, doc)
+    runstate.save_state(args, doc)
     common.emit({"stage": stage_id, **summary}, args.format)
     return 0
 
@@ -700,7 +645,7 @@ def _pr_body_block(stage_doc, stage_id):
     """One stage's contribution to the PR body: what it serves, the end-to-end fact it
     crossed, and the decisions taken below the escalation gate."""
     block = [f"## Stage {stage_id}", ""]
-    served = _serves_of(stage_doc)
+    served = runstate.serves_of(stage_doc)
     if served:
         block += [f"**Serves:** {', '.join(served)}", ""]
     checkpoint = str(stage_doc.get("checkpoint") or "").strip()
@@ -745,7 +690,7 @@ def _archive_history(rest):
     args = p.parse_args(rest)
 
     history_path = common.resolve_path(args.config, "pipeline_history", None)
-    doc = _load_state(args)
+    doc = runstate.load_state(args)
     hist = doc.get("history", []) or []
     if len(hist) <= args.cap:
         return 0
@@ -762,7 +707,7 @@ def _archive_history(rest):
         "ts": common.now(), "event": "history_archived", "spilled_count": spill_count,
         "archive_path": str(history_path),
     })
-    _save_state(args, doc)
+    runstate.save_state(args, doc)
     return 0
 
 
@@ -794,4 +739,3 @@ COMMANDS = {
     ("pipeline", "append-pr-body"): _append_pr_body,
     ("pipeline", "archive-history"): _archive_history,
 }
-COMMANDS.update(drain.COMMANDS)

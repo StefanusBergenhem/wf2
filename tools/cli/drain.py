@@ -25,6 +25,7 @@ from pathlib import Path
 import archive
 import common
 import mdread
+import runstate
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "reconcile"))
 from reconcile import DEFAULT_TEST_GLOBS, harvest  # noqa: E402
@@ -133,27 +134,24 @@ def _sprint_tasks(doc, stage_doc):
     """{task_id: covers} for every task the sprint has run. A stage artifact dies at its
     own merge, so the run state — where load-stage recorded each task's `covers` — is what
     spans the PR; the stage still on disk is folded in on top."""
-    import pipeline
     out = {tid: [str(c) for c in ((ts or {}).get("covers") or [])]
            for tid, ts in (doc.get("task_states") or {}).items()}
-    for task in pipeline._stage_tasks(stage_doc):
-        out[task["id"]] = pipeline._covers_of(task)
+    for task in runstate.stage_tasks(stage_doc):
+        out[task["id"]] = runstate.covers_of(task)
     return out
 
 
 def _completed_tasks(doc, stage_doc):
     """{task_id: covers} for the subset that merged — the sprint's merge record."""
-    import pipeline
     task_states = doc.get("task_states") or {}
     return {tid: covers for tid, covers in _sprint_tasks(doc, stage_doc).items()
-            if pipeline._effective_status(tid, None, task_states) in pipeline._COMPLETED}
+            if runstate.effective_status(tid, None, task_states) in runstate.COMPLETED}
 
 
 def _stage_serves(doc, stage_doc):
     """Every CAP/L id the sprint's stages set out to serve, in the order they were cut."""
-    import pipeline
     served = [str(s) for s in (doc.get("serves") or [])]
-    return served + [s for s in pipeline._serves_of(stage_doc) if s not in served]
+    return served + [s for s in runstate.serves_of(stage_doc) if s not in served]
 
 
 def _superseded_sys_tc_survivors(args, stage_doc):
@@ -220,8 +218,7 @@ def drop_entries(path, ids):
 
 def _drain_working_set(args, doc, paths):
     """Run the close-time drain; returns the drain summary."""
-    import pipeline
-    stage_doc = pipeline._stage_doc(args, paths)
+    stage_doc = runstate.stage_doc(args, paths)
     tasks = _sprint_tasks(doc, stage_doc)
     completed = _completed_tasks(doc, stage_doc)
     served = _stage_serves(doc, stage_doc)
@@ -527,10 +524,9 @@ def _complete_sprint(rest):
     re-enters the next cut through. Then reset pipeline_state to a bare ``idle``.
 
     Git is intentionally NOT touched — a pure file/state mutation."""
-    import pipeline
     args = common.base_parser("pipeline complete-sprint").parse_args(rest)
 
-    doc = pipeline._load_state(args)
+    doc = runstate.load_state(args)
     sprint_id = doc.get("sprint_id") or "sprint"
     paths = common.config_doc(args.config).get("paths") or {}
     root = common.resolve_path(args.config, "archive", None) if paths.get("archive") else None
@@ -554,13 +550,13 @@ def _complete_sprint(rest):
                 if p.exists():
                     archived[key] = str(archive.snapshot(root, sprint_id, p, move=False))
 
-    pipeline._save_state(args, {"current_phase": "idle"})
+    runstate.save_state(args, {"current_phase": "idle"})
     common.emit({
         "sprint_id": sprint_id,
         "archived": archived,
         "drain": drain,
         "drain_report": report_path,
-        "pipeline_state_reset": str(pipeline._state_path(args)),
+        "pipeline_state_reset": str(runstate.state_path(args)),
     }, args.format)
     return 0
 

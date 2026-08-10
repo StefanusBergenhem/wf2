@@ -28,6 +28,7 @@ import yaml
 
 import common
 import mdread
+import runstate
 
 _DRIVER_ID_RE = re.compile(r"\b(?:CAP|L)-\d+\b")
 
@@ -88,14 +89,6 @@ def _oneline(text):
     return " ".join(str(text).split())
 
 
-def _covers_of(item):
-    """A `covers` field may be a scalar or a list; normalise to a list of strings."""
-    c = item.get("covers")
-    if c is None:
-        return []
-    return [str(x) for x in (c if isinstance(c, list) else [c])]
-
-
 def _serves(doc):
     """The ids on the stage's `serves:` key, in order — the driver's PR-body input."""
     raw = doc.get("serves")
@@ -148,7 +141,7 @@ def _envelope(doc, entry, prior_attempt=None):
     for key in _SHAPE_FIELDS:
         if doc.get(key) is not None:
             out[key] = doc[key]
-    covers = _covers_of(entry)
+    covers = runstate.covers_of(entry)
     if covers:
         out["covers"] = covers
     for key in ("story", "acceptance", "boundaries"):
@@ -434,7 +427,7 @@ def _trace_findings(root, t, known_ids, ids_resolved):
     grounding resolves; C19 — a stage carries no ordering."""
     tid = t.get("id", "<no-id>")
     out = []
-    covers = _covers_of(t)
+    covers = runstate.covers_of(t)
     if not covers:
         out.append(("error", "C6", f"{tid}: no covers — name the capability or learning "
                                    f"this task serves"))
