@@ -22,6 +22,7 @@ Resolve these from `.wf/config.yaml`:
 - `TESTS`       = `paths.tests`           (the roots holding the `[SYS-TC:]`-tagged tests)
 - `TOOLS`       = `paths.tools`           (the telemetry recorder lives here)
 - `TELEMETRY`   = `paths.telemetry`       (the session-log sink)
+- `WF`          = `<paths.tools>/cli/wf`  (the CLI — you run its digest gate)
 
 ## What you are given
 
@@ -105,11 +106,15 @@ Write a fixed-shape digest to a **new** file under `$DRILL_CACHE` (create the di
 absent), named `adequacy-<CAP-id>-<question>-<utc>.md` — `<question>` is the dispatch's
 token **verbatim**, `full-promise` or `proposed-set`, hyphenated and lowercase (the
 drain and park machinery globs on that exact filename segment, so a spaced or reworded
-one is a digest nobody reads); `<utc>` comes from `date -u +%Y%m%dT%H%M%SZ`:
+one is a digest nobody reads); `<utc>` comes from `date -u +%Y%m%dT%H%M%SZ`.
+
+Copy this shape. The four header lines and the `→ RESIDUAL:` lines are parsed by
+another program; everything else in the file is yours to write as prose.
 
 ```markdown
 # Adequacy: <CAP-id> — <verdict: adequate|inadequate>
 **Question:** <full-promise | proposed-set>
+**Residuals:** <n>
 **Date:** <utc>   **Confidence:** <high|medium|low — why>
 
 ## Promise, quantified
@@ -122,6 +127,32 @@ one is a digest nobody reads); `<utc>` comes from `date -u +%Y%m%dT%H%M%SZ`:
 ## Prune-worthy scenarios
 - <SYS-TC-id> — <why> — or "none".
 ```
+
+**`**Residuals:**` is a plain integer — how many `→ RESIDUAL:` lines the file carries.**
+Write it even when it is `0`. It is the one line that answers "is this capability
+converging across reviews", which prose cannot: five residuals dropping to two is a set
+closing in, five holding at five is a set that is not.
+
+Count by that line form, not by a section heading — a residual is counted wherever it
+sits. A covered path uses the other form (`→ <SYS-TC-id> — covered`) and is not counted.
+
+**The verdict and the count must agree:** `inadequate` means at least one residual,
+`adequate` means zero. A gap you cannot express as a `file:line` path is a
+low-confidence `adequate`, not an uncountable `inadequate` — say so on the
+`**Confidence:**` line.
+
+## Gate your own digest before you finish
+
+Run it, and do not stop while it is red:
+
+```sh
+$WF adequacy check <the digest you just wrote>
+```
+
+It exits non-zero and names every line that breaks the form. Fix the file and re-run
+until it exits 0. Skip this and your review is written to a file no program can read:
+the count it gates is the only mechanical evidence of whether this capability's residual
+set is closing round over round.
 
 ## What you return
 

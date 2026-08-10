@@ -21,6 +21,7 @@ _HEAD_RE = re.compile(r"^#\s*Adequacy:\s*(CAP-\d+)\s*[—\-–:]+\s*(\w+)", re.M
 _LIST_ITEM_RE = re.compile(r"^(\s*)-\s")
 _ENTRY_ID_RE = re.compile(r"^\s*(?:-\s+)?id:\s*[\"']?([\w.-]+)")
 _STATUS_RE = re.compile(r"^(\s*status:\s*)([^\s#]+)(.*)$")
+_RESIDUALS_RE = re.compile(r"^\*\*Residuals:\*\*\s*(\S+)", re.MULTILINE)
 
 
 def digests(cfg, capability: str, question: str = FULL_PROMISE) -> list:
@@ -56,6 +57,41 @@ def consecutive_inadequate(cfg, capability: str) -> int:
         else:
             break
     return count
+
+
+def residuals_of(path):
+    """How many falsifying paths the digest found, off its ``**Residuals:**`` header.
+    None when the digest carries no countable header — which is NOT zero: it means this
+    review said nothing a program can compare against the last one. ``wf adequacy
+    check`` is the gate that keeps that case rare."""
+    if path is None or not path.is_file():
+        return None
+    hit = _RESIDUALS_RE.search(path.read_text(errors="replace"))
+    if not hit:
+        return None
+    try:
+        return int(hit.group(1))
+    except ValueError:
+        return None
+
+
+def residual_trend(cfg, capability: str) -> list:
+    """The residual count of every full-promise digest, oldest first — the shape of the
+    capability's convergence. An uncountable digest holds its place as None rather than
+    dropping out, so a gap in the record cannot read as progress."""
+    return [residuals_of(p) for p in digests(cfg, capability)]
+
+
+def is_converging(cfg, capability: str) -> bool:
+    """True when the residual set is smaller than it was. Round count alone cannot tell
+    a capability being narrowed down from one that is not designable: eleven residuals
+    falling to three is the first, five holding at five is the second. Fewer than two
+    countable digests cannot show a trend, so it does not claim one — this answers
+    'is there evidence it is NOT converging', and absence of evidence is not that."""
+    counts = [c for c in residual_trend(cfg, capability) if c is not None]
+    if len(counts) < 2:
+        return True
+    return counts[-1] < counts[0]
 
 
 def should_park(cfg, capability: str) -> bool:
