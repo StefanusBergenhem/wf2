@@ -53,8 +53,9 @@ python3 .wf/tools/driver/wf-driver             # continuous, sprint after sprint
 
 One **stage** = wf-designer cuts it against the merged tree (plan revision, the
 design, and that stage's task contracts, in one dispatch; soundness + `wf stage
-check`) → its tasks build and review in parallel worktrees, since a stage is the
-set with no dependency between them → they merge together → heavy checks and
+check`) → its tasks build and review in parallel worktrees, `driver.max_parallel`
+in flight at a time and the next one starting as soon as a slot frees, since a
+stage is the set with no dependency between them → they merge together → heavy checks and
 repair at the close → any capability whose scenario set is now fully shipped gets
 its close-time adequacy review (adequate = the capability drains).
 

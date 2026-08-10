@@ -128,7 +128,9 @@ driver:
                               # agent_cmd.
     wf-designer: '{{AGENT_CMD_STRONG}}'
     wf-adequacy: '{{AGENT_CMD_STRONG}}'
-  max_parallel: 4             # driver: tasks dispatched concurrently within one stage. A
+  max_parallel: 4             # driver: tasks in flight at once within one stage — a live
+                              # ceiling, not a batch size: a finished task's slot is
+                              # refilled immediately, not when the whole batch drains. A
                               # stage's tasks are independent by construction, so this is
                               # the only thing serialising them; limits.tasks_per_stage is
                               # a mis-cut detector, not a second concurrency knob.

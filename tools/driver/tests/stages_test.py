@@ -7,6 +7,7 @@ wf2-source-only — never rendered into an install target.
 """
 from __future__ import annotations
 
+import threading
 import unittest
 
 import support  # noqa: F401
@@ -327,11 +328,11 @@ class StageTest(support.TempProject):
         responses = {
             ("pipeline", "load-stage"): {"stage": 7, "tasks": ["S7-T1", "S7-T2"],
                                          "count": 2},
+            # the approved task stays approved until it merges — the frontier is read
+            # again as soon as either task finishes, not only once both have
             ("pipeline", "next"): [
                 frontier(dispatch=["S7-T1", "S7-T2"], tasks=("S7-T1", "S7-T2")),
                 frontier(approved=["S7-T2"], blocked=["S7-T1"], stage_done=True,
-                         tasks=("S7-T1", "S7-T2")),
-                frontier(blocked=["S7-T1"], stage_done=True,
                          tasks=("S7-T1", "S7-T2"))],
             ("orchestrate", "inspect-build-return"): lambda cli, args: (
                 {"task_id": "S7-T1", "verdict": "escalate_no_artifacts"}
@@ -516,6 +517,108 @@ class StageTest(support.TempProject):
         self.assertEqual(sorted(w[1] for w in git.worktrees),
                          ["task/s1-S7-T1", "task/s1-S7-T2"])
         self.assertEqual(sorted(git.merges), ["task/s1-S7-T1", "task/s1-S7-T2"])
+
+    # ── the slots refill as tasks finish ─────────────────────────────────────
+
+    def live_frontier(self, tasks):
+        """`pipeline next` answering the way the real one does, from the calls made so
+        far: a task holds a slot from its `pipeline dispatch` — not from the moment the
+        driver picked it up — and `dispatch` is capped to what is free."""
+        cap = int(self.cfg.driver("max_parallel"))
+
+        def answer(cli, args):
+            dispatched, approved, settled, merged = set(), set(), set(), set()
+            for call in cli.calls:
+                head = call[:2]
+                if head == ["pipeline", "dispatch"] and "--task" in call:
+                    dispatched.add(call[call.index("--task") + 1])
+                elif head == ["pipeline", "approve-task"]:
+                    approved.add(call[2])
+                    settled.add(call[2])
+                elif head == ["pipeline", "block-task"]:
+                    settled.add(call[2])
+                elif head == ["pipeline", "complete-task"]:
+                    merged.add(call[2])
+            in_flight = dispatched - settled
+            pending = [t for t in tasks if t not in dispatched]
+            slots = max(0, cap - len(in_flight))
+            data = frontier(dispatch=pending[:slots], tasks=tasks,
+                            approved=sorted(approved - merged),
+                            stage_done=not (pending or in_flight))
+            data["ready"] = pending[slots:]
+            data["in_flight"] = [{"task_id": t} for t in sorted(in_flight)]
+            return data
+        return answer
+
+    def test_a_finished_task_frees_its_slot_before_the_batch_drains(self):
+        """`driver.max_parallel` is a live ceiling, not a batch size: the next task
+        starts the moment one finishes. Waiting for the whole frontier to drain first
+        left a ten-task stage running its tail one task wide with three slots idle."""
+        tasks = ("S7-T1", "S7-T2", "S7-T3")           # cap is 2, so one waits
+        self.write_stage(tasks=[support.task(t) for t in tasks])
+        third_started = threading.Event()
+
+        def hold(agents, role, params, task_id):
+            if task_id == "S7-T2":
+                # holds its slot until the queued task starts — which, if the loop
+                # waits for the whole batch, cannot happen until this returns
+                self.assertTrue(third_started.wait(timeout=10),
+                                "the queued task never started while a slot was held")
+            if task_id == "S7-T3":
+                third_started.set()
+
+        cli = self.happy_cli({
+            ("pipeline", "load-stage"): {"stage": 7, "tasks": list(tasks), "count": 3},
+            ("pipeline", "next"): self.live_frontier(tasks),
+            ("orchestrate", "inspect-build-return"): {
+                "verdict": "ready_for_review", "build_commit_sha": "bbb1111"},
+            ("orchestrate", "inspect-review-return"): {"verdict": "approved"},
+        })
+        agents = fakes.FakeAgents(self.cfg)
+        agents.on("wf-build", hold)
+        git = fakes.FakeGit()
+        stages.run_stage(self.rt(cli, agents=agents, git=git))
+        built = sorted(x["task_id"] for x in agents.launches if x["role"] == "wf-build")
+        self.assertEqual(built, list(tasks))          # each one built exactly once
+        self.assertEqual(sorted(git.merges),
+                         [f"task/s1-{t}" for t in tasks])
+
+    def test_a_task_the_frontier_still_offers_is_not_started_twice(self):
+        """A task holds no slot in the pipeline state until its thread reaches `pipeline
+        dispatch` — a worktree, a provision and an envelope after the driver picked it
+        up. Every frontier read in that window still offers it, and only the driver
+        knows it is already running."""
+        tasks = ("S7-T1", "S7-T2")
+        self.write_stage(tasks=[support.task(t) for t in tasks])
+        released = threading.Event()
+
+        def envelope(cli, args):
+            if "S7-T2" in args:      # still being set up when the first task finishes
+                released.wait(timeout=10)
+            return {}
+
+        answer = self.live_frontier(tasks)
+
+        def frontier_read(cli, args):
+            data = answer(cli, args)
+            if any(c[:2] == ["pipeline", "approve-task"] for c in cli.calls):
+                released.set()
+            return data
+
+        cli = self.happy_cli({
+            ("pipeline", "load-stage"): {"stage": 7, "tasks": list(tasks), "count": 2},
+            ("pipeline", "next"): frontier_read,
+            ("stage", "task"): envelope,
+            ("orchestrate", "inspect-build-return"): {
+                "verdict": "ready_for_review", "build_commit_sha": "bbb1111"},
+            ("orchestrate", "inspect-review-return"): {"verdict": "approved"},
+        })
+        agents = fakes.FakeAgents(self.cfg)
+        stages.run_stage(self.rt(cli, agents=agents, git=fakes.FakeGit()))
+        built = [x["task_id"] for x in agents.launches if x["role"] == "wf-build"]
+        self.assertEqual(sorted(built), list(tasks))
+        self.assertEqual(len([c for c in cli.calls
+                              if c[:2] == ["stage", "task"] and "S7-T2" in c]), 1)
 
     def test_a_pipeline_halt_stops_the_stage(self):
         halted = frontier()

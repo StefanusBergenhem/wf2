@@ -76,7 +76,7 @@ acts, so a restart re-enters it.
 |---|---|---|
 | `sprint_start` | clean-tree gate; branch `sprint/s<N>` off the stack tip; carry the telemetry rows onto it; reset `paths.pr_body`; `sweep-transients` + `reclaim-stale`; `wf-discover` | `designing` |
 | `designing` | `wf-designer` (no mode — one role, one sitting, one artifact) → `wf stage materialize` + `wf stage check`; a red gate records the findings as a design issue and sends the role back in; a dispatch that grew the work-set's scenario count without cutting is dispatched again, bounded by `SCENARIO_ROUNDS` | `stage_run`, or a pause |
-| `stage_run` | `pipeline load-stage` → the frontier in parallel worktrees → build→review per task → batch merge → the close | `designing` (cut the next) or `closeout` |
+| `stage_run` | `pipeline load-stage` → the frontier in parallel worktrees, `driver.max_parallel` at a time with each slot refilled as its task finishes → build→review per task → batch merge → the close | `designing` (cut the next) or `closeout` |
 | `closeout` | the `closeout` config steps, each banked on disk as it finishes: `wf-*` roles, then `ship` (`complete-sprint`, commit, push, `gh pr create`) | `sprint_start` |
 | `awaiting_ruling` | on restart: `wf-designer` (resume) once `paths.decision_prep` carries a ruling, then `resolve-design-issue` for the brief's `di_id` (the resume run closes only the host entry; the run-state twin is what parks the task). A brief that is *already gone* means the ruling was consumed by a round that stopped before the phase moved — it cuts rather than concluding | `designing`, which runs its rounds and its gate: the ruling round is one design dispatch, not the whole cut |
 
@@ -119,7 +119,14 @@ chain and nothing else.
 
 Inside a stage there is one pass: `pipeline next` gives the frontier, each task gets a
 worktree + its envelope (`stage task --write`) + `wf-build`, then the `review.passes`
-chain; the approved set batch-merges into the sprint branch. The close then runs
+chain; the approved set batch-merges into the sprint branch. `driver.max_parallel` is a
+live ceiling on the tasks in flight, not a batch size — the frontier is re-read the
+moment one finishes and its slot is refilled at once, so a wide stage never runs its
+tail one task wide with the rest of the slots idle. The driver counts the free slots
+against what *it* has running, not against the pipeline's in-flight set: a task enters
+that set only when its thread reaches `pipeline dispatch`, a worktree and a provision
+after it was picked up, so a frontier read in that window still offers it. The close
+then runs
 `commands.stage_check` over the integrated tree — at **every** stage close, so an
 integration break is caught at the stage that caused it — repairing through
 `wf-stage-repair`, whose envelope carries the stage number and its observable

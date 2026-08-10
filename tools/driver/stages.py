@@ -1,9 +1,10 @@
-"""One stage — the tasks with no dependency between them, run in one batch.
+"""One stage — the tasks with no dependency between them, run together.
 
 The design role cut this stage against the merged tree and wrote its contracts in the
-same sitting, so there is nothing to author here: load the task list, dispatch the
-whole frontier into parallel worktrees, run each task's build→review chain, batch-merge
-what was approved, and close.
+same sitting, so there is nothing to author here: load the task list, run the frontier
+in parallel worktrees — `driver.max_parallel` of them at a time, each slot refilled the
+moment its task finishes — run each task's build→review chain, batch-merge what was
+approved, and close.
 
 A task that blocks dooms nothing. There are no edges inside a stage, so the stage closes
 with what merged and the blocked work re-enters at the next cut through the design issue
@@ -14,7 +15,7 @@ Nothing routes on what an agent said.
 """
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from pathlib import Path
 
 import config  # noqa: F401 — importing it puts the CLI package on sys.path
@@ -78,50 +79,77 @@ def run_stage(rt) -> None:
 
 
 def frontier_loop(rt, stage) -> list:
-    """Dispatch the stage's frontier until nothing is pending or in flight, then merge
-    the approved set. One pass: a stage's tasks are independent, so there is no second
-    layer to advance into. Returns the task ids that merged."""
+    """Run the stage's frontier until nothing is pending or in flight, then merge the
+    approved set. Returns the task ids that merged.
+
+    ``driver.max_parallel`` is a live ceiling, not a batch size: the loop refills a slot
+    the moment its task finishes, rather than waiting for the whole frontier to drain.
+    A stage's tasks are independent by construction, so there is nothing a finished task
+    owes the ones still running — and a batch that waits runs its tail one task wide
+    while the rest of the slots sit idle."""
     merged, started = [], False
-    for _ in range(MAX_FRONTIER_ITERATIONS):
-        res = rt.cli.read("pipeline", "next")
-        if not res.ok:
-            raise Halt("pipeline_next", res.stderr.strip() or "the frontier is unreadable")
-        data = res.data
-        terminal = data.get("terminal") or {}
-        if terminal.get("halt"):
-            raise Halt("pipeline_halt", str((terminal["halt"] or {}).get("reason")))
-        if not started:
-            rt.cli.mutate("pipeline", "stage-start")
-            started = True
-        if not terminal.get("stage_done"):
-            _run_frontier(rt, data)
-            continue
-        approved = data.get("approved") or []
-        landed = _merge_batch(rt, approved)
-        merged += [t for t in landed if t not in merged]
-        if len(landed) < len(approved):
-            continue  # a conflict parked a task: let the frontier re-settle first
-        rt.cli.mutate("pipeline", "stage-summary")
-        rt.cli.mutate("pipeline", "stage-end")
-        if rt.cfg.history_cap:
-            rt.cli.mutate("pipeline", "archive-history", "--cap", str(rt.cfg.history_cap))
-        return merged
+    workers = max(1, int(rt.cfg.driver("max_parallel")))
+    running = {}
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        for _ in range(MAX_FRONTIER_ITERATIONS):
+            _reap(running)
+            res = rt.cli.read("pipeline", "next")
+            if not res.ok:
+                raise Halt("pipeline_next",
+                           res.stderr.strip() or "the frontier is unreadable")
+            data = res.data
+            terminal = data.get("terminal") or {}
+            if terminal.get("halt"):
+                raise Halt("pipeline_halt", str((terminal["halt"] or {}).get("reason")))
+            if not started:
+                rt.cli.mutate("pipeline", "stage-start")
+                started = True
+            _fill(rt, pool, running, workers, data)
+            if running:
+                # nothing to decide until a slot frees: the frontier is re-read then,
+                # against the state the finished task left behind
+                wait(list(running.values()), return_when=FIRST_COMPLETED)
+                continue
+            if not terminal.get("stage_done"):
+                raise Halt("stalled_frontier",
+                           "the stage has pending work but nothing dispatchable")
+            approved = data.get("approved") or []
+            landed = _merge_batch(rt, approved)
+            merged += [t for t in landed if t not in merged]
+            if len(landed) < len(approved):
+                continue  # a conflict parked a task: let the frontier re-settle first
+            rt.cli.mutate("pipeline", "stage-summary")
+            rt.cli.mutate("pipeline", "stage-end")
+            if rt.cfg.history_cap:
+                rt.cli.mutate("pipeline", "archive-history",
+                              "--cap", str(rt.cfg.history_cap))
+            return merged
     raise Halt("frontier_loop", f"stage {stage} did not settle")
 
 
-def _run_frontier(rt, data) -> None:
-    entries = data.get("dispatch") or []
-    if not entries:
-        raise Halt("stalled_frontier",
-                   "the stage has pending work but nothing dispatchable")
-    workers = max(1, min(int(rt.cfg.driver("max_parallel")), len(entries)))
-    rt.report.line(
-        f"dispatching {len(entries)} task(s) "
-        f"({', '.join(str(e.get('task_id')) for e in entries)}) "
-        f"· {workers} in parallel", indent=2)
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = [pool.submit(_run_task, rt, entry) for entry in entries]
-        for future in futures:
+def _fill(rt, pool, running, workers, data) -> None:
+    """Start what the frontier offers, up to the free slots.
+
+    ``running`` is the driver's own count of what it has in flight, and it is what the
+    free slots are counted against: a task enters the pipeline's in-flight set only when
+    its thread reaches the dispatch verb — a worktree, a provision and an envelope after
+    it was picked up — so every frontier read in that window still offers it."""
+    fresh = [e for e in (data.get("dispatch") or []) if e.get("task_id") not in running]
+    room = max(0, workers - len(running))
+    queued = len(fresh[room:]) + len(data.get("ready") or [])
+    for entry in fresh[:room]:
+        task_id = entry["task_id"]
+        running[task_id] = pool.submit(_run_task, rt, entry)
+        rt.report.line(f"task {task_id} started · {len(running)}/{workers} slot(s) busy"
+                       + (f", {queued} queued" if queued else ""), indent=2)
+
+
+def _reap(running) -> None:
+    """Drop the tasks whose build→review chain has finished, freeing their slots, and
+    re-raise what one of them raised — a Halt or a Pause is the run's, not the task's."""
+    for task_id, future in list(running.items()):
+        if future.done():
+            del running[task_id]
             future.result()
 
 
