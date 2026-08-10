@@ -572,7 +572,12 @@ observability, never correctness.
 
 **Trigger to act:** the next time a run's cost or throughput has to be explained, or when
 stage width (§11's telemetry watch item) needs a before/after measurement — that
-comparison is not worth re-running the one-off script for.
+comparison is not worth re-running the one-off script for. Recurrence so far: **1**
+(2026-08-10 — explaining s2 needed the script written a second time, and this time even
+that could not read cost: the s2 archive holds only `sessions.jsonl`, whose usage rows
+carry no `cost_usd` and no agent tag, so per-role spend had to be *estimated* from token
+counts times list price, and roles had to be re-attributed by pairing usage rows against
+dispatch time windows. The trigger has fired — this is a promote.)
 
 ---
 
@@ -606,3 +611,46 @@ anything in the driver — CAP-015 took 44 scenarios and 7 adequacy rounds to ho
 **Trigger to act:** a second sprint spends more than two cuts without a stage, or an
 escalation chain on one capability reaches three again. Recurrence so far: **1**
 (2026-08-09).
+
+**How it ended (2026-08-10):** s2 did finish — the design phase cut stage 1 after the
+churn above, and all 7 tasks built, reviewed and merged in **4h14m**. The full run was
+27h21m, of which **19h04m was the driver halted waiting for a human ruling**, across the
+three escalations and one false `work_exhaustion` stop. So the cost of this candidate is
+now measured, and it is not the design *rounds* — those were ~3h of agent time. It is that
+every escalation converts the loop from autonomous to human-blocking, and three of the four
+halts came from one defect (the adequacy stop rule; dems L-125, still open). That argues
+hard for the *strongest* option above being wrong as a first move: fix the stop rule before
+adding a no-stage-cut counter, because a counter that parks a converging capability trades
+a halt for a different halt.
+
+---
+
+## C44 — the retrospective mints learnings it cannot check are already fixed
+
+**Date:** 2026-08-10
+**Context:** the s2 retrospective wrote **7 new wf-toolkit learnings**; verifying each
+against the wf2 tree found **2 already fixed** — L-128 (the per-role context report blind
+to driver-dispatched roles) had shipped in `8d83612` two hours after the single telemetry
+row it was written from, and L-131's staleness check already returns stale for a digest
+with no `taken_at`. Both were minted as open findings and would have been read as open
+work by the next session to consult the file.
+
+**Why it matters:** the same failure the fix-it-drain-it rule exists to prevent, arriving
+from the other direction. A learning stays open not because a fix went undrained, but
+because the fix landed between the observation and the retrospective that harvested it.
+`wf-retrospective` reads `sessions.jsonl` and pipeline state — it has no view of the
+toolkit's source, so it cannot tell a live defect from a fixed one, and it re-processes
+its own predecessor's session rows (the s2 window opened on the s1 retrospective's Stop
+row). The rate scales with how fast wf2 is being fixed, which is exactly when it hurts.
+
+**Shape of the fix:** two honest options. *Cheapest and mechanical:* stamp each session
+feedback row with the toolkit's commit sha at dispatch (the driver knows it), and have the
+retrospective drop — or flag — a wf-friction row whose sha is behind `HEAD` for a file the
+fix touched. *Weaker but free:* the retrospective already writes learnings in two lanes;
+have the wf-toolkit lane state, per entry, the source file it names, so a maintainer's
+drain pass is a grep rather than a re-derivation. Neither should try to *judge* whether a
+fix landed — that is the maintainer's read.
+
+**Trigger to act:** a second retrospective mints a learning already fixed in the tree, or
+the wf-toolkit lane crosses ~15 open entries (a drain audit then costs more than the stamp
+would have). Recurrence so far: **1** (2026-08-10, 2 of 7 entries).
