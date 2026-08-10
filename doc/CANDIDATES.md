@@ -620,9 +620,12 @@ have the wf-toolkit lane state, per entry, the source file it names, so a mainta
 drain pass is a grep rather than a re-derivation. Neither should try to *judge* whether a
 fix landed — that is the maintainer's read.
 
-**Trigger to act:** a second retrospective mints a learning already fixed in the tree, or
-the wf-toolkit lane crosses ~15 open entries (a drain audit then costs more than the stamp
-would have). Recurrence so far: **1** (2026-08-10, 2 of 7 entries).
+**Trigger to act — FIRED.** The second half of the trigger (the wf-toolkit lane crossing
+~15 open entries) is met and then some: dems' `.wf/wf-learnings.yaml` stood at **52 open
+entries** on 2026-08-10, so no reader can tell a live defect from a fixed one without
+re-deriving all 52 against this tree. A drain audit now costs more than the dispatch-sha
+stamp would have. Recurrence: **1** (2026-08-10, 2 of 7 entries) plus the standing
+52-entry backlog.
 
 ---
 
@@ -647,13 +650,14 @@ detector: flag at stage close any merged task whose diff or rebuild count sits f
 stage's median, and route it to the retrospective rather than gating the cut.
 
 **Corroborated 2026-08-10, from a direction s1 could not see.** The C48 context measurement
-makes wf-build — not the designer — the context outlier of the whole system: `context_max`
-peaked at **601 k in s2** and 316 k in the live run, against a designer that peaks at 232 k
-and a reviewer at 165 k. Nothing in the redesign predicted that, and no threshold anywhere
-watches it. A build session at 600 k is a task whose contract, tree reading and rework do
-not fit one context — which is this entry's "increment wearing a task costume", measured at
-the other end. The build is also where the money goes (s1: $417 of task spend, 23% of it
-rework), so this is the expensive outlier, not a curiosity.
+makes wf-build the context outlier of the whole system: `context_max` peaked at **601 k in
+s2** and 316 k in s3, against a designer that peaks at 271 k / 278 k (figures corrected
+after the C48 join bug) and a reviewer at 165 k. Nothing in the redesign predicted that,
+and no threshold anywhere watches it. A build session at 600 k is a task whose contract,
+tree reading and rework do not fit one context — which is this entry's "increment wearing a
+task costume", measured at the other end. The build is also where the money goes (s1: $417
+of task spend, 23% of it rework; s3: $69 of $118, and two of ten tasks took 45% of task
+spend), so this is the expensive outlier, not a curiosity.
 
 **Trigger to act:** a third oversized-and-reworked task lands in a driver sprint, or the
 rework share of task spend exceeds s1's 23% in a later run. The cheap detector is now
@@ -698,22 +702,33 @@ evidence, two are not:
   carried 7 tasks. No action.
 - **Answered — stage close as the dominant serial term.** s2 merged all 7 tasks in 4h14m
   against a 27h21m run; close was not the bottleneck. Human halt-wait was (C43).
-- **Answered 2026-08-10 — the context budget. The prediction held; the threshold did
-  not.** Measured with `wf telemetry roles` over the s2 archive and the live sink:
+- **REOPENED 2026-08-10 — the context budget. The measurement was wrong; on the corrected
+  number the prediction does not hold.** The first reading of this item took
+  `wf telemetry roles` at its word: s3's designer showed 128 k avg / 143 k max and the item
+  was closed as "the prediction held". That figure was a **wf-drill subagent's**, not the
+  designer's. `telemetry.py`'s subagent lane could claim a *dispatch* candidate, so five
+  drills running inside one designer dispatch evicted the designer's own transcript into
+  `main_loop` — the reported "average" was arithmetically the mean of two drill rows
+  (`(142741 + 112340) / 2 = 127540`). Fixed, with the lanes now disjoint. Re-derived over
+  the same s3 archive:
 
-  | wf-designer | s2 (10 runs) | live run (2 runs) |
+  | wf-designer | as reported | corrected |
   |---|---|---|
-  | `context_max` avg | 164 k | 128 k |
-  | `context_max` max | 232 k | 143 k |
+  | s2 `context_max` avg / max | 164 k / 232 k | 210 k / **271 k** |
+  | s3 `context_max` avg / max | 128 k / 143 k | 278 k / **278 k** (1 run) |
 
-  The comparison §15 actually set up is favourable: the merged role peaks at 232 k against
-  the deleted wf-tl's 267 k of a 281 k window, and its *average* is far below wf-tl's peak
-  rather than pressed against the ceiling. Net of C47's ~33 k harness constant the live run
-  averages ~95 k, on `loop-redesign.md` §11's ≈100 k target. But s2's average of 164 k is
-  over the 150 k line §15 called a design failure — and s2 is exactly the run whose ten
-  designer dispatches were mostly the CAP-015 scenario churn (C43), not stage cutting. So:
-  **not a design failure, but the threshold is not clear either, and the clean sample is
-  two runs.** Re-read it once the live run has cut several stages.
+  Both runs were understated; s2 by less, because two of its ten designer dispatches did
+  claim their own rows. Net of C47's ~33 k harness constant s3 is ~245 k — over the 150 k
+  line §15 called a design failure, and level with the deleted wf-tl's 267 k peak the merge
+  was meant to relieve. The clean sample is still **one** cut, so this is not yet a verdict
+  on the design; it is a verdict on the closure, which was premature.
+
+  **Second finding, from the same bug:** the s3 retrospective *rationalised* the artifact
+  rather than flagging it, footnoting that wf-drill "shares wf-designer's `session_id`, so
+  only one row attributes to it independently". All six rows do share one `session_id`, and
+  five of them are drills — the footnote explains a bug as a property of the data. A role
+  reading its own tooling's output has no way to catch this class; only a re-derivation
+  does. Cf. C44, which is the same shape from the other direction.
 - **Open — does the role actually read the merged tree?** Three deletions (claimed scope,
   interface contracts, the design narrative) were all replaced by one behaviour: the
   designer grounds by reading merged source. If it grounds on the plan instead, the
@@ -721,8 +736,42 @@ evidence, two are not:
   either way — its design phase spent four dispatches on scenario prose (C43), which says
   nothing about how it grounded when it finally cut.
 
-**Trigger to act:** one item remains — the grounding question, which needs an adversarial
-read of a cut stage against the tree it was cut from. Telemetry cannot answer it (a role
-that reads the plan and one that reads the tree both just show tokens); run it at the next
-cut. The context measurement is taken and is re-read cheaply whenever it matters.
+**Trigger to act:** two items remain. The grounding question needs an adversarial read of a
+cut stage against the tree it was cut from — telemetry cannot answer it (a role that reads
+the plan and one that reads the tree both just show tokens); run it at the next cut. The
+context budget needs the corrected number re-read after two or three more stage cuts,
+which is now cheap and honest.
+
+---
+
+## C49 — concurrent same-agent subagents race on one start-stamp file
+
+**Date:** 2026-08-10
+**Context:** `wf-basics` §2 has each session write its start stamp to
+`<root>/<paths.transient>/ts-start-<agent>` and delete it at END. The filename is keyed by
+**agent name alone**, so N concurrent subagents of the same role share one file: the first
+to finish deletes it, and every other one falls through the documented
+`|| echo "$TS_END"` degradation and records `started_at == ended_at`. Measured on s3 — five
+`wf-drill` subagents inside one designer dispatch produced **one** real duration and four
+zero-width ones.
+
+**Why it matters:** a zero-width window is unjoinable, so those four sessions carry no
+context or token measurement at all. Until the C48 fix they were worse than missing — they
+were the rows that displaced the designer's own. Now `wf telemetry roles` reports them as
+`unjoined_subagents`, so the loss is visible and bounded, but it is still a loss, and it
+scales with exactly the fan-out wf-designer is designed to do.
+
+**Shape when acted on — the open question is what identifies a subagent instance.** The
+shell cannot carry one (START and END are separate processes, so `$$` differs), and the
+harness exposes no subagent id to the tool layer. Two honest options: have the skill body
+mint a short token at START and reuse it in both commands (LLM-carried, but the token lives
+in its own context, which is the reliable part — it was the *shell env* that was not); or
+have START create `ts-start-<agent>-<nanoseconds>` and END claim the oldest unclaimed
+stamp, which keeps every duration real but may permute which sibling gets which (and can
+pair a start after its end — needs a guard). Neither is obviously right, which is why this
+is parked rather than fixed.
+
+**Trigger to act:** a role's fan-out grows past ~5 concurrent same-agent subagents, or
+`unjoined_subagents` becomes a large enough share of a run's usage rows that a role's
+measurement cannot be read. Recurrence so far: **1** (s3, 4 of 5 drills).
 

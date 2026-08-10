@@ -134,9 +134,10 @@ you never go on to review.
 Run `commands.preflight` **in the foreground** — never a shell `&`, never a background
 tool mode — and **pass an explicit tool timeout of at least 600000 ms on the call**.
 Preflight routinely outruns the Bash tool's ~120 s default, and past it the tool
-backgrounds the run on its own however you invoked it: it then completes with no turn
-watching, so you park waiting on a notification that never arrives and the whole cycle is
-spent again. Pipe to `/tmp/wf-build-<task-id>-preflight.log`; read the outcome per
+backgrounds the run on its own however you invoked it. Whether you then get a usable
+completion notification is the harness's call, not yours: sessions have been lost waiting
+for one that never came. If you do end up backgrounded, do not park — poll the log file
+and carry on from what it says. Pipe to `/tmp/wf-build-<task-id>-preflight.log`; read the outcome per
 `wf-agent-preamble`, not the whole log. It must exit clean. A gate that cannot run because its environment is
 unavailable is a HALT, not a pass — do not write `review_ready`.
 

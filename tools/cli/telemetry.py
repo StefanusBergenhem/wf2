@@ -64,6 +64,13 @@ def _parse(ts):
         return None
 
 
+# How alike two windows must be for a dispatch to claim a Stop row it does not strictly
+# contain. A transcript that overruns its own dispatch by whole-second rounding scores
+# ~0.99; the main loop's session-spanning snapshot against any one dispatch scores well
+# under 0.1, so it stays where it belongs.
+_NEAR_SPAN_IOU = 0.5
+
+
 def _iou(ua, ub, sa, sb):
     """Intersection-over-union of two [start, end] windows, in [0, 1]. IoU (not raw
     overlap) so a wide window that merely contains a narrow one does not out-score the
@@ -158,7 +165,16 @@ def _roles(rest):
     cands = [_candidate(s, s.get("agent")) for s in skill
              if s.get("agent") != "wf-orchestrate"]
     dispatched = set(range(len(cands), len(cands) + len(driver)))
-    cands += [_candidate(d, _driver_role(d)) for d in driver]
+    drv_cands = [_candidate(d, _driver_role(d)) for d in driver]
+    # A dispatched role writes a session record of its own, and it near-spans the
+    # dispatch that bracketed it. That record is the role's, not a subagent's, so it is
+    # no candidate for the subagent lane — leaving it there charges the role one extra
+    # "run" per subagent it ran, at the subagent's numbers. A subagent's own record sits
+    # far inside the dispatch and scores nowhere near it.
+    nested = {i for i, c in enumerate(cands)
+              if not any(_iou(c["_a"], c["_b"], d["_a"], d["_b"]) >= _NEAR_SPAN_IOU
+                         for d in drv_cands)}
+    cands += drv_cands
 
     def _metrics(u, ua, ub, cand=None):
         t = u.get("tokens") or {}
@@ -177,28 +193,47 @@ def _roles(rest):
             "task": (cand or {}).get("task"),
         }
 
-    used, joined = set(), []
+    # A subagent's transcript joins its own session record and nothing else. The two
+    # lanes are disjoint by construction — a dispatched role is a top-level session, so
+    # it fires `Stop` and never `SubagentStop` — and letting a subagent claim a dispatch
+    # would EVICT the dispatched role's own Stop row, which then reports its subagent's
+    # numbers as its own (dems s3: five wf-drill subagents ran inside one wf-designer
+    # dispatch, and the designer's 278 k peak was reported as a drill's 143 k).
+    used, joined, unjoined_sub = set(), [], 0
     for u in sub:
         ua, ub = _parse(u.get("started_at")), _parse(u.get("ended_at"))
-        pick = _exact_pick(ua, ub, cands, used)
+        pick = _exact_pick(ua, ub, cands, used, only=nested)
         if pick is None:
-            scored = sorted(((_iou(ua, ub, c["_a"], c["_b"]), i)
-                             for i, c in enumerate(cands)), reverse=True)
+            scored = sorted(((_iou(ua, ub, cands[i]["_a"], cands[i]["_b"]), i)
+                             for i in nested), reverse=True)
             pick = next((i for sc, i in scored if i not in used and sc > 0), None)
         if pick is None:
+            # No record to name it: concurrent same-agent subagents race on one
+            # start-stamp file, and the losers record a zero-width window nothing can
+            # contain. Counted, not dropped — a silent drop reads as a role that never
+            # ran, and charging it to the dispatch is what this lane exists to prevent.
+            unjoined_sub += 1
             continue
         used.add(pick)
         joined.append((cands[pick]["agent"], _metrics(u, ua, ub, cands[pick])))
 
     # A role the driver dispatches runs as its OWN top-level session, so its hook fires
     # `Stop`, not `SubagentStop`. A Stop row a dispatch window brackets is that role's
-    # transcript. Containment only, and only against dispatch windows: the main loop's
+    # transcript. Only against dispatch windows, and containment first: the main loop's
     # own Stop rows are cumulative snapshots spanning the whole session, so no dispatch
-    # can contain one, and an overlap fallback would let one claim a role it merely ran.
+    # contains one. The driver stamps whole seconds, so a transcript can overrun its own
+    # dispatch by a fraction of one — hence the fallback, gated on the two windows being
+    # near-identical (_NEAR_SPAN_IOU). An unbounded one would let a dispatch claim the
+    # session-spanning snapshot it merely ran inside of.
     unclaimed = []
     for u in stop:
         ua, ub = _parse(u.get("started_at")), _parse(u.get("ended_at"))
         pick = _exact_pick(ua, ub, cands, used, only=dispatched)
+        if pick is None:
+            scored = sorted(((_iou(ua, ub, cands[i]["_a"], cands[i]["_b"]), i)
+                             for i in dispatched), reverse=True)
+            pick = next((i for sc, i in scored
+                         if i not in used and sc >= _NEAR_SPAN_IOU), None)
         if pick is None:
             unclaimed.append(u)
             continue
@@ -294,6 +329,7 @@ def _roles(rest):
         "tasks": task_rows,
         "main_loop": main_loop,
         "matched": len(joined),
+        "unjoined_subagents": unjoined_sub,
         "usage_rows": len(sub) + len(stop),
         "cost_usd": round(run_cost, 2),
         "costed_dispatches": sum(1 for d in driver if d.get("cost_usd") is not None),

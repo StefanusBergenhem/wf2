@@ -46,14 +46,20 @@ _TAG_RE = re.compile(r"\[SYS-TC:")
 # out of sync with a renumbered or superseded record. Escape hatch companion to
 # _TAG_RE: a spec id inside one of these spans is not narrative.
 _PATH_CITE_RE = re.compile(r"\S*/(?:REQ-\d+|ADR-\d+|CAP-\d+|SYS-TC-\d+|L-\d{2,3})\S*\.md\b")
+# An acceptance criterion lives exclusively in a task contract, which is discarded at
+# merge — so an AC id in code points at nothing a later reader can resolve, and the next
+# build reads it as prior art and copies it. Judged per line, not per block: unlike
+# spec-narrative this is not about narrating, and one test doc comment is enough.
+_AC_ID_RE = re.compile(r"\bAC-\d+\b")
 # comment-ratio is only judged on files long enough for a ratio to mean anything;
 # short files legitimately run comment-heavy (a ports/interface file's doc lines).
 _RATIO_MIN_LINES = 50
 # rules whose count increase in a touched pre-existing file fails the ratchet —
 # each is fixable inside the diff that introduced it. file-length is deliberately
 # absent (splitting is planning work); warn-severity rules never gate.
-_RATCHET_RULES = {"func-length", "comment-block", "spec-narrative", "agents-md-length",
-                  "charter-length", "plan-length", "architecture-length"}
+_RATCHET_RULES = {"func-length", "comment-block", "spec-narrative", "ac-id-comment",
+                  "agents-md-length", "charter-length", "plan-length",
+                  "architecture-length"}
 
 
 def _cfg(config):
@@ -200,6 +206,12 @@ def _check_file(relpath, text, cfg, doc_caps=None):
                                 f"func of {e - s + 1} lines > func_error {cfg['func_error']}"))
 
     comment_idx = _comment_line_numbers(lines, ext)
+    for i in comment_idx:
+        if _AC_ID_RE.search(lines[i - 1]):
+            out.append(find("ac-id-comment", "error", i,
+                            "comment cites an acceptance-criterion id — an AC lives "
+                            "only in the task contract, which does not survive the "
+                            "merge; state the behaviour instead"))
     for s, e in _blocks(comment_idx):
         blen = e - s + 1
         block = lines[s - 1:e]

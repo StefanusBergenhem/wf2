@@ -95,9 +95,14 @@ summary, not the streams.
 **Cluster friction mechanically before judging any of it:** group the unprocessed records'
 `wf_friction` entries by `feedback.friction_kind` — a record without the field, or with
 `none` beside non-empty prose, goes in the `none` group. Distil each group as a unit:
-several sessions reporting the same kind usually share one cause, so write one learning for
-the shared cause, not one per record. The kind is the grouping key only — the learning's
-statement comes from the prose.
+several sessions reporting the same kind usually share one cause. The kind is the grouping
+key only — the learning's statement comes from the prose.
+
+**Then split each group by root cause, and write one learning per cause — never one per
+group.** A kind is a coarse bucket: `skill_gap` holds every skill defect there is, so one
+group routinely carries two unrelated causes, and collapsing them loses one. Read the
+prose of every record in the group and ask whether one fix would resolve all of them; if
+not, the group is more than one learning.
 
 Turn each unprocessed observation and each cross-task pattern into a learning, holding the bar:
 

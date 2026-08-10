@@ -111,6 +111,39 @@ class GitopsTest(support.TempProject):
         self.assertFalse((wt / "leftover.txt").exists())
         self.assertTrue((wt / "moved.txt").is_file())
 
+    def test_worktree_add_reuses_a_current_worktree_but_not_a_crashed_run_s_files(self):
+        """A worktree whose base has NOT moved on is kept — recreating it would throw
+        away the checkout for nothing. But a re-dispatched build restarts from zero, and
+        a crashed prior run leaves files a plain reset never touches: an untracked file
+        survives into an attempt:0 dispatch, where the build has no signal it did not
+        write it and re-verifies it against source to find out."""
+        self.git.start_branch("sprint/s1", "main")
+        wt = self.root / ".wf/transient/worktrees/s1-T1"
+        self.git.worktree_add(wt, "task/s1-T1", "sprint/s1")
+        (wt / "crashed_run.txt").write_text("a prior dispatch's untracked work")
+        (wt / "scratch").mkdir()
+        (wt / "scratch/more.txt").write_text("and its directory")
+        (wt / "README.md").write_text("half-edited tracked file\n")
+        self.git.worktree_add(wt, "task/s1-T1", "sprint/s1")
+        self.assertTrue((wt / "README.md").is_file())
+        self.assertFalse((wt / "crashed_run.txt").exists())
+        self.assertFalse((wt / "scratch").exists())
+        self.assertNotIn("half-edited", (wt / "README.md").read_text())
+
+    def test_worktree_add_keeps_gitignored_provisioning_when_it_reuses(self):
+        """`commands.provision` fills a worktree with gitignored dependency dirs that
+        cost real time to rebuild — the clean drops the crashed run's files, not those."""
+        (self.root / ".gitignore").write_text("node_modules/\n")
+        support.git(self.root, "add", ".gitignore")
+        support.git(self.root, "commit", "-q", "-m", "ignore deps")
+        self.git.start_branch("sprint/s1", "main")
+        wt = self.root / ".wf/transient/worktrees/s1-T1"
+        self.git.worktree_add(wt, "task/s1-T1", "sprint/s1")
+        (wt / "node_modules").mkdir()
+        (wt / "node_modules/dep.js").write_text("provisioned")
+        self.git.worktree_add(wt, "task/s1-T1", "sprint/s1")
+        self.assertTrue((wt / "node_modules/dep.js").is_file())
+
     # ── carrying a blocked attempt forward ───────────────────────────────────
 
     def _blocked_attempt(self, filename="attempt.txt", body="what the block left"):

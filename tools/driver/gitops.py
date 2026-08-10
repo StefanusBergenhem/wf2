@@ -169,10 +169,20 @@ class Git:
         """A task worktree cut from the CURRENT sprint-branch tip, so the task sees
         every earlier sub-layer's merged work. A leftover worktree whose base has moved
         on is destroyed and recreated — a re-dispatched build restarts from zero, so
-        nothing in it is worth keeping."""
+        nothing in it is worth keeping.
+
+        One whose base is still current is reused, but reset and cleaned first, on the
+        same reasoning: work worth keeping is already committed by then (preserve-
+        uncommitted stages untracked files too), so what remains is a crashed run's
+        debris. Left in place it reaches an attempt:0 build as untracked files it has no
+        record of writing — `git reset --hard` never touches those — and the build pays
+        to re-verify them against source. The clean spares gitignored paths: those are
+        `commands.provision`'s output, not the crashed run's."""
         path = Path(path)
         if path.exists():
             if self._run("merge-base", "--is-ancestor", base, "HEAD", cwd=path).rc == 0:
+                self._run("reset", "--hard", cwd=path)
+                self._run("clean", "-fd", cwd=path)
                 return None
             self.worktree_remove(path, branch)
         if self.dry_run:
