@@ -42,6 +42,7 @@ paths:
   discover: ".wf/transient/discover"
   discover_model: ".wf/transient/discover/model.json"
   discover_brief: ".wf/transient/discover/brief.md"
+  pi_sessions: ".wf/transient/pi-sessions"
   telemetry: ".wf/telemetry/sessions.jsonl"
   capabilities: ".wf/CAPABILITIES.yaml"
   charter: ".wf/charter.md"

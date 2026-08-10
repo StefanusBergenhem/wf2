@@ -62,15 +62,28 @@ mkdir -p "$WF_DIR"
 # through ToolSearch, each having just read the skill that forbids it. Bash is untouched:
 # a gate run in the FOREGROUND is exactly what this pushes the role back to. The flag is
 # variadic, so `"{prompt}"` must stay ahead of it or it is swallowed as another tool name.
+#
+# `--strict-mcp-config` loads no MCP server at all. No wf role calls one, and a dispatch
+# runs with permissions skipped, so a server the user happens to have configured puts its
+# write tools in a build agent's reach — a dems dispatch carried github's
+# create_pull_request/merge_pull_request/push_files that way. Dropping them also takes
+# ~2k off every dispatch's prompt (measured: 33.3k → 31.2k, 147 tools → 27).
 case "$TARGET" in
-    claude)   AGENT_CMD='claude -p --output-format stream-json --verbose --dangerously-skip-permissions --model sonnet "{prompt}" --disallowedTools "Monitor,ScheduleWakeup,CronCreate"'
-              AGENT_CMD_STRONG='claude -p --output-format stream-json --verbose --dangerously-skip-permissions --model opus "{prompt}" --disallowedTools "Monitor,ScheduleWakeup,CronCreate"' ;;
+    claude)   AGENT_CMD='claude -p --output-format stream-json --verbose --dangerously-skip-permissions --strict-mcp-config --model sonnet "{prompt}" --disallowedTools "Monitor,ScheduleWakeup,CronCreate"'
+              AGENT_CMD_STRONG='claude -p --output-format stream-json --verbose --dangerously-skip-permissions --strict-mcp-config --model opus "{prompt}" --disallowedTools "Monitor,ScheduleWakeup,CronCreate"' ;;
     # TODO: opencode/pi model flags are unverified — both tiers render the harness
     # default; pin models in agent_cmd/agent_cmd_overrides after the first run.
     opencode) AGENT_CMD='opencode run "{prompt}"'
               AGENT_CMD_STRONG='opencode run "{prompt}"' ;;
-    pi)       AGENT_CMD='pi run "{prompt}"'
-              AGENT_CMD_STRONG='pi run "{prompt}"' ;;
+    # pi's headless prompt command is `pi -p` (NOT `pi run`, which reads no prompt and
+    # exits having done nothing). `--mode json` makes the log carry per-request usage
+    # and cost so the driver's cost read and the pi usage hook have a source;
+    # `--session-dir` persists the session to the project's own transient dir (not the
+    # user's ~/.pi store) so the pi usage hook can read it and sweep it with the rest
+    # of the transient tree; `--exclude-tools` denies the parking tools the claude
+    # template denies. Verified headlessly end-to-end.
+    pi)       AGENT_CMD="pi -p --mode json --session-dir \"$DIR/.wf/transient/pi-sessions\" --exclude-tools \"Monitor,ScheduleWakeup,CronCreate\" \"{prompt}\""
+              AGENT_CMD_STRONG="$AGENT_CMD" ;;
 esac
 
 # Config: write once from the template. An existing config is the user's — never
@@ -179,5 +192,20 @@ if [ -n "$TOOLS_REL" ]; then
     else
         { echo "$PYCACHE_LINE"; } >> "$GITIGNORE"
         echo "  added $PYCACHE_LINE to .gitignore"
+    fi
+fi
+
+# Gitignore the session log's directory, exactly once. The log is a per-cycle working
+# buffer, not source: every dispatch appends to it, so committing it dirties the tree
+# under the driver's own clean-tree gate. The durable record is the drain's
+# paths.archive snapshot, which IS committed (L-137).
+TELEMETRY_DIR_REL="$(dirname "$TELEMETRY_REL")/"
+if [ "$TELEMETRY_DIR_REL" != "./" ]; then
+    if [ -f "$GITIGNORE" ] && grep -qxF "$TELEMETRY_DIR_REL" "$GITIGNORE"; then
+        echo "  gitignore already ignores $TELEMETRY_DIR_REL"
+    else
+        { echo "# wf session log (per-cycle buffer; the archive snapshot is the record)"; \
+          echo "$TELEMETRY_DIR_REL"; } >> "$GITIGNORE"
+        echo "  added $TELEMETRY_DIR_REL to .gitignore"
     fi
 fi

@@ -67,6 +67,15 @@ width cannot be gated — a lower bound would be wrong — so it is watched, and
 toward one task per stage means design dispatches are compounding against a chain the
 role is not cutting around.
 
+A pi dispatch also folds its session into `kind: usage` rows (the same shape the
+claude Stop/SubagentStop hook writes, consumed identically by `wf telemetry roles`):
+pi has no end-of-session hook, so after a `pi` launch the driver runs
+`paths.tools/telemetry/pi_usage_hook.py` over `paths.pi_sessions` — the `--session-dir`
+its launch template baked in — gated to that dispatch's session id read off its log.
+Best-effort and never a verdict: a session the hook cannot read is simply not
+reported. The cost read itself (`result_usage`) accepts both a claude `type: result`
+closing line and a pi `message_end` stream, so the dispatch row carries cost for either.
+
 ## Phases
 
 State lives in `driver.state_file`; each phase is entered (and written) before it
@@ -218,6 +227,9 @@ defaults of its own; a missing key is a named, fatal error.
 
 - `driver.agent_cmd`, `driver.max_parallel`, `driver.max_unmerged_sprints`,
   `driver.stop_file` — as before.
+- `paths.pi_sessions` — where the pi launch template points `--session-dir`, so the
+  driver's usage fold reads a dispatch's session there and it is swept with the
+  transient tree (new; consumed by `dispatch` and `pi_usage_hook.py`).
 - `driver.agent_cmd_overrides` — optional map, role → launch template, for a role that
   needs a different model or harness flag; a role with no entry uses `agent_cmd`.
 - `driver.state_file` — the driver's own position (new).

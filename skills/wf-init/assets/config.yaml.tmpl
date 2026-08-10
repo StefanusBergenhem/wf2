@@ -28,6 +28,11 @@ paths:
   skills: ".{{TARGET}}/skills"   # driver: a skill-shaped role lives at <paths.skills>/<role>/SKILL.md
   agents: ".{{TARGET}}/agents"   # driver: an agent-shaped role lives at <paths.agents>/<role>.md
 
+  pi_sessions: ".wf/transient/pi-sessions"   # pi's per-dispatch session files (the pi agent_cmd
+                                          # points --session-dir here). The pi usage hook reads the
+                                          # session a dispatch left so a pi run feeds the same
+                                          # `kind: usage` context/cost rows the claude Stop hook writes.
+                                          # Transient — swept with the rest of the tree.
   discover: ".wf/transient/discover"          # wf-discover working dir (extractor --out; cleared each run).
   # wf-discover output files — each a whole path, so a downstream skill that reads
   # one (e.g. brief) follows a single config edit if it moves.
@@ -36,12 +41,17 @@ paths:
   discover_subsystems: ".wf/transient/discover/subsystems.json"  # scout output (semantic cache)
   discover_view: ".wf/transient/discover/view.html"              # human interactive map
   discover_brief: ".wf/transient/discover/brief.md"              # agent digest (refreshed at every sprint start)
-  telemetry: ".wf/telemetry/sessions.jsonl"   # Session log. Committed. Skills append session
+  telemetry: ".wf/telemetry/sessions.jsonl"   # Session log. Gitignored — a per-cycle working
+                                              # buffer, not source: every dispatch appends to it,
+                                              # so committing it dirties the tree under the
+                                              # driver's clean-tree gate. Skills append session
                                               # rows; on the claude target an installed
                                               # Stop/SubagentStop hook also appends `kind: usage`
                                               # token/tool rows. wf-retrospective drains it to
                                               # paths.archive at closeout, so it holds one cycle,
-                                              # not all history (bounds the retrospective's own read).
+                                              # not all history (bounds the retrospective's own
+                                              # read) — and that archive snapshot IS the committed
+                                              # record.
 
   # The durable why + the durable direction. Both are human-owned; the autonomous
   # design role reads them and writes only paths.plan.

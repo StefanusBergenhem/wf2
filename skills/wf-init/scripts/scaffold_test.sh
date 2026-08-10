@@ -37,6 +37,10 @@ check "target token resolved"      "grep -q 'target: \"claude\"' '$PROJ/.wf/conf
 check "no unresolved {{ tokens"    "! grep -q '{{' '$PROJ/.wf/config.yaml'"
 check "gitignore ignores transient" "grep -qF '.wf/transient/' '$PROJ/.gitignore'"
 check "telemetry sink created"     "[ -f '$PROJ/.wf/telemetry/sessions.jsonl' ]"
+# The session log is a per-cycle working buffer, not source: every dispatch appends to it,
+# and the durable record is the drain's paths.archive snapshot. Committing it would dirty
+# the tree under the driver's own clean-tree gate (L-137).
+check "gitignore ignores telemetry" "grep -qF '.wf/telemetry/' '$PROJ/.gitignore'"
 check "adrs dir created"           "[ -d '$PROJ/.wf/adrs' ]"
 check "adrs gitkeep created"       "[ -f '$PROJ/.wf/adrs/.gitkeep' ]"
 check "capabilities home created"  "[ -f '$PROJ/.wf/CAPABILITIES.yaml' ]"
@@ -66,12 +70,35 @@ for T in opencode pi; do
         "grep -q 'agent_cmd:.*{prompt}' '$TP/.wf/config.yaml'"
 done
 check "opencode agent_cmd is opencode run" "grep -q 'agent_cmd:.*opencode run' '$WORK/t-opencode/.wf/config.yaml'"
+# pi's headless prompt command is `pi -p` — NOT `pi run`, which reads no prompt and
+# exits having done nothing. The render must carry the real verb, stream json for the
+# driver's cost read, persist its session under the project's transient dir for the
+# usage hook, and deny the parking tools like the claude template does.
+check "pi agent_cmd is pi -p (the real headless verb)" \
+    "grep -q 'agent_cmd:.*pi -p.*{prompt}' '$WORK/t-pi/.wf/config.yaml'"
+check "pi agent_cmd is NOT the broken pi run" \
+    "! grep -q 'agent_cmd:.*pi run' '$WORK/t-pi/.wf/config.yaml'"
+check "pi agent_cmd streams json (cost read has a source)" \
+    "grep -q \"agent_cmd:.*--mode json\" '$WORK/t-pi/.wf/config.yaml'"
+check "pi agent_cmd persists a session for the usage hook" \
+    "grep -q 'agent_cmd:.*--session-dir' '$WORK/t-pi/.wf/config.yaml'"
+check "pi agent_cmd denies the parking tools" \
+    "grep -q 'agent_cmd:.*--exclude-tools.*Monitor,ScheduleWakeup,CronCreate' '$WORK/t-pi/.wf/config.yaml'"
+
 # Two model tiers on claude: the shared template pins the workhorse tier, the
 # overrides pin the judgment roles (designer, tl, adequacy) to the stronger one.
 check "claude agent_cmd pins sonnet" \
     "grep -q \"agent_cmd:.*--model sonnet.*{prompt}\" '$PROJ/.wf/config.yaml'"
 check "claude overrides block present" \
     "grep -q 'agent_cmd_overrides:' '$PROJ/.wf/config.yaml'"
+# No wf role calls an MCP server, and a dispatch runs with permissions skipped — an
+# inherited github/railway server would put write tools (create_pull_request,
+# merge_pull_request, push_files) in reach of a build agent. Loading none also drops
+# ~2k of tool listing off every dispatch's prompt.
+for R in "agent_cmd" "wf-designer" "wf-adequacy"; do
+    check "claude $R loads no MCP servers" \
+        "grep -q \"$R:.*--strict-mcp-config\" '$PROJ/.wf/config.yaml'"
+done
 # A headless dispatch gets one turn. Four dems builds ended theirs on ToolSearch →
 # Monitor → "I'll resume when it notifies me", writing no artifact — with the rule
 # against it in the skill they had just read. The tools are denied at launch instead.

@@ -123,14 +123,107 @@ _RESULT_FIELDS = (("total_cost_usd", "cost_usd"), ("num_turns", "num_turns"))
 _RESULT_USAGE = (("input_tokens", "input"), ("output_tokens", "output"),
                  ("cache_read_input_tokens", "cache_read"),
                  ("cache_creation_input_tokens", "cache_creation"))
+# How one pi request is named inside its message usage, mapped to the same row names.
+_PI_USAGE = (("input", "input"), ("output", "output"),
+             ("cacheRead", "cache_read"), ("cacheWrite", "cache_creation"))
+# Bound on the post-dispatch usage fold, so a wedged hook never holds a slot.
+_USAGE_HOOK_TIMEOUT_S = 15
+
+
+def _cost_total(usage) -> float:
+    c = usage.get("cost")
+    v = (c or {}).get("total")
+    return v if isinstance(v, (int, float)) else 0.0
+
+
+def _claude_result_row(line):
+    """The closing ``type: result`` line a claude run writes — or None when the line
+    is something else (or a truncated parse)."""
+    try:
+        row = json.loads(line)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(row, dict) or row.get("type") != "result":
+        return None
+    out = {name: row[key] for key, name in _RESULT_FIELDS if key in row}
+    usage = row.get("usage")
+    if isinstance(usage, dict):
+        out.update({name: usage[key] for key, name in _RESULT_USAGE if key in usage})
+    return out
+
+
+def _pi_stream_usage(lines):
+    """pi's stream has no closed ``result`` line — each request's usage rides the
+    ``message_end`` event, with the same assistant message repeated on ``turn_end``.
+    Deduped by response id so a request sums once. None when the log is not a pi
+    stream (nothing to report, not a free run)."""
+    by_id, anon = {}, []
+    for line in lines:
+        try:
+            entry = json.loads(line)
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(entry, dict) or entry.get("type") != "message_end":
+            continue
+        message = entry.get("message")
+        if not isinstance(message, dict) or message.get("role") != "assistant":
+            continue
+        usage = message.get("usage")
+        if not isinstance(usage, dict) or usage.get("cost") is None:
+            continue
+        rid = message.get("responseId")
+        if rid:
+            by_id[rid] = usage
+        else:
+            anon.append(usage)
+    usages = list(by_id.values()) + anon
+    if not usages:
+        return None
+
+    def val(u, key):
+        v = u.get(key) or 0
+        return v if isinstance(v, (int, float)) else 0
+
+    out = {"cost_usd": sum(_cost_total(u) for u in usages),
+           "num_turns": len(usages)}
+    out.update({name: sum(val(u, key) for u in usages)
+                for key, name in _PI_USAGE})
+    return out
+
+
+def _pi_session_id(log_path):
+    """The session uuid a pi run wrote as its first stream line, to fold that ONE
+    dispatch's session (and its children) — never a neighbour's."""
+    try:
+        text = Path(log_path).read_text(errors="replace")
+    except OSError:
+        return None
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            entry = json.loads(line)
+        except (ValueError, TypeError):
+            continue
+        if isinstance(entry, dict) and entry.get("type") == "session" and entry.get("id"):
+            return str(entry["id"])
+    return None
+
+
+def _is_pi_cmd(cmd) -> bool:
+    """Whether a launch template names the pi harness — the one trim that decides
+    whether the driver folds a dispatch's usage itself (pi has no end hook)."""
+    return bool(cmd) and cmd.lstrip().split(None, 1)[0] == "pi"
 
 
 def result_usage(log_path) -> dict:
-    """What the dispatch cost, read off the last line of its own log.
+    """What the dispatch cost, read off its own log — the only place cost exists, and
+    the logs are transient, so a number not read here is gone with them.
 
-    The harness closes every stream with a `type: result` line carrying
-    `total_cost_usd`, `num_turns` and the token breakdown — the only place cost exists,
-    and the logs are transient, so a number not read here is gone with them.
+    Two shapes: a claude run closes with one ``type: result`` line carrying the run
+    totals; a pi run streams each request's usage on ``message_end``. Both map to the
+    same row names, so the telemetry row never has to know which harness wrote it.
 
     Best-effort by contract: a dispatch the harness refused never wrote the line, and a
     killed one wrote half of it. Both report nothing rather than a zero, because a zero
@@ -142,17 +235,12 @@ def result_usage(log_path) -> dict:
         return {}
     if not lines:
         return {}
-    try:
-        row = json.loads(lines[-1])
-    except (ValueError, TypeError):
-        return {}
-    if not isinstance(row, dict) or row.get("type") != "result":
-        return {}
-    out = {name: row[key] for key, name in _RESULT_FIELDS if key in row}
-    usage = row.get("usage")
-    if isinstance(usage, dict):
-        out.update({name: usage[key] for key, name in _RESULT_USAGE if key in usage})
-    return out
+    for line in reversed(lines):
+        row = _claude_result_row(line)
+        if row is not None:
+            return row
+    pi = _pi_stream_usage(lines)
+    return pi if pi is not None else {}
 
 
 def rate_limit_wait_s(log_path, *, now, cap_s):
@@ -294,7 +382,32 @@ class Dispatcher:
                              started_at=done.started_at, ended_at=done.ended_at,
                              timed_out=done.timed_out or None,
                              log=str(log_path), **result_usage(log_path))
+        self._emit_pi_usage(cmd, log_path)
         return done
+
+    def _emit_pi_usage(self, cmd, log_path):
+        """Fold a pi dispatch's session into the same ``kind: usage`` rows the claude
+        Stop hook writes, so ``wf telemetry roles`` reports a pi run's context the same
+        way. pi has no end-of-session hook, so the driver is it. Best-effort and never a
+        verdict: a pi session the hook cannot read is simply not reported — telemetry is
+        observability, never correctness."""
+        if not _is_pi_cmd(cmd):
+            return
+        sid = _pi_session_id(log_path)
+        if not sid:
+            return
+        hook = self.cfg.path("tools") / "telemetry" / "pi_usage_hook.py"
+        if not hook.is_file():
+            return
+        cmdline = (f'python3 {shlex.quote(str(hook))}')
+        for flag, value in (("--session-dir", str(self.cfg.path("pi_sessions"))),
+                            ("--session-id", sid),
+                            ("--sink", str(self.cfg.path("telemetry")))):
+            cmdline += f" {flag} {shlex.quote(value)}"
+        try:
+            procs.run(cmdline, timeout=_USAGE_HOOK_TIMEOUT_S, shell=True)
+        except Exception:
+            return
 
     def _wait_out_limit(self, role: str, wait_s: int, task_id=None) -> bool:
         """Sleep out a harness rate limit. Returns False if a stop was asked for while

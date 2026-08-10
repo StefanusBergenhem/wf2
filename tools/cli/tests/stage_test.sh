@@ -252,6 +252,18 @@ OUT="$(wf stage materialize --format json)"; RC=$?
   && ok "materialize: the error names the truncated scenario" || bad "mat trunc msg" "$OUT"
 write_capabilities
 
+# a scenario that legitimately ends on a function word closes the sentence with terminal
+# punctuation — the author's escape hatch, so the lint never forces a durable capability
+# scenario to be reworded to satisfy it (L-138). A cut string does not end in a full stop.
+write_stage
+edit_caps <<'PY'
+d['capabilities'][0]['system_tests'][0]['then'] = 'the door does not join a second boundary nobody authored it onto.'
+PY
+OUT="$(wf stage materialize --format json)"; RC=$?
+[ "$RC" -eq 0 ] && ok "materialize: a dangling word closed by a full stop is not truncated (L-138)" \
+  || bad "mat dangling terminated" "rc=$RC $OUT"
+write_capabilities
+
 # a multi-line scenario field is joined, not cut at the line break
 write_stage
 edit_caps <<'PY'

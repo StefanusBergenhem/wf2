@@ -7,6 +7,7 @@ wf2-source-only — never rendered into an install target.
 from __future__ import annotations
 
 import json
+import os
 
 import unittest
 
@@ -15,6 +16,7 @@ import support  # noqa: F401
 import config as driver_config
 import dispatch as driver_dispatch
 import events as driver_events
+import procs as driver_procs  # noqa: F401
 import runtime as driver_runtime
 
 
@@ -312,6 +314,21 @@ def result_line(**over):
     return json.dumps(row)
 
 
+def pi_stream(out=None):
+    """A pi dispatch's streaming log: no closing result line, each assistant request's
+    usage on a `message_end` event. `out` lets a test override the emitted rows. Two
+    requests (r1, r2), with r2 repeated the way turn_end repeats the same message."""
+    rows = [
+        '{"type":"session","id":"S1","timestamp":"2026-08-10T12:00:00.000Z"}',
+        '{"type":"message_end","message":{"role":"assistant","usage":{"input":100,"output":20,"cacheRead":500,"cacheWrite":0,"cost":{"total":0.006}},"responseId":"r1"}}',
+        '{"type":"message_end","message":{"role":"assistant","usage":{"input":50,"output":10,"cacheRead":200,"cacheWrite":0,"cost":{"total":0.0025}},"responseId":"r2"}}',
+        '{"type":"message_end","message":{"role":"assistant","usage":{"input":50,"output":10,"cacheRead":200,"cacheWrite":0,"cost":{"total":0.0025}},"responseId":"r2"}}',
+    ]
+    return [out(o) if out else o for o in rows]
+
+
+
+
 class ResultUsageTest(support.TempProject):
     """The harness writes what a dispatch cost on the last line of its own log, and the
     log is transient — so the driver reads it at close or the number is gone."""
@@ -346,6 +363,27 @@ class ResultUsageTest(support.TempProject):
     def test_fields_the_harness_omitted_are_left_out_rather_than_zeroed(self):
         got = self.usage(json.dumps({"type": "result", "total_cost_usd": 0.5}))
         self.assertEqual(got, {"cost_usd": 0.5})
+
+    def test_a_claude_result_line_always_beats_any_stream_rows_beside_it(self):
+        body = "\n".join(pi_stream() + [result_line(total_cost_usd=0.9)])
+        got = self.usage(body)
+        self.assertEqual(got["cost_usd"], 0.9)
+
+    def test_a_pi_stream_reports_cost_turns_and_the_token_breakdown(self):
+        # pi has no closing result line; each request's usage rides `message_end`, and
+        # the same assistant message is repeated on turn_end — deduped by response id.
+        got = self.usage("\n".join(pi_stream()))
+        self.assertEqual(got["cost_usd"], 0.0085)
+        self.assertEqual(got["num_turns"], 2)      # r1 + r2, r2 counted once
+        self.assertEqual(got["input"], 150)
+        self.assertEqual(got["output"], 30)
+        self.assertEqual(got["cache_read"], 700)
+        self.assertEqual(got["cache_creation"], 0)
+
+    def test_a_non_pi_stream_with_no_usage_costs_nothing_known(self):
+        body = "\n".join(['{"type":"agent_settled"}',
+                          '{"type":"message_end","message":{"role":"user"}}'])
+        self.assertEqual(self.usage(body), {})
 
 
 class DispatchRowTest(support.TempProject):
@@ -493,6 +531,101 @@ echo done
         d.dry_run = True
         self.assertEqual(d.launch("wf-build", {}).exit_code, 0)
         self.assertEqual(self.slept, [])
+
+
+class PiDispatchUsageTest(support.TempProject):
+    """pi has no end-of-session hook, so the driver folds a pi dispatch's session into
+    the same `kind: usage` rows the claude Stop hook writes — best-effort, gated on
+    the launch actually naming pi, and keyed to that ONE dispatch's session id."""
+
+    def setUp(self):
+        super().setUp()
+        (self.root / ".claude/agents").mkdir(parents=True)
+        (self.root / ".claude/agents/wf-build.md").write_text("agent\n")
+
+    def make_pi(self, session_id="pi-sid-001", usage=True):
+        """A stub `pi` that prints its session line and writes a real pi session file
+        (with usage) into --session-dir, the way a headless pi -p would."""
+        body = f'''#!/usr/bin/env bash
+DIR=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --session-dir) DIR="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+mkdir -p "$DIR"
+echo '{{"type":"session","id":"{session_id}","timestamp":"2026-08-10T12:00:00.000Z","cwd":"/x"}}'
+cat > "$DIR/run.jsonl" <<'WF_EOF'
+{{"type":"session","version":3,"id":"{session_id}","timestamp":"2026-08-10T12:00:00.000Z","cwd":"/x"}}
+{{"type":"message","id":"m1","timestamp":"2026-08-10T12:00:01.000Z","message":{{"role":"assistant","content":[{{"type":"text","text":"ok"}}],"usage":{{"input":50,"output":10,"cacheRead":100,"cacheWrite":0,"cost":{{"total":0.001}}}},"responseId":"r1"}}}}
+WF_EOF
+'''
+        if not usage:
+            body = body.replace(
+                '"usage":{"input":50,"output":10,"cacheRead":100,"cacheWrite":0,'
+                '"cost":{"total":0.001}}', '')
+        stub = self.stub_bin("pi", body)
+        # procs._ENV froze PATH at import, so prepend the stub dir into the frozen env
+        # too — otherwise the subprocess resolves the real `pi` on the harness's PATH.
+        if str(self._tmp) + "/bin" not in (driver_procs._ENV.get("PATH") or ""):
+            driver_procs._ENV["PATH"] = (
+                str(self._tmp) + "/bin" + os.pathsep + driver_procs._ENV.get("PATH", ""))
+        return stub
+
+    def dispatch(self):
+        cfg = driver_config.load(str(support.write_config(
+            self.root,
+            agent_cmd=('pi -p --mode json --session-dir '
+                       f'{self.root}/.wf/transient/pi-sessions '
+                       '--exclude-tools "Monitor,ScheduleWakeup,CronCreate" "{prompt}"'))))
+        driver_dispatch.Dispatcher(cfg, driver_events.Telemetry(cfg)) \
+                           .launch("wf-build", {})
+        return cfg
+
+    def usage_rows(self):
+        self.dispatch()
+        return [json.loads(x) for x in
+                self.root.joinpath(".wf/telemetry/sessions.jsonl").read_text()
+                     .splitlines() if x.strip()
+                and json.loads(x).get("kind") == "usage"]
+
+    def test_a_pi_dispatch_appends_a_stop_usage_row_like_the_claude_hook(self):
+        self.make_pi()
+        rows = self.usage_rows()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["hook_event"], "Stop")
+        self.assertEqual(rows[0]["session_id"], "pi-sid-001")
+        self.assertEqual(rows[0]["tokens"], {"input": 50, "output": 10,
+                                             "cache_read": 100, "cache_creation": 0})
+        self.assertEqual(rows[0]["requests"], 1)
+
+    def test_a_pi_dispatch_with_no_usage_writes_no_usage_row_but_still_dispatches(self):
+        self.make_pi(usage=False)
+        rows = self.usage_rows()
+        self.assertEqual(rows, [])
+
+    def test_a_non_pi_launch_never_folds_usage(self):
+        # Even when a pi session happens to sit in the dir, a claude launch must not
+        # claim it — the fold is gated on the launch command itself naming pi.
+        self.stub_bin("pi", "")
+        out = self.root / "log.txt"
+        out.write_text('{"type":"session","id":"pi-sid-001"}\n')
+        cfg = driver_config.load(str(support.write_config(
+            self.root, agent_cmd=f'cat {out} #{{prompt}}')))
+        driver_dispatch.Dispatcher(cfg, driver_events.Telemetry(cfg)) \
+                           .launch("wf-build", {})
+        rows = [json.loads(x) for x in self.root.joinpath(".wf/telemetry/sessions.jsonl")
+                .read_text().splitlines() if x.strip()
+                and json.loads(x).get("kind") == "usage"]
+        self.assertEqual(rows, [])
+
+    def test_pi_usage_detection_helpers(self):
+        self.assertTrue(driver_dispatch._is_pi_cmd('pi -p --model x "{prompt}"'))
+        self.assertFalse(driver_dispatch._is_pi_cmd('cat log # {prompt}'))
+        f = self.root / "log.jsonl"
+        f.write_text('{"not":"session"}\n{"type":"session","id":"abc"}\n')
+        self.assertEqual(driver_dispatch._pi_session_id(f), "abc")
 
 
 if __name__ == "__main__":

@@ -241,9 +241,15 @@ def _scenarios(config):
 def _truncated(desc):
     """True if a description was cut off mid-sentence — it ends on a comma or a
     dangling function word. Build stamps it verbatim onto the [SYS-TC:] tag, so a
-    truncated one must fail generation, not ship (L-065)."""
+    truncated one must fail generation, not ship (L-065).
+    Terminal punctuation ends the check: a scenario may legitimately close on a
+    function word ("...nobody authored it onto."), and a cut string does not end on a
+    full stop. Punctuating is the escape hatch — without one the only way past the lint
+    is rewording a durable capability scenario to satisfy it (L-138)."""
     s = (desc or "").rstrip()
     if not s:
+        return False
+    if s[-1] in ".!?":
         return False
     if s[-1] == ",":
         return True

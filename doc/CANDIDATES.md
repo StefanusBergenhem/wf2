@@ -18,10 +18,12 @@ copies that Claude frontmatter verbatim — pi and opencode may expect a differe
 agent-definition shape (tool-grant syntax especially).
 
 **Observation:** only the Claude target is dogfooded, so this is deferred like the
-telemetry adapters (the Claude usage-hook adapter shipped 2026-07-10; pi/opencode
-adapters remain deferred on the same grounds) — the genuinely harness-coupled part
+telemetry adapters (the Claude usage-hook adapter shipped 2026-07-10; the **pi** adapter
+shipped 2026-08-11 — `pi_usage_hook.py`, folded by the driver after a `pi` launch since pi
+has no end-of-session hook; opencode remains deferred) — the genuinely harness-coupled part
 of an agent is its frontmatter. The body is harness-agnostic prose and renders fine
-everywhere.
+everywhere. The pi work touched the launch template and telemetry only; **frontmatter is
+still untested on pi**, so this entry stands.
 
 **Trigger to act:** when pi or opencode becomes a real target. Then verify each
 harness's agent-definition schema and, where it differs, guard the frontmatter with
@@ -685,8 +687,25 @@ context-budget target below cannot be read honestly until it is separated out.
 dispatch loads only the wf role it was launched for, and re-measure. Cheap to try, and the
 before/after is a single number per dispatch.
 
-**Trigger to act:** any role's `context_max` approaches its window, or the next time a run
-analysis needs `context_max` to mean something. Cf. **C48**.
+**ACTED ON 2026-08-11 (partially) — and the premise above is WRONG.** `--strict-mcp-config`
+now ships in the claude `agent_cmd` and both overrides. Measured on dems' real launch
+template: **147 tools → 27, six MCP servers → none, 33,291 → 31,152 tokens.** The scoping
+flag reclaims **2.1 k, not the ~20 k the entry assumed** — the 120 MCP tools were
+deferred-schema (listed by name, fetched on demand), so they were never costing what
+"none of which any wf role uses" implied. Kept for blast radius over tokens: a
+`--dangerously-skip-permissions` build agent had github's `create_pull_request` /
+`merge_pull_request` / `push_files` in reach.
+
+**What remains, and why it is probably not wf2's to fix:** the residual **~31 k** is Claude
+Code's own system prompt + its 27 built-in tools + `CLAUDE.md`/`AGENTS.md`. Measured across
+all 13 s4 build dispatches the floor is flat at **32,381–33,511 regardless of role** (a
+discover, a designer and a review all start within 1 k of a build), so it is not
+role-scoped context that scoping flags can reach. Treat ~31 k as a constant to subtract,
+not a leak to plug.
+
+**Trigger to act:** superseded for the token goal — reopen only if a harness gains a flag
+that trims its own system prompt. The measurement half is done: **subtract ~31 k**, not
+~33 k, when reading any `context_max`. Cf. **C48**.
 
 ---
 
@@ -718,10 +737,22 @@ evidence, two are not:
   | s3 `context_max` avg / max | 128 k / 143 k | 278 k / **278 k** (1 run) |
 
   Both runs were understated; s2 by less, because two of its ten designer dispatches did
-  claim their own rows. Net of C47's ~33 k harness constant s3 is ~245 k — over the 150 k
+  claim their own rows. Net of C47's ~31 k harness constant s3 is ~247 k — over the 150 k
   line §15 called a design failure, and level with the deleted wf-tl's 267 k peak the merge
   was meant to relieve. The clean sample is still **one** cut, so this is not yet a verdict
   on the design; it is a verdict on the closure, which was premature.
+
+  **Second clean sample, s4 (2026-08-11): the prediction does not hold.** s4's one designer
+  cut peaked at **268 k** (~237 k net of the harness constant) over 93 requests — the same
+  band as s3's 278 k, on a stage that went 10/10 first-try with no repair. Two clean cuts
+  now sit at ~240 k net against a 150 k line. The heaviest role is no longer the designer
+  though: **wf-build averaged 217 k and peaked at 290 k** across 10 dispatches, up from
+  s3's 152 k avg — and it is the role that runs ten times a stage, not once. Where it goes
+  is work accumulation, not envelope: builds open at ~33 k and climb over 99 requests /
+  115 tool calls, 15–38 `Read`s of 6–10 k chars plus 60–150 `Bash` calls each. No role
+  compacted; the S3-T8 trajectory rises monotonically 33 k → 290 k with no reset. Cost
+  tracked it: **$6.83/build in s4 vs $4.34 in s3**, while wf-review stayed flat
+  ($1.60 → $1.65, 98 k → 105 k), so this is build-specific, not a stage-size effect.
 
   **Second finding, from the same bug:** the s3 retrospective *rationalised* the artifact
   rather than flagging it, footnoting that wf-drill "shares wf-designer's `session_id`, so
