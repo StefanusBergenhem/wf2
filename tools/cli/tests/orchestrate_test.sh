@@ -19,11 +19,24 @@ bad() { fail=$((fail+1)); echo "  FAIL - $1"; echo "         $2"; }
 jget() { "$PYTHON" -c 'import sys,json; d=json.loads(sys.argv[1]); print(eval(sys.argv[2]))' "$1" "$2"; }
 wf() { "$PYTHON" "$WF" "$@"; }
 
-mkrepo() {  # → prints repo dir; a git repo with .wf/transient/
+mkrepo() {  # → prints repo dir; a git repo with .wf/transient/ and a real config
     local r; r="$(mktemp -d)"
     git -C "$r" init -q
     git -C "$r" config user.email wf@test; git -C "$r" config user.name wf
     mkdir -p "$r/.wf/transient"
+    # The inspectors resolve every artifact from here. A worktree carries the config
+    # in with it, so an absent one is a broken worktree, not a default to guess past.
+    cat > "$r/.wf/config.yaml" <<'YAML'
+version: 1
+paths:
+  transient: ".wf/transient"
+  design_issues: ".wf/transient/design-issues.yaml"
+  review_ready: ".wf/transient/review-ready.yaml"
+  feedback: ".wf/transient/feedback.yaml"
+YAML
+    # committed in a real project; excluded here so the fixture keeps its "no commit
+    # yet" and "clean tree" cases without a base commit
+    echo ".wf/config.yaml" > "$r/.git/info/exclude"
     echo "$r"
 }
 gitc() { git -C "$1" -c core.hooksPath=/dev/null commit -q --allow-empty -m "$2"; git -C "$1" rev-parse --short HEAD; }
@@ -359,6 +372,7 @@ version: 1
 paths:
   feedback: ".wf/transient/feedback.yaml"
   review_ready: ".wf/transient/review-ready.yaml"
+  design_issues: ".wf/transient/design-issues.yaml"
 YAML
     echo "$r"
 }
@@ -417,7 +431,7 @@ wf orchestrate consume-marker "$R" current_task >/dev/null 2>&1
 [ $? -eq 2 ] && ok "consume: unknown marker name → exit 2" || bad "consume unknown" ""
 wf orchestrate consume-marker "$R/nope" feedback >/dev/null 2>&1
 [ $? -eq 2 ] && ok "consume: missing worktree → exit 2" || bad "consume no-worktree" ""
-R="$(mkrepo)"   # no .wf/config.yaml at all
+R="$(mkrepo)"; rm "$R/.wf/config.yaml"   # no .wf/config.yaml at all
 printf 'task_id: T1\n' > "$R/.wf/transient/feedback.yaml"
 wf orchestrate consume-marker "$R" feedback >/dev/null 2>&1
 [ $? -eq 2 ] && [ -f "$R/.wf/transient/feedback.yaml" ] \
@@ -435,6 +449,63 @@ printf 'task_id: T1\n' > "$R/.wf/elsewhere/rejected.yaml"
 wf orchestrate consume-marker "$R" feedback >/dev/null
 [ ! -f "$R/.wf/elsewhere/rejected.yaml" ] && [ -f "$R/.wf/elsewhere/rejected.yaml.consumed" ] \
     && ok "consume: resolves the worktree's own configured path" || bad "consume own-config" ""
+
+# ── the inspectors resolve, they never guess ─────────────────────────────────
+#
+# A verdict is a routing decision. Read off a guessed path it sends the task down the
+# wrong branch silently — strictly worse than the destructive move consume-marker
+# already refuses to guess for, and it fails without an error to notice.
+
+# the verdict follows paths.design_issues wherever it points
+RC="$(mkrepo)"
+mkdir -p "$RC/.wf/custom"
+"$PYTHON" - "$RC" <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1], ".wf/config.yaml")
+p.write_text(p.read_text().replace(".wf/transient/design-issues.yaml",
+                                   ".wf/custom/di.yaml"))
+PY
+printf 'issues:\n  - id: DI-9\n    task_id: T1\n    status: open\n' > "$RC/.wf/custom/di.yaml"
+[ "$(jget "$(wf orchestrate inspect-build-return "$RC" T1)" "d['verdict']")" = "design_issue" ] \
+    && ok "inspect-build: the verdict follows paths.design_issues, not a guess" \
+    || bad "inspect-build relocated design_issues" "$(wf orchestrate inspect-build-return "$RC" T1)"
+
+# a relocated file the guess would have found at the old place must NOT be read
+RD="$(mkrepo)"
+"$PYTHON" - "$RD" <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1], ".wf/config.yaml")
+p.write_text(p.read_text().replace(".wf/transient/review-ready.yaml",
+                                   ".wf/custom/rr.yaml"))
+PY
+: > "$RD/.wf/transient/review-ready.yaml"
+[ "$(jget "$(wf orchestrate inspect-build-return "$RD" T1)" "d['verdict']")" = "escalate_no_artifacts" ] \
+    && ok "inspect-build: a marker at the OLD guessed path is not a verdict" \
+    || bad "inspect-build stale guess" ""
+
+# a config missing the key is refused, not defaulted
+for verb in inspect-build-return inspect-review-return; do
+    RE="$(mkrepo)"
+    printf 'version: 1\npaths:\n  transient: ".wf/transient"\n' > "$RE/.wf/config.yaml"
+    gitc "$RE" "base" >/dev/null
+    if wf orchestrate "$verb" "$RE" T1 abc1234 >/dev/null 2>&1; then
+        bad "$verb: an unconfigured artifact path should refuse" "exited 0"
+    else
+        ok "$verb: an unconfigured artifact path refuses instead of guessing"
+    fi
+done
+
+# sweep-transients deletes what it resolves, so it never invents a path either — but an
+# absent key there means "nothing configured to sweep", not an unsound verdict. It skips
+# and reports, rather than refusing the whole sweep or guessing at .wf/transient/.
+RF="$(mkrepo)"
+printf 'version: 1\npaths:\n  transient: ".wf/transient"\n' > "$RF/.wf/config.yaml"
+: > "$RF/.wf/transient/feedback.yaml"
+SW="$(wf orchestrate sweep-transients --config "$RF/.wf/config.yaml")"
+[ "$(jget "$SW" "len(d['deleted'])")" = "0" ] && [ -f "$RF/.wf/transient/feedback.yaml" ] \
+    && ok "sweep-transients: an unconfigured artifact is not guessed at" || bad "sweep unconfigured" "$SW"
+[ "$(jget "$SW" "'feedback' in d['unconfigured']")" = "True" ] \
+    && ok "sweep-transients: an unconfigured artifact is reported, not silent" || bad "sweep unconfigured report" "$SW"
 
 echo ""
 echo "  orchestrate helpers: $pass passed, $fail failed"

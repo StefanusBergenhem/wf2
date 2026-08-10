@@ -74,6 +74,21 @@ def _config_path_value(config_doc: dict, key: str) -> str:
     return "" if v is None else str(v)
 
 
+class _UnconfiguredPath(Exception):
+    """paths.<key> is absent from the config the caller resolved against."""
+
+
+def _required_path(config_doc: dict, key: str, config_file: Path) -> str:
+    """paths.<key>, or refuse. There is no default to fall back on: a verdict read off
+    a guessed path routes the task down the wrong branch and reports success doing it,
+    which is worse than the destructive move `consume-marker` already refuses to guess
+    for. An absent key means a broken worktree, and that is worth an error."""
+    value = _config_path_value(config_doc, key)
+    if not value:
+        raise _UnconfiguredPath(f"error: paths.{key} is not configured in {config_file}")
+    return value
+
+
 def _verdict_tip(worktree_path: Path):
     """(HEAD's short sha, tip sha, tip subject), where the tip is the newest commit
     that is NOT a preserve-uncommitted one. The protocol runs preserve FIRST, so an
@@ -136,10 +151,11 @@ def _inspect_build_return(rest):
     except _MalformedYAML as exc:
         return _err(f"error: parse {config_file}: {exc}")
 
-    p_design_issues = _config_path_value(config_doc, "design_issues") or \
-        ".wf/transient/design-issues.yaml"
-    p_review_ready = _config_path_value(config_doc, "review_ready") or \
-        ".wf/transient/review-ready.yaml"
+    try:
+        p_design_issues = _required_path(config_doc, "design_issues", config_file)
+        p_review_ready = _required_path(config_doc, "review_ready", config_file)
+    except _UnconfiguredPath as exc:
+        return _err(str(exc))
 
     abs_design_issues = worktree_path / p_design_issues
     abs_review_ready = worktree_path / p_review_ready
@@ -217,12 +233,12 @@ def _inspect_review_return(rest):
     except _MalformedYAML as exc:
         return _err(f"error: parse {config_file}: {exc}")
 
-    p_feedback = _config_path_value(config_doc, "feedback") or \
-        ".wf/transient/feedback.yaml"
-    p_design_issues = _config_path_value(config_doc, "design_issues") or \
-        ".wf/transient/design-issues.yaml"
-    p_review_ready = _config_path_value(config_doc, "review_ready") or \
-        ".wf/transient/review-ready.yaml"
+    try:
+        p_feedback = _required_path(config_doc, "feedback", config_file)
+        p_design_issues = _required_path(config_doc, "design_issues", config_file)
+        p_review_ready = _required_path(config_doc, "review_ready", config_file)
+    except _UnconfiguredPath as exc:
+        return _err(str(exc))
 
     abs_feedback = worktree_path / p_feedback
     abs_design_issues = worktree_path / p_design_issues
@@ -456,14 +472,23 @@ def _sweep_transients(rest):
 
     paths_cfg = config.get("paths", {}) or {}
 
-    def resolve(key, default):
-        rel = paths_cfg.get(key, default)
+    # Unlike the inspectors, an absent key here is not an unsound verdict — it is
+    # "nothing configured to sweep for that artifact". Skipping is safe; inventing a
+    # path is not, because this verb deletes what it resolves. Either way it is
+    # reported, never silent.
+    unconfigured = []
+
+    def resolve(key):
+        rel = paths_cfg.get(key)
+        if not rel:
+            unconfigured.append(key)
+            return None
         return (project_root / rel).resolve()
 
-    p_pipeline_state = resolve("pipeline_state", ".wf/transient/pipeline-state.yaml")
+    p_pipeline_state = resolve("pipeline_state")
 
     task_states = None  # None → no pipeline-state file → keep everything
-    if p_pipeline_state.is_file():
+    if p_pipeline_state is not None and p_pipeline_state.is_file():
         try:
             doc = yaml.safe_load(p_pipeline_state.read_text()) or {}
         except yaml.YAMLError as e:
@@ -586,12 +611,14 @@ def _sweep_transients(rest):
                 return
         deleted.append(str(path))
 
-    sweep(resolve("feedback", ".wf/transient/feedback.yaml"))
-    sweep(resolve("review_ready", ".wf/transient/review-ready.yaml"))
-    sweep_design_issues(resolve("design_issues", ".wf/transient/design-issues.yaml"))
+    for key, handler in (("feedback", sweep), ("review_ready", sweep),
+                         ("design_issues", sweep_design_issues)):
+        path = resolve(key)
+        if path is not None:
+            handler(path)
 
-    print(json.dumps({"deleted": deleted, "pruned": pruned, "skipped": skipped},
-                     sort_keys=False))
+    print(json.dumps({"deleted": deleted, "pruned": pruned, "skipped": skipped,
+                      "unconfigured": unconfigured}, sort_keys=False))
     return 0
 
 
