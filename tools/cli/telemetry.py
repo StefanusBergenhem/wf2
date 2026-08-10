@@ -116,6 +116,10 @@ def _roles(rest):
     the context is re-written (churn, not load). Diagnose "loaded too much" on
     context_max, "cache churned" on a footprint far above it. Pre-upgrade rows carry
     no context_max and read as 0.
+    Cost comes off the dispatch row, where the driver puts what the harness reported
+    when the launch closed — reported only over the runs that carry one (`costed_runs`),
+    since a refused dispatch wrote no result line and totalling it as 0 would read as a
+    run that was free.
     A main-loop session is not a subagent — its `Stop` rows are cumulative snapshots
     of the whole session transcript, so its final total per session is reported
     separately under `main_loop`."""
@@ -156,7 +160,7 @@ def _roles(rest):
     dispatched = set(range(len(cands), len(cands) + len(driver)))
     cands += [_candidate(d, _driver_role(d)) for d in driver]
 
-    def _metrics(u, ua, ub):
+    def _metrics(u, ua, ub, cand=None):
         t = u.get("tokens") or {}
         return {
             "footprint": (t.get("input") or 0) + (t.get("cache_creation") or 0),
@@ -166,6 +170,11 @@ def _roles(rest):
             "output": t.get("output") or 0,
             "tool_calls": u.get("tool_calls") or 0,
             "duration_s": int((ub - ua).total_seconds()) if ua and ub else 0,
+            # What the harness charged for this dispatch, off the row that launched it.
+            # None, not 0: a refused launch wrote no result line, and a zero there would
+            # total up as a run that was free.
+            "cost_usd": (cand or {}).get("cost_usd"),
+            "task": (cand or {}).get("task"),
         }
 
     used, joined = set(), []
@@ -179,7 +188,7 @@ def _roles(rest):
         if pick is None:
             continue
         used.add(pick)
-        joined.append((cands[pick]["agent"], _metrics(u, ua, ub)))
+        joined.append((cands[pick]["agent"], _metrics(u, ua, ub, cands[pick])))
 
     # A role the driver dispatches runs as its OWN top-level session, so its hook fires
     # `Stop`, not `SubagentStop`. A Stop row a dispatch window brackets is that role's
@@ -194,16 +203,24 @@ def _roles(rest):
             unclaimed.append(u)
             continue
         used.add(pick)
-        joined.append((cands[pick]["agent"], _metrics(u, ua, ub)))
+        joined.append((cands[pick]["agent"], _metrics(u, ua, ub, cands[pick])))
 
     by_role = {}
     for role, m in joined:
         by_role.setdefault(role, []).append(m)
     roles = []
     for role, runs in by_role.items():
+        # Cost is reported only over the runs that actually carry one. A dispatch the
+        # harness refused wrote no result line, so summing it as 0 would understate the
+        # role and read as a run that was free — `costed_runs` says how much of `runs`
+        # the total covers.
+        costs = [r["cost_usd"] for r in runs if r.get("cost_usd") is not None]
         roles.append({
             "role": role,
             "runs": len(runs),
+            "cost_usd": round(sum(costs), 2),
+            "cost_usd_max": round(max(costs), 2) if costs else 0,
+            "costed_runs": len(costs),
             "context_max_avg": _stats([r["context_max"] for r in runs])["avg"],
             "context_max_max": _stats([r["context_max"] for r in runs])["max"],
             "footprint_avg": _stats([r["footprint"] for r in runs])["avg"],
@@ -238,11 +255,48 @@ def _roles(rest):
             })
     main_loop = [v[1] for v in sorted(main.values(), key=lambda x: x[0], reverse=True)]
 
+    # Per task, so stage width can be judged on what a task cost to build rather than on
+    # how many tasks the stage held. Context comes from the transcripts that joined; the
+    # attempt count and cost come from the dispatch rows, which exist either way — a
+    # dispatch whose transcript never joined still ran and still cost.
+    tasks = {}
+
+    def _task_row(name):
+        return tasks.setdefault(name, {"task": name, "roles": [], "dispatches": 0,
+                                       "context_max": 0, "cost_usd": 0.0})
+
+    for _role, m in joined:
+        if m.get("task"):
+            row = _task_row(m["task"])
+            row["context_max"] = max(row["context_max"], m["context_max"])
+    for d in driver:
+        if not d.get("task"):
+            continue
+        row = _task_row(d["task"])
+        row["dispatches"] += 1
+        if isinstance(d.get("cost_usd"), (int, float)):
+            row["cost_usd"] += d["cost_usd"]
+        role = _driver_role(d)
+        if role and role not in row["roles"]:
+            row["roles"].append(role)
+    for row in tasks.values():
+        row["cost_usd"] = round(row["cost_usd"], 2)
+    # Hottest first: the task that came closest to running out of window leads.
+    task_rows = sorted(tasks.values(),
+                       key=lambda r: (r["context_max"], r["cost_usd"]), reverse=True)
+
+    # Every dispatch the harness costed, not only the ones a usage row joined — a role
+    # whose transcript never matched still spent money, and the run total must say so.
+    run_cost = sum(d["cost_usd"] for d in driver
+                   if isinstance(d.get("cost_usd"), (int, float)))
     common.emit({
         "roles": roles,
+        "tasks": task_rows,
         "main_loop": main_loop,
         "matched": len(joined),
         "usage_rows": len(sub) + len(stop),
+        "cost_usd": round(run_cost, 2),
+        "costed_dispatches": sum(1 for d in driver if d.get("cost_usd") is not None),
     }, args.format)
     return 0
 

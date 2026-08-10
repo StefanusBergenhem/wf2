@@ -17,6 +17,7 @@ who would each have to recognise it.
 from __future__ import annotations
 
 import datetime
+import json
 import re
 import shlex
 import time
@@ -114,6 +115,44 @@ def last_line(log_path, limit: int = _BLAME_CHARS) -> str:
         return ""
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     return lines[-1][:limit] if lines else ""
+
+
+# What the harness's closing result line calls each number, mapped to the name the
+# telemetry row already uses for it — so a cost row reads like the usage rows beside it.
+_RESULT_FIELDS = (("total_cost_usd", "cost_usd"), ("num_turns", "num_turns"))
+_RESULT_USAGE = (("input_tokens", "input"), ("output_tokens", "output"),
+                 ("cache_read_input_tokens", "cache_read"),
+                 ("cache_creation_input_tokens", "cache_creation"))
+
+
+def result_usage(log_path) -> dict:
+    """What the dispatch cost, read off the last line of its own log.
+
+    The harness closes every stream with a `type: result` line carrying
+    `total_cost_usd`, `num_turns` and the token breakdown — the only place cost exists,
+    and the logs are transient, so a number not read here is gone with them.
+
+    Best-effort by contract: a dispatch the harness refused never wrote the line, and a
+    killed one wrote half of it. Both report nothing rather than a zero, because a zero
+    would read as a run that was free. Telemetry is observability, never correctness."""
+    try:
+        lines = [x for x in Path(log_path).read_text(errors="replace").splitlines()
+                 if x.strip()]
+    except OSError:
+        return {}
+    if not lines:
+        return {}
+    try:
+        row = json.loads(lines[-1])
+    except (ValueError, TypeError):
+        return {}
+    if not isinstance(row, dict) or row.get("type") != "result":
+        return {}
+    out = {name: row[key] for key, name in _RESULT_FIELDS if key in row}
+    usage = row.get("usage")
+    if isinstance(usage, dict):
+        out.update({name: usage[key] for key, name in _RESULT_USAGE if key in usage})
+    return out
 
 
 def rate_limit_wait_s(log_path, *, now, cap_s):
@@ -254,7 +293,7 @@ class Dispatcher:
                              duration_s=done.duration_s,
                              started_at=done.started_at, ended_at=done.ended_at,
                              timed_out=done.timed_out or None,
-                             log=str(log_path))
+                             log=str(log_path), **result_usage(log_path))
         return done
 
     def _wait_out_limit(self, role: str, wait_s: int, task_id=None) -> bool:

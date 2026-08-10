@@ -145,6 +145,46 @@ OUT="$(wf telemetry roles --sink "$DRV" --config "$P/.wf/config.yaml" --format j
 [ "$(rget "$OUT" "len(d['roles'])")" = "1" ] \
     && ok "roles: a driver phase event is not a role" || bad "driver phase" "$OUT"
 
+# cost rides the dispatch row the driver already writes (the harness reports it once,
+# on the last line of a log that is transient) — so the report totals it per role
+# instead of the number being reconstructible only from list price times tokens.
+cat > "$DRV" <<'JSONL'
+{"kind":"driver_event","ts":"2026-07-12T11:00:00Z","event":"dispatch","role":"wf-build","task":"T1","rc":0,"duration_s":3600,"cost_usd":10.5,"num_turns":34,"started_at":"2026-07-12T11:00:00Z","ended_at":"2026-07-12T12:00:00Z"}
+{"kind":"driver_event","ts":"2026-07-12T12:00:00Z","event":"dispatch","role":"wf-build","task":"T2","rc":0,"duration_s":600,"cost_usd":1.5,"started_at":"2026-07-12T12:10:00Z","ended_at":"2026-07-12T12:20:00Z"}
+{"kind":"driver_event","ts":"2026-07-12T13:00:00Z","event":"dispatch","role":"wf-review","task":"T1","rc":1,"duration_s":60,"started_at":"2026-07-12T13:00:00Z","ended_at":"2026-07-12T13:01:00Z"}
+{"kind":"usage","session_id":"S4","hook_event":"Stop","started_at":"2026-07-12T11:01:00Z","ended_at":"2026-07-12T11:59:00Z","tokens":{"input":100,"output":200,"cache_read":300,"cache_creation":400},"tool_calls":2,"requests":3,"context_max":50000}
+{"kind":"usage","session_id":"S5","hook_event":"Stop","started_at":"2026-07-12T12:11:00Z","ended_at":"2026-07-12T12:19:00Z","tokens":{"input":100,"output":200,"cache_read":300,"cache_creation":400},"tool_calls":2,"requests":3,"context_max":20000}
+{"kind":"usage","session_id":"S6","hook_event":"Stop","started_at":"2026-07-12T13:00:10Z","ended_at":"2026-07-12T13:00:50Z","tokens":{"input":100,"output":200,"cache_read":300,"cache_creation":400},"tool_calls":2,"requests":3,"context_max":10000}
+JSONL
+OUT="$(wf telemetry roles --sink "$DRV" --config "$P/.wf/config.yaml" --format json 2>&1)"
+[ "$(rget "$OUT" "next(r['cost_usd'] for r in d['roles'] if r['role']=='wf-build')")" = "12.0" ] \
+    && ok "roles: cost totals across a role's dispatches" || bad "roles cost total" "$OUT"
+[ "$(rget "$OUT" "next(r['cost_usd_max'] for r in d['roles'] if r['role']=='wf-build')")" = "10.5" ] \
+    && ok "roles: the costliest single dispatch is reported" || bad "roles cost max" "$OUT"
+# a refused dispatch wrote no result line, so it has no cost — that must read as
+# unknown, never as a run that was free
+[ "$(rget "$OUT" "next(r['cost_usd'] for r in d['roles'] if r['role']=='wf-review')")" = "0" ] \
+    && ok "roles: a dispatch with no cost contributes nothing" || bad "roles cost none" "$OUT"
+[ "$(rget "$OUT" "next(r['costed_runs'] for r in d['roles'] if r['role']=='wf-build')")" = "2" ] \
+    && ok "roles: reports how many runs the cost covers" || bad "roles costed runs" "$OUT"
+[ "$(rget "$OUT" "next(r['costed_runs'] for r in d['roles'] if r['role']=='wf-review')")" = "0" ] \
+    && ok "roles: an uncosted role says so rather than reading as free" || bad "roles uncosted" "$OUT"
+[ "$(rget "$OUT" "d['cost_usd']")" = "12.0" ] \
+    && ok "roles: the run total is reported alongside the per-role split" || bad "roles cost run" "$OUT"
+# per-task, so stage width can be judged on what a task actually cost to build rather
+# than on its task count: a task's dispatches are its attempts, and the peak is the one
+# that came closest to running out of window
+[ "$(rget "$OUT" "d['tasks'][0]['task']")" = "T1" ] \
+    && ok "tasks: the hottest task leads" || bad "tasks sort" "$OUT"
+[ "$(rget "$OUT" "d['tasks'][0]['context_max']")" = "50000" ] \
+    && ok "tasks: carries the peak context any one attempt held" || bad "tasks ctx" "$OUT"
+[ "$(rget "$OUT" "d['tasks'][0]['cost_usd']")" = "10.5" ] \
+    && ok "tasks: totals cost across the task's attempts" || bad "tasks cost" "$OUT"
+[ "$(rget "$OUT" "d['tasks'][0]['dispatches']")" = "2" ] \
+    && ok "tasks: counts every dispatch the task took, costed or not" || bad "tasks disp" "$OUT"
+[ "$(rget "$OUT" "sorted(r['task'] for r in d['tasks'])")" = "['T1', 'T2']" ] \
+    && ok "tasks: one row per task, across roles" || bad "tasks rows" "$OUT"
+
 # a driver row that names its role only under `role` still joins
 cat > "$DRV" <<'JSONL'
 {"kind":"driver_event","ts":"2026-07-12T11:00:00Z","event":"dispatch","role":"wf-tl","mode":"increment","sprint":"sprint-1","increment":1,"rc":0,"duration_s":900,"started_at":"2026-07-12T11:00:00Z","ended_at":"2026-07-12T11:15:00Z"}

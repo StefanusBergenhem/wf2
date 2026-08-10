@@ -546,41 +546,6 @@ worktrees for the same reason. The pidfile does not cover that one.
 
 ---
 
-## C42 — cost and per-dispatch wall time are readable only from the raw harness logs
-
-**Date:** 2026-08-08
-**Context:** answering "what did that sprint cost, and where did the time go" for dems s1
-took a one-off script over 86 MB of `.wf/transient/driver-logs/*.log`. Every dispatch's
-stream ends in a `{"type":"result"}` line carrying `total_cost_usd`, `duration_ms`,
-`num_turns` and the full `usage` breakdown — the only place cost exists. `wf telemetry
-roles` reports context, tool calls and duration from the usage rows, and the driver's own
-`dispatch` events carry `duration_s`, but neither reads cost at all.
-
-**Why it matters:** the logs are transient and gitignored. The numbers that justified
-this session's four fixes (build = 73% of spend; 23% of task spend was rework; 98% of
-tokens are cache reads) existed for exactly as long as one run's logs survived, and the
-s1 baseline had to be written into `doc/notes/s1-run-metrics-handover-20260808.md` by hand
-so it would outlive them.
-
-**Shape of the fix:** the driver already knows the log path per dispatch — it writes it.
-Have it parse that one result line at dispatch close and put `cost_usd`, `num_turns` and
-the usage totals on the telemetry row it is already writing. Then `wf telemetry roles`
-reports cost per role for free, the retrospective can quote it, and nothing new is stored:
-the row is written either way, and the archive already keeps it. The parse must be
-best-effort — a dispatch the harness refused has no result line, and telemetry is
-observability, never correctness.
-
-**Trigger to act:** the next time a run's cost or throughput has to be explained, or when
-stage width (§11's telemetry watch item) needs a before/after measurement — that
-comparison is not worth re-running the one-off script for. Recurrence so far: **1**
-(2026-08-10 — explaining s2 needed the script written a second time, and this time even
-that could not read cost: the s2 archive holds only `sessions.jsonl`, whose usage rows
-carry no `cost_usd` and no agent tag, so per-role spend had to be *estimated* from token
-counts times list price, and roles had to be re-attributed by pairing usage rows against
-dispatch time windows. The trigger has fired — this is a promote.)
-
----
-
 ## C43 — a design phase can spend a whole run on one capability's scenario set
 
 **Date:** 2026-08-09

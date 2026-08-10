@@ -7,6 +7,7 @@ wf2-source-only — never rendered into an install target.
 from __future__ import annotations
 
 import json
+
 import unittest
 
 import support  # noqa: F401
@@ -297,6 +298,89 @@ class RateLimitReadTest(support.TempProject):
                       f'"resetsAt": {self.NOW + 300}}}, '
                       '"api_error_status" : 429}'),
             300 + driver_dispatch.RATE_LIMIT_MARGIN_S)
+
+
+def result_line(**over):
+    """A harness result line, shaped as the real one is — the `type` key is NOT first,
+    so anything hunting for a `{"type":"result"` prefix misses it."""
+    row = {"ttft_ms": 1910, "num_turns": 34, "type": "result", "subtype": "success",
+           "is_error": False, "duration_ms": 185269, "total_cost_usd": 0.9588514,
+           "usage": {"input_tokens": 4199, "output_tokens": 9158,
+                     "cache_read_input_tokens": 1602358,
+                     "cache_creation_input_tokens": 54581}}
+    row.update(over)
+    return json.dumps(row)
+
+
+class ResultUsageTest(support.TempProject):
+    """The harness writes what a dispatch cost on the last line of its own log, and the
+    log is transient — so the driver reads it at close or the number is gone."""
+
+    def usage(self, body):
+        path = self.root / "role.log"
+        path.write_text(body)
+        return driver_dispatch.result_usage(path)
+
+    def test_cost_turns_and_the_token_breakdown_come_off_the_result_line(self):
+        self.assertEqual(self.usage(result_line()), {
+            "cost_usd": 0.9588514, "num_turns": 34,
+            "input": 4199, "output": 9158,
+            "cache_read": 1602358, "cache_creation": 54581})
+
+    def test_the_result_line_is_found_under_the_streams_own_output(self):
+        body = "\n".join(['{"type":"assistant","message":{"content":"working"}}',
+                          '{"type":"user","message":{"content":"tool result"}}',
+                          result_line()])
+        self.assertEqual(self.usage(body)["cost_usd"], 0.9588514)
+
+    def test_a_dispatch_the_harness_refused_has_no_result_line_and_costs_nothing_known(self):
+        # Telemetry is observability, never correctness — an unreadable log reports
+        # nothing rather than guessing a zero that would read as "this run was free".
+        self.assertEqual(self.usage("You've hit your session limit\n"), {})
+        self.assertEqual(self.usage(""), {})
+        self.assertEqual(driver_dispatch.result_usage(self.root / "nope.log"), {})
+
+    def test_a_truncated_or_non_json_last_line_is_not_a_crash(self):
+        self.assertEqual(self.usage('{"type":"result","total_cost_usd":'), {})
+
+    def test_fields_the_harness_omitted_are_left_out_rather_than_zeroed(self):
+        got = self.usage(json.dumps({"type": "result", "total_cost_usd": 0.5}))
+        self.assertEqual(got, {"cost_usd": 0.5})
+
+
+class DispatchRowTest(support.TempProject):
+    """What the dispatch telemetry row carries — the row is written either way, so the
+    cost rides it rather than being stored anywhere new."""
+
+    def setUp(self):
+        super().setUp()
+        (self.root / ".claude/agents").mkdir(parents=True)
+        (self.root / ".claude/agents/wf-build.md").write_text("agent\n")
+
+    def rows(self, stream):
+        """Run a fake agent whose whole stdout is `stream`, and return the rows it left."""
+        out = self.root / "agent-stdout.txt"
+        out.write_text(stream)
+        cfg = driver_config.load(str(support.write_config(
+            self.root, agent_cmd=f'cat {out} #{{prompt}}')))
+        driver_dispatch.Dispatcher(cfg, driver_events.Telemetry(cfg)) \
+                       .launch("wf-build", {})
+        return [json.loads(x) for x in
+                cfg.path("telemetry").read_text().splitlines() if x.strip()]
+
+    def test_the_dispatch_row_carries_the_cost_and_usage_the_log_reported(self):
+        row = self.rows(result_line() + "\n")[0]
+        self.assertEqual(row["event"], "dispatch")
+        self.assertEqual(row["cost_usd"], 0.9588514)
+        self.assertEqual(row["num_turns"], 34)
+        self.assertEqual(row["output"], 9158)
+        self.assertEqual(row["cache_read"], 1602358)
+
+    def test_a_log_with_no_result_line_still_writes_the_row_it_always_wrote(self):
+        row = self.rows("You've hit your session limit\n")[0]
+        self.assertEqual(row["event"], "dispatch")
+        self.assertNotIn("cost_usd", row)
+        self.assertIn("duration_s", row)
 
 
 class RateLimitWaitTest(support.TempProject):

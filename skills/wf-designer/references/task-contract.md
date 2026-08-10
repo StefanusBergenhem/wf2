@@ -178,6 +178,13 @@ story, criteria, boundaries, and grounding to source:
 - **retiring or consolidating a helper** — run `wf impact files --symbol <name>` for the
   helper *and* each of its twins (a build-tag variant, a separately-compiled `_test` copy)
   and take the union as the floor for what the task changes.
+- **moving a substrate the tree already populates** — a field, column, or interface whose
+  shape or meaning changes, as against one being added. Run `wf impact files --symbol
+  <name>` for the old name *and* the new, and read the **`tests`** list, not only `files`.
+  Every test already seeding that value is fallout this task inherits the moment it lands:
+  name those files in `grounding` and say how many there are in the story. Skip the sweep
+  and the build meets the fallout one failing suite at a time, mid-implementation, with no
+  budget for it — that is what turns one task into three attempts.
 
 Cite what you verified with a `<path>:<symbol>` pointer in `grounding`; `wf stage check`
 re-resolves them and errors when the symbol is not there.
