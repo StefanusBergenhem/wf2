@@ -619,3 +619,39 @@ fix landed — that is the maintainer's read.
 **Trigger to act:** a second retrospective mints a learning already fixed in the tree, or
 the wf-toolkit lane crosses ~15 open entries (a drain audit then costs more than the stamp
 would have). Recurrence so far: **1** (2026-08-10, 2 of 7 entries).
+
+---
+
+## C45 — the adequacy digest's residual set is prose, so convergence cannot be counted
+
+**Date:** 2026-08-10
+**Context:** `agents/wf-adequacy.md` specifies the residual line form exactly —
+`- <path, file:line> → RESIDUAL: <promise clause it falsifies> · <one-line sketch>` — and
+**zero of the ten** `proposed-set` digests dems wrote for CAP-015 used it. The word
+"RESIDUAL" appears in all ten; counting the specified arrow form gives 0 every time, and
+counting list items gives 11, 4, 3, 6, 0, 0, 0, 0, 0, 4 — five digests where a real
+residual set exists but nothing countable was written. Each digest instead grows its own
+sections (`## RESIDUALS` in one, `## Falsifying paths → coverage` in another).
+
+**Why it matters:** it blocks the only mechanical answer to L-125 (the three-round
+adequacy stop firing on round count rather than on whether the residual set is
+converging). `tools/driver/adequacy.py` already derives the close-time stop from these
+same files — stamped filenames for order, a heading regex for the verdict, a trailing-run
+count for the park — so a `residual_trend()` beside `consecutive_inadequate()` is a small
+addition. It just cannot be written while the count it would read is prose. Any
+convergence rule built today would be an LLM re-reading its own narrative, which is the
+thing the stop rule already got wrong.
+
+It is also a **format-compliance** miss, not a logic bug: the agent file states the form
+and the agent ignores it, which is C37's territory (skill prose is the one wf2 surface
+with no mechanical check) showing up in a place where it costs a feature.
+
+**Shape of the fix:** the cheap version is a single machine-readable header the agent must
+emit — `residuals: <n>` beside the existing `**Question:**` line — rather than legislating
+the whole enumeration's shape; the digest body stays free prose for the human. The
+stronger version validates the line form at digest write, which needs a gate wf-adequacy
+does not currently run.
+
+**Trigger to act:** a second run's digests miss the form, or the moment L-125's convergence
+stop is taken up — whichever comes first; that fix cannot start until this one lands.
+Recurrence so far: **1** (2026-08-10, 10 of 10 digests).
