@@ -86,6 +86,7 @@ limits:
 commands:
   preflight: ""
   stage_check: "{stage_check}"
+  provision: "{provision}"
 
 hygiene:
   file_warn: 400
@@ -113,7 +114,7 @@ id_counters:
 
 def write_config(root: Path, *, tools=None, agent_cmd='echo "{prompt}"',
                  review_state_cmd="", stage_check="", agent_cmd_overrides=None,
-                 max_stages_per_sprint=4) -> Path:
+                 max_stages_per_sprint=4, provision="") -> Path:
     """Write a complete .wf/config.yaml into ``root`` and return its path."""
     (root / ".wf").mkdir(parents=True, exist_ok=True)
     cfg = root / ".wf" / "config.yaml"
@@ -127,6 +128,7 @@ def write_config(root: Path, *, tools=None, agent_cmd='echo "{prompt}"',
         agent_cmd_overrides=overrides,
         review_state_cmd=review_state_cmd,
         stage_check=stage_check,
+        provision=provision,
         max_stages_per_sprint=max_stages_per_sprint,
     ))
     return cfg

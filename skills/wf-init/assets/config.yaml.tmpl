@@ -179,6 +179,11 @@ limits:
 commands:
   preflight: ""        # per-task gate (lint + tests + build) — wf-init captures it from repo evidence at init; build runs it before every handoff.
   stage_check: ""      # heavier cross-task checks (e2e / integration) run at EVERY stage close — wf-init captures it at init; empty skips them.
+  provision: ""        # run by the driver inside each fresh task worktree, before the build is dispatched. A worktree is a bare checkout: every gitignored
+                       # dependency dir the project builds against (node_modules, vendor, a venv) is absent from it, and nothing else installs them. Declared,
+                       # never derived — copying the host's dirs is unsafe (hardlinks let a worktree build corrupt the host copy; a venv resolves against the
+                       # checkout it was made in). wf-init captures it at init; empty skips it. A non-zero exit halts the loop: the same command runs for every
+                       # worktree, so it is an environment fact, and dispatching anyway spends each task's whole attempt budget rediscovering it.
 
 hygiene:
   # `wf hygiene check` thresholds — the context-cost rules (file length bounds what a

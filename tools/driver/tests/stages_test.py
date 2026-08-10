@@ -600,6 +600,124 @@ class StageTest(support.TempProject):
         stages.run_stage(self.rt(self.happy_cli(), git=git))
         self.assertFalse(stale.exists())
 
+    # ── worktree provisioning ────────────────────────────────────────────────
+
+    def with_provision(self, command):
+        self.cfg = driver_config.load(str(support.write_config(
+            self.root, provision=command)))
+        return self.cfg
+
+    def test_a_fresh_worktree_is_provisioned_before_the_build_runs(self):
+        """A worktree is a bare checkout: every gitignored dependency dir the project
+        needs to build is absent from it. Nothing installed them once wf-orchestrate's
+        git-operations asset was deleted, so the task's first build met a tree it could
+        not compile."""
+        marker = self.root / "provisioned"
+        self.with_provision(f"touch {marker}")
+        agents = fakes.FakeAgents(self.cfg)
+        agents.on("wf-build", lambda *a: self.assertTrue(
+            marker.exists(), "the build ran before provisioning"))
+        stages.run_stage(self.rt(self.happy_cli(), agents=agents))
+        self.assertTrue(marker.exists())
+
+    def test_provisioning_runs_inside_the_task_worktree(self):
+        """It installs INTO the worktree — run from the main checkout it provisions the
+        wrong tree and the task still cannot build."""
+        self.with_provision("pwd > provisioned-in")
+        rt = self.rt(self.happy_cli())
+        stages.run_stage(rt)
+        wt = self.cfg.worktree_base / "s1-S7-T1"
+        self.assertEqual((wt / "provisioned-in").read_text().strip(), str(wt.resolve()))
+
+    def test_no_provision_command_runs_nothing(self):
+        """The default. A project needing no provisioning must not pay for a shell."""
+        rt = self.rt(self.happy_cli())
+        stages.run_stage(rt)
+        self.assertEqual(rt.state.phase, "designing")
+
+    def test_a_failed_provision_halts_instead_of_dispatching_into_a_broken_tree(self):
+        """The command is the same for every worktree, so a failure is an environment
+        fact, not a task fact: it will fail identically for all of them. Dispatching
+        anyway spends three build attempts per task discovering that."""
+        self.with_provision("exit 3")
+        agents = fakes.FakeAgents(self.cfg)
+        with self.assertRaises(driver_runtime.Halt) as caught:
+            stages.run_stage(self.rt(self.happy_cli(), agents=agents))
+        self.assertEqual(caught.exception.reason, "provision_failed")
+        self.assertNotIn("wf-build", agents.roles())
+
+    # ── the close survives an interruption after the archive ─────────────────
+
+    def closing_cli(self, overrides=None):
+        base = {("pipeline", "capability-complete"): {"complete": ["CAP-001"]},
+                ("pipeline", "drain-capability"): {"drained": True,
+                                                   "verdict": "adequate"}}
+        base.update(overrides or {})
+        return self.happy_cli(base)
+
+    def test_a_refused_adequacy_leaves_the_close_resumable(self):
+        """The completion gate dispatches an agent, so a rate limit can refuse it — and
+        the archive has already deleted the stage by then. Without a marker the resume
+        reads "no stage on disk" as "cut the next one", and the drill sweep, the stop
+        rules and the ship decision are skipped for good."""
+        agents = fakes.FakeAgents(self.cfg)
+        agents.refuse("wf-adequacy")
+        rt = self.rt(self.closing_cli(), agents=agents)
+        with self.assertRaises(driver_runtime.Pause):
+            stages.run_stage(rt)
+        self.assertFalse(self.cfg.path("stage").exists())
+        self.assertTrue(rt.state.stage_closing)
+        self.assertEqual(rt.state.stages_shipped, 1)
+
+    def test_a_resumed_close_runs_the_steps_the_pause_skipped(self):
+        agents = fakes.FakeAgents(self.cfg)
+        agents.refuse("wf-adequacy")
+        rt = self.rt(self.closing_cli(), agents=agents)
+        with self.assertRaises(driver_runtime.Pause):
+            stages.run_stage(rt)
+
+        cache = self.cfg.path("drill_cache")
+        cache.mkdir(parents=True, exist_ok=True)
+        stale = cache / "zones-20260808T000000Z.md"
+        stale.write_text("# Drill: zones\n**Taken at:** abc1234\n"
+                         "**Targets:** store/zones.go\n")
+
+        cli = self.closing_cli()
+        resumed = fakes.runtime(
+            self.cfg, cli=cli, agents=fakes.FakeAgents(self.cfg),
+            git=fakes.FakeGit(changed={"abc1234": ["store/zones.go"]}))
+        stages.run_stage(resumed)
+        self.assertIn(["pipeline", "drain-capability", "CAP-001"], cli.calls)
+        self.assertFalse(stale.exists())
+        self.assertEqual(resumed.state.phase, "designing")
+        self.assertFalse(resumed.state.stage_closing)
+        self.assertEqual(resumed.state.stages_shipped, 1)
+
+    def test_a_resumed_close_still_ships_the_pr_the_pause_owed_it(self):
+        """The ship-or-cut decision is the last thing after the archive, so an
+        interrupted close is exactly how a finished sprint silently fails to ship."""
+        self.e2e_stage()
+        agents = fakes.FakeAgents(self.cfg)
+        agents.refuse("wf-adequacy")
+        rt = self.rt(self.closing_cli(), agents=agents)
+        with self.assertRaises(driver_runtime.Pause):
+            stages.run_stage(rt)
+        resumed = fakes.runtime(self.cfg, cli=self.closing_cli(),
+                                agents=fakes.FakeAgents(self.cfg))
+        stages.run_stage(resumed)
+        self.assertEqual(resumed.state.phase, "closeout")
+
+    def test_a_banked_close_step_does_not_run_twice(self):
+        """A second adequacy review on no new evidence shifts the park count, which is
+        the same reason closeout banks its steps."""
+        agents = fakes.FakeAgents(self.cfg)
+        rt = self.rt(self.closing_cli(), agents=agents)
+        rt.state.stage_closing = True
+        rt.state.stage_landed_e2e = False
+        stages._finish_close(rt)
+        stages._finish_close(rt)
+        self.assertEqual(agents.roles().count("wf-adequacy"), 1)
+
     # ── ship or cut again ────────────────────────────────────────────────────
 
     def e2e_stage(self, **kw):

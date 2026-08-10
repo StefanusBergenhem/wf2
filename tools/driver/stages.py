@@ -48,9 +48,14 @@ def run_stage(rt) -> None:
     ``closeout`` (the PR is ready to ship)."""
     rt.state.enter("stage_run")
     if not rt.dry_run and not rt.cfg.path("stage").exists():
-        # The close archives and deletes the artifact, so a run interrupted between that
-        # and the phase write comes back here with nothing to load. Its work is merged;
-        # the next cut is what is missing.
+        # The close archives and deletes the artifact, so a run interrupted anywhere
+        # after that comes back here with nothing to load. Which of the two it is, the
+        # marker says: a close still in flight owes its remaining steps — including the
+        # decision to ship the PR — and skipping them loses them for good.
+        if rt.state.stage_closing:
+            rt.report.line("resuming the stage close it was interrupted in", indent=1)
+            _finish_close(rt)
+            return
         rt.report.line("no stage on disk — the last cut already closed; cutting the next",
                        indent=1)
         rt.state.enter("designing")
@@ -195,16 +200,52 @@ def _open_worktree(rt, task_id, worktree):
     which the agent then misdiagnoses as a vacuous test and restructures a good one."""
     branch = _task_branch(rt, task_id)
     found = issues.salvage(rt, task_id)
+    prior = ""
     if found:
         old_branch, reason = found
         if rt.git.worktree_from(worktree, branch, old_branch, rt.state.sprint_branch):
             rt.report.line(f"task {task_id} · carried {old_branch} forward and rebased "
                            f"onto {rt.state.sprint_branch}", indent=2)
-            return f"{old_branch} — {reason}"
-        rt.report.line(f"task {task_id} · could not carry {old_branch} forward — "
-                       f"starting from the sprint tip", indent=2)
-    rt.git.worktree_add(worktree, branch, rt.state.sprint_branch)
-    return ""
+            prior = f"{old_branch} — {reason}"
+        else:
+            rt.report.line(f"task {task_id} · could not carry {old_branch} forward — "
+                           f"starting from the sprint tip", indent=2)
+    if not prior:
+        rt.git.worktree_add(worktree, branch, rt.state.sprint_branch)
+    # Either path leaves a fresh checkout, and both need the same dependencies.
+    _provision(rt, task_id, worktree)
+    return prior
+
+
+def _provision(rt, task_id, worktree) -> None:
+    """``commands.provision`` inside the fresh worktree. A worktree is a bare checkout:
+    every gitignored dependency dir the project builds against is absent from it, and
+    nothing else puts them there. The command is declared rather than derived — a
+    blanket copy of the host's dirs is unsafe (hardlinks let a worktree build corrupt
+    the host copy; a Python venv resolves against the checkout it was made in).
+
+    A failure halts. The same command runs for every worktree, so a failure here is a
+    fact about the environment, not about this task: dispatching anyway spends the
+    task's whole attempt budget rediscovering it, once per task in the stage."""
+    command = rt.cfg.command("provision")
+    if not command:
+        return
+    timeout = int(rt.cfg.driver("command_timeout_s"))
+    log_path = (rt.cfg.path("transient")
+                / f"provision-{rt.state.sprint_id}-{task_id}.log")
+    with rt.report.step(f"task {task_id} · provision · {command}",
+                        budget_s=timeout) as step:
+        done = procs.run(command, timeout=timeout, cwd=worktree, shell=True,
+                         stdout_path=log_path)
+        step.ok = done.rc == 0
+        step.note = "" if step.ok else f"rc={done.rc} · log {log_path}"
+    rt.tele.event("provision", task=task_id, rc=done.rc, duration_s=done.duration_s,
+                  sprint=rt.state.sprint_id, stage=rt.state.stage)
+    if done.rc != 0:
+        raise Halt("provision_failed",
+                   f"commands.provision exited {done.rc} in {worktree} — every task "
+                   f"worktree runs the same command, so no task in this stage can "
+                   f"build; the run is in {log_path}")
 
 
 def _block(rt, task_id, reason) -> None:
@@ -405,29 +446,53 @@ def close(rt, stage, tasks, merged) -> None:
     doc = stage_doc(rt)
     _heavy_checks(rt, stage, checkpoint(doc))
     rt.cli.mutate("pipeline", "append-pr-body")
-    _archive_stage(rt, stage)
-    # Counted here, before anything else at the close can pause: past this point the
-    # stage is merged and out of the working set, and a resume finds nothing to reload —
-    # so a stage not counted now would never be counted at all, and the PR cap would
-    # silently stretch.
-    rt.state.stages_shipped += 1
-    rt.state.save()
-
-    phases.capability_gate(rt)
-    drillcache.prune(rt)
+    # Everything the remaining steps need from the artifact is read BEFORE it is
+    # archived — past that point it is gone and a resume has nothing to re-derive from.
     landed_e2e = _landed_e2e(doc, merged)
     rt.tele.event("stage_done", sprint=rt.state.sprint_id, stage=stage,
                   width=len(tasks), merged=len(merged), e2e=landed_e2e or None)
+    _archive_stage(rt, stage)
+    # Counted here, before anything else at the close can pause: past this point the
+    # stage is merged and out of the working set, so a stage not counted now would never
+    # be counted at all and the PR cap would silently stretch. The marker beside it is
+    # what tells a resume that "no stage on disk" means "finish this close", not "cut
+    # the next one" — the steps below dispatch agents and shell out, so any of them can
+    # pause the run.
+    rt.state.stages_shipped += 1
+    rt.state.stage_closing = True
+    rt.state.stage_landed_e2e = landed_e2e
+    rt.state.stage_close_done = []
+    rt.state.save()
+    _finish_close(rt)
 
-    stop = stoprules.at_boundary(rt.cfg, rt.git)
-    if stop:
-        rt.state.stop_pending = stop.reason
-        rt.state.save()
-        rt.tele.event("stop_pending", reason=stop.reason, detail=stop.detail,
-                      sprint=rt.state.sprint_id)
-        rt.report.line(f"stop pending ({stop.reason}) — this sprint ships, then the "
-                       f"loop exits: {stop.detail}", indent=1)
-    _ship_or_cut(rt, landed_e2e)
+
+def _finish_close(rt) -> None:
+    """The part of the close that runs once the stage artifact is gone. Each step banks
+    itself before the next starts, so a resume runs only what is still missing — a
+    second adequacy review would shift the capability's park count on no new evidence."""
+    if "capability_gate" not in rt.state.stage_close_done:
+        phases.capability_gate(rt)
+        rt.state.close_step_done("capability_gate")
+    if "drill_prune" not in rt.state.stage_close_done:
+        drillcache.prune(rt)
+        rt.state.close_step_done("drill_prune")
+
+    if "stop_rules" not in rt.state.stage_close_done:
+        stop = stoprules.at_boundary(rt.cfg, rt.git)
+        if stop:
+            rt.state.stop_pending = stop.reason
+            rt.state.save()
+            rt.tele.event("stop_pending", reason=stop.reason, detail=stop.detail,
+                          sprint=rt.state.sprint_id)
+            rt.report.line(f"stop pending ({stop.reason}) — this sprint ships, then the "
+                           f"loop exits: {stop.detail}", indent=1)
+        rt.state.close_step_done("stop_rules")
+
+    # The close is over: clear the marker before the phase write, so a crash between the
+    # two resumes into the phase rather than back into a finished close.
+    rt.state.stage_closing = False
+    rt.state.save()
+    _ship_or_cut(rt, rt.state.stage_landed_e2e)
 
 
 def _ship_or_cut(rt, landed_e2e: bool) -> None:

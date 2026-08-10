@@ -18,7 +18,8 @@ PHASES = ("sprint_start", "designing", "stage_run", "closeout",
           "awaiting_ruling", "stopped")
 
 _FIELDS = ("phase", "sprint_id", "sprint_branch", "stage", "stages_shipped",
-           "stop_reason", "stop_pending", "resume_phase", "closeout_done")
+           "stop_reason", "stop_pending", "resume_phase", "closeout_done",
+           "stage_closing", "stage_close_done", "stage_landed_e2e")
 
 
 def _now() -> str:
@@ -51,6 +52,13 @@ class State:
         # The closeout steps this sprint already ran — a restart inside closeout must
         # not re-dispatch them (a second adequacy review would shift the park count).
         self.closeout_done = list(doc.get("closeout_done") or [])
+        # A stage close that has passed its own archive. Past that point the artifact is
+        # deleted, so "no stage on disk" no longer means "cut the next one" — it means
+        # this close still owes its remaining steps. The two below are what those steps
+        # need after the artifact they were derived from is gone.
+        self.stage_closing = bool(doc.get("stage_closing") or False)
+        self.stage_close_done = list(doc.get("stage_close_done") or [])
+        self.stage_landed_e2e = bool(doc.get("stage_landed_e2e") or False)
 
     def as_doc(self) -> dict:
         return {"version": 1, **{k: getattr(self, k) for k in _FIELDS}}
@@ -82,11 +90,20 @@ class State:
         self.stop_reason = None
         self.resume_phase = None
         self.closeout_done = []
+        self.stage_closing = False
+        self.stage_close_done = []
+        self.stage_landed_e2e = False
 
     def step_done(self, step: str) -> None:
         """Bank one finished closeout step, on disk, before the next one starts."""
         if step not in self.closeout_done:
             self.closeout_done.append(step)
+            self.save()
+
+    def close_step_done(self, step: str) -> None:
+        """Bank one finished stage-close step, on disk, before the next one starts."""
+        if step not in self.stage_close_done:
+            self.stage_close_done.append(step)
             self.save()
 
     def suspend(self, phase: str) -> None:
