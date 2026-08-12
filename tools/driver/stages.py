@@ -175,11 +175,15 @@ def _run_task(rt, entry) -> None:
         rt.cli.mutate("pipeline", "dispatch", "--agent", "wf-build",
                       "--task", task_id, "--attempt", str(attempt))
         _consume(rt, worktree, "review_ready")
+        # Which mode this build is in is the loop's own state: it wrote the feedback a
+        # rejection left, and it retires that file at the boundary of the dispatch that
+        # reads it. Telling the role means the role never probes for the file to find out.
+        mode = "fix" if (worktree / rt.cfg.rel("feedback")).exists() else "build"
         launched = rt.agents.launch(
             "wf-build",
-            {"task_id": task_id, "worktree": str(worktree),
+            {"task_id": task_id, "worktree": str(worktree), "mode": mode,
              "contract": rt.cfg.rel("current_task"), "attempt": attempt},
-            cwd=worktree, task_id=task_id, stage=rt.state.stage)
+            cwd=worktree, task_id=task_id, stage=rt.state.stage, mode=mode)
         verdict = _inspect(rt, "inspect-build-return", worktree, task_id)
         kind = verdict.get("verdict")
         rt.report.line(f"task {task_id} · build (attempt {attempt}) → {kind}",
@@ -239,7 +243,17 @@ def _open_worktree(rt, task_id, worktree):
             rt.report.line(f"task {task_id} · could not carry {old_branch} forward — "
                            f"starting from the sprint tip", indent=2)
     if not prior:
-        rt.git.worktree_add(worktree, branch, rt.state.sprint_branch)
+        done = rt.git.worktree_add(worktree, branch, rt.state.sprint_branch)
+        # A worktree that was not created is an environment fact, not a task fact — the
+        # same reasoning `_provision` halts on. Carrying on writes the contract into a
+        # plain directory and dispatches the build with a cwd that is not a checkout: its
+        # commit fails, it leaves no marker, and the task spends its whole redispatch
+        # budget before blocking for a reason that never names this one.
+        if done is not None and getattr(done, "rc", 0) != 0:
+            raise Halt("worktree_failed",
+                       f"git worktree add exited {done.rc} for {worktree} on {branch} "
+                       f"from {rt.state.sprint_branch} — no task in this stage can be "
+                       f"given a checkout")
     # Either path leaves a fresh checkout, and both need the same dependencies.
     _provision(rt, task_id, worktree)
     return prior
@@ -295,14 +309,20 @@ def _block(rt, task_id, reason) -> None:
 def _review_chain(rt, worktree, task_id, build_sha) -> str:
     """Run the configured review passes over one build. Returns the outcome that
     ends the chain: approved, rejected, design_issue or blocked."""
+    def approved_by_every_pass() -> str:
+        rt.report.line(f"task {task_id} approved by every review pass",
+                       symbol=progress.OK, indent=2)
+        rt.cli.mutate("pipeline", "approve-task", task_id, "--commit", build_sha)
+        return "approved"
+
     index = 0
     passes = rt.cfg.review_passes
+    if not passes:
+        return approved_by_every_pass()
+    # The budget is for RETRIES. Settling the chain must not spend an iteration of it —
+    # it used to, so a run that spent its slack on `redispatch_same_attempt` and then got
+    # a clean approval fell out of the loop and blocked a green build for "not settling".
     for _ in range(len(passes) * rt.cfg.max_attempts + 1):
-        if index >= len(passes):
-            rt.report.line(f"task {task_id} approved by every review pass",
-                           symbol=progress.OK, indent=2)
-            rt.cli.mutate("pipeline", "approve-task", task_id, "--commit", build_sha)
-            return "approved"
         agent = passes[index]
         rt.cli.mutate("pipeline", "dispatch", "--agent", agent, "--task", task_id,
                       "--attempt", str(_attempt(rt, task_id)), "--pass", str(index))
@@ -318,6 +338,8 @@ def _review_chain(rt, worktree, task_id, build_sha) -> str:
                        indent=2)
         if kind == "approved":
             index += 1
+            if index >= len(passes):
+                return approved_by_every_pass()
             continue
         if kind == "redispatch_same_attempt":
             # An untouched worktree is what a review that mis-stepped leaves — and it is
@@ -472,11 +494,19 @@ def close(rt, stage, tasks, merged) -> None:
     list left to exhaust."""
     rt.report.phase(f"stage {stage} close")
     doc = stage_doc(rt)
+    # Banked BEFORE the heavy checks, which can halt on a red gate. `merged` is what THIS
+    # invocation merged, and the halt leaves the artifact in place — so the resume comes
+    # back through the ordinary path, finds every task already completed, merges nothing,
+    # and would recompute False for a stage whose e2e task did land. Sticky, and reset
+    # when a new cut starts rather than here.
+    if not rt.state.stage_landed_e2e and _landed_e2e(doc, merged):
+        rt.state.stage_landed_e2e = True
+        rt.state.save()
     _heavy_checks(rt, stage, checkpoint(doc))
     rt.cli.mutate("pipeline", "append-pr-body")
     # Everything the remaining steps need from the artifact is read BEFORE it is
     # archived — past that point it is gone and a resume has nothing to re-derive from.
-    landed_e2e = _landed_e2e(doc, merged)
+    landed_e2e = rt.state.stage_landed_e2e
     rt.tele.event("stage_done", sprint=rt.state.sprint_id, stage=stage,
                   width=len(tasks), merged=len(merged), e2e=landed_e2e or None)
     _archive_stage(rt, stage)
@@ -537,6 +567,11 @@ def _ship_or_cut(rt, landed_e2e: bool) -> None:
     else:
         rt.report.line(f"{rt.state.stages_shipped}/{cap} stage(s) in the PR, none "
                        f"end-to-end yet — cutting the next stage", indent=1)
+        # The e2e fact is sticky across a close a red gate interrupted; this is where it
+        # stops being about this stage. (A True ships, and shipping resets the sprint —
+        # so only the False path ever reaches here, and clearing it is what makes the
+        # stickiness scoped rather than dependent on that.)
+        rt.state.stage_landed_e2e = False
         rt.state.enter("designing")
         return
     rt.report.line(f"shipping the PR — {reason}", symbol=progress.OK, indent=1)

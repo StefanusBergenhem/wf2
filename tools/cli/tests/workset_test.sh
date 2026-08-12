@@ -26,7 +26,13 @@ version: 1
 paths:
   capabilities: ".wf/CAPABILITIES.yaml"
   learnings: ".wf/LEARNINGS.yaml"
+  repo_state: ".wf/wf-repo-state.yaml"
   tests: ["tests"]
+YAML
+# The high-water marks live in their own file, not in config.yaml: they are state the
+# minting roles WRITE, and config.yaml is read-only intent.
+cat > "$PROJ/.wf/wf-repo-state.yaml" <<'YAML'
+version: 1
 id_counters:
   sys_tc: 20
 YAML
@@ -345,17 +351,52 @@ OUT="$(wf workset check --format json)"; RC=$?
 # ---------------------------------------------------------------------------
 
 write_caps; write_learnings
+nocounter() { (cd "$PROJ" && WF_CLI="$CLI" "$PYTHON" -c 'import sys,os; sys.path.insert(0,os.environ["WF_CLI"]); import workset; raise SystemExit(workset.COMMANDS[("workset","check")](sys.argv[1:]))' --config "$1") >/dev/null 2>&1; }
+
+# The counter is absent from an existing state file.
 cat > "$PROJ/.wf/config-nocounter.yaml" <<'YAML'
+version: 1
+paths:
+  capabilities: ".wf/CAPABILITIES.yaml"
+  learnings: ".wf/LEARNINGS.yaml"
+  repo_state: ".wf/state-empty.yaml"
+  tests: ["tests"]
+YAML
+printf 'version: 1\nid_counters: {}\n' > "$PROJ/.wf/state-empty.yaml"
+if nocounter "$PROJ/.wf/config-nocounter.yaml"; then
+  bad "unset id_counters.sys_tc should fail" "exited 0"
+else
+  ok "workset check: unset id_counters.sys_tc → non-zero exit"
+fi
+
+# The state file itself is missing — a repo that was never initialised, or a role that
+# deleted it. Silently reading 0 would let every minted id re-collide.
+cat > "$PROJ/.wf/config-nostate.yaml" <<'YAML'
+version: 1
+paths:
+  capabilities: ".wf/CAPABILITIES.yaml"
+  learnings: ".wf/LEARNINGS.yaml"
+  repo_state: ".wf/absent-state.yaml"
+  tests: ["tests"]
+YAML
+if nocounter "$PROJ/.wf/config-nostate.yaml"; then
+  bad "a missing repo-state file should fail" "exited 0"
+else
+  ok "workset check: missing repo-state file → non-zero exit"
+fi
+
+# paths.repo_state unset entirely — an install that predates the extraction.
+cat > "$PROJ/.wf/config-nokey.yaml" <<'YAML'
 version: 1
 paths:
   capabilities: ".wf/CAPABILITIES.yaml"
   learnings: ".wf/LEARNINGS.yaml"
   tests: ["tests"]
 YAML
-if (cd "$PROJ" && WF_CLI="$CLI" "$PYTHON" -c 'import sys,os; sys.path.insert(0,os.environ["WF_CLI"]); import workset; raise SystemExit(workset.COMMANDS[("workset","check")](sys.argv[1:]))' --config "$PROJ/.wf/config-nocounter.yaml") >/dev/null 2>&1; then
-  bad "unset id_counters.sys_tc should fail" "exited 0"
+if nocounter "$PROJ/.wf/config-nokey.yaml"; then
+  bad "unset paths.repo_state should fail" "exited 0"
 else
-  ok "workset check: unset id_counters.sys_tc → non-zero exit"
+  ok "workset check: unset paths.repo_state → non-zero exit"
 fi
 
 echo ""

@@ -80,10 +80,14 @@ def _scenario_ids(entry):
 
 def _capability_complete(rest):
     """Name the work-set entries whose whole scenario set has shipped — the mechanical
-    trigger for adequacy gate 2. Pure set-difference, no judgment: the driver dispatches
-    wf-adequacy only for what lands in ``complete``. An entry carrying no set is not a
-    candidate — a capability with none has simply not been taken up, and a learning's
-    proof is its tasks' own criteria plus the merge record."""
+    trigger for adequacy gate 2. Pure set-difference, no judgment. An entry carrying no
+    set is not a candidate — a capability with none has simply not been taken up, and a
+    learning's proof is its tasks' own criteria plus the merge record.
+
+    Every row carries its ``kind``, and the caller must honour it: only a capability is
+    an adequacy candidate. A learning may carry a set and is reported here on the same
+    footing, but that set never gates its drain — that happens at sprint close off the
+    merge record."""
     args = common.base_parser("pipeline capability-complete").parse_args(rest)
     paths = common.config_doc(args.config).get("paths") or {}
     shipped = _shipped_ids(args)

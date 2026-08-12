@@ -164,6 +164,63 @@ scaffold_home() {
         echo "  WARN: $label template missing ($tmpl) — skipped $rel" >&2
     fi
 }
+# The id high-water marks used to live in config.yaml. An install made before they moved
+# still carries them there, so scaffolding a zeroed state file beside them would hand
+# every lane's next mint an id it has already used. Carry the values across first, then
+# retire the old block — two copies is worse than one in the wrong place, because a role
+# bumps the new one while a later read finds the stale one.
+migrate_counters() {
+    grep -q '^id_counters:' "$CONFIG" || return 0       # nothing to carry
+    local rel; rel="$(cfg_path repo_state)"
+    if [ -z "$rel" ]; then
+        # An install made before the key existed. scaffold never rewrites an existing
+        # config, so without adding it here the migration would skip and every counter
+        # read would then die on the missing key.
+        rel=".wf/wf-repo-state.yaml"
+        awk -v line="  repo_state: \"$rel\"" '
+            { print }
+            /^paths:/ && !done { print line; done = 1 }
+        ' "$CONFIG" > "$CONFIG.keyed" && mv "$CONFIG.keyed" "$CONFIG"
+        echo "  added paths.repo_state: $rel"
+    fi
+    [ -f "$DIR/$rel" ] && return 0                      # already moved
+    mkdir -p "$(dirname "$DIR/$rel")"
+    {
+        echo "# wf repo state — the id high-water marks, migrated from .wf/config.yaml."
+        echo "# Each counter only ever INCREASES. Committed."
+        echo "version: 1"
+        echo ""
+        echo "id_counters:"
+        # Every lane the template carries is emitted, at the value config held or 0 —
+        # a lane that predates a config is still a lane the next mint reads.
+        awk '
+            /^id_counters:/ { inc = 1; next }
+            /^[^[:space:]]/ { inc = 0 }
+            inc && match($0, /^[[:space:]]+[a-z_]+:[[:space:]]*[0-9]+/) {
+                key = $1; sub(/:$/, "", key)
+                val = $2; sub(/[^0-9].*$/, "", val)
+                seen[key] = val
+            }
+            END {
+                n = split("cap learning wf_learning sys_tc stage", lanes, " ")
+                for (i = 1; i <= n; i++)
+                    printf "  %s: %s\n", lanes[i],
+                           (lanes[i] in seen) ? seen[lanes[i]] : 0
+            }
+        ' "$CONFIG"
+    } > "$DIR/$rel"
+    # Retire the old block, its comment lines, and the blank line left behind.
+    awk '
+        /^id_counters:/ { inc = 1; next }
+        /^[^[:space:]]/ { inc = 0 }
+        inc           { next }
+        { print }
+    ' "$CONFIG" > "$CONFIG.migrated" && mv "$CONFIG.migrated" "$CONFIG"
+    echo "  migrated id_counters into $rel and retired them from the config"
+}
+migrate_counters
+
+scaffold_home repo_state      "../assets/wf-repo-state.yaml.tmpl"                   "repo-state home"
 scaffold_home capabilities    "../../wf-po/assets/capabilities.yaml.tmpl"            "capabilities home"
 scaffold_home charter         "../../wf-sa/assets/charter.md.tmpl"                            "charter home"
 scaffold_home plan            "../../wf-designer/assets/plan.md.tmpl"                               "plan home"

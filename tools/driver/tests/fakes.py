@@ -5,6 +5,7 @@ wf2-source-only — never rendered into an install target.
 """
 from __future__ import annotations
 
+import types
 from pathlib import Path
 
 import cliverbs
@@ -96,6 +97,7 @@ class FakeGit:
         self.aborted = []
         self.conflict_on = set()
         self.worktrees = []
+        self.worktree_add_rc = 0
         self.removed = []
         self.pushed = []
         self.prs = []
@@ -142,7 +144,11 @@ class FakeGit:
 
     def worktree_add(self, path, branch, base):
         self.worktrees.append((str(path), branch, base))
+        if self.worktree_add_rc != 0:
+            # git leaves nothing behind when the add fails — the dir is not created.
+            return types.SimpleNamespace(rc=self.worktree_add_rc)
         Path(path).mkdir(parents=True, exist_ok=True)
+        return types.SimpleNamespace(rc=0)
 
     def worktree_from(self, path, branch, source, onto):
         """The salvage: cut the successor's worktree from a blocked attempt's branch and

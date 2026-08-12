@@ -36,6 +36,45 @@ class PromptTest(support.TempProject):
         self.assertIn("and follow it", prompt)
         self.assertIn("Mode: resume", prompt)
 
+    def test_prompt_carries_the_resolved_config_block(self):
+        """The role reads its paths and commands here instead of opening config.yaml —
+        which costs the whole commented file (~5 k tokens) for ~400 tokens of values."""
+        cfg = self.cfg()
+        prompt = driver_dispatch.build_prompt(cfg, "wf-designer", {})
+        self.assertIn("paths.current_task:", prompt)
+        self.assertIn("commands.preflight:", prompt)
+        # Loop knobs are not the role's business, and agent_cmd carries harness flags.
+        self.assertNotIn("agent_cmd", prompt)
+
+    def test_prompt_carries_the_roles_own_directory(self):
+        """A role writes artifacts from templates beside its installed file. Without
+        this it hunts — 48 of 58 dems builds searched for a .tmpl, 35 of them by
+        running `find /`."""
+        cfg = self.cfg()
+        prompt = driver_dispatch.build_prompt(cfg, "wf-designer", {})
+        self.assertIn(f"role_dir: {self.root / '.claude/skills/wf-designer'}", prompt)
+
+    def test_call_site_parameters_win_over_the_config_block(self):
+        """A param names this dispatch's own state (which worktree, which task). The
+        block is repo-wide defaults, so it must never overwrite one."""
+        cfg = self.cfg()
+        prompt = driver_dispatch.build_prompt(
+            cfg, "wf-designer", {"paths.current_task": "/wt/other.yaml"})
+        body = prompt[prompt.index("paths.current_task"):]
+        self.assertIn("/wt/other.yaml", body)
+        self.assertEqual(prompt.count("paths.current_task:"), 1)
+
+    def test_a_mode_that_only_repeats_the_role_is_not_printed(self):
+        """A dispatch line is read by a human watching a run. `wf-build (build)` spends
+        a word to say nothing; `wf-build (fix)` says this one is a rebuild."""
+        self.assertEqual(driver_dispatch.describe("wf-build", "build"), "wf-build")
+        self.assertEqual(driver_dispatch.describe("wf-retrospective", "wf-retrospective"),
+                         "wf-retrospective")
+        self.assertEqual(driver_dispatch.describe("wf-build", "fix", "S7-T1"),
+                         "wf-build (fix) · S7-T1")
+        self.assertEqual(driver_dispatch.describe("wf-stage-repair", "merge"),
+                         "wf-stage-repair (merge)")
+
     def test_prompt_for_an_uninstalled_role_is_fatal(self):
         cfg = self.cfg()
         with self.assertRaises(driver_dispatch.DispatchError):

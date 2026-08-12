@@ -31,7 +31,7 @@ An e2e test proving a system test case stamps the id **plus its scenario descrip
   non-empty texts**, the register flags the row divergent — visibility, never an error.
 - **No hash.** Completion is set-membership, not content-equality.
 - `<id>` is **repo-unique** (`SYS-TC-<n>`, monotonic — the high-water mark is
-  `id_counters.sys_tc` in `.wf/config.yaml`, never reused).
+  `id_counters.sys_tc` in `paths.repo_state`, never reused).
 - After a scenario retires, a lingering tag is an inert breadcrumb — unless it was
   **superseded**, in which case `retired.py` reports it as a survivor (below).
 

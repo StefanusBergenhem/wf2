@@ -9,7 +9,7 @@ in any language, any comment style (// , # , /* */ , <!-- -->). The tag marks th
 executable test that proves a designed end-to-end scenario shipped; its trailing text
 is the scenario's description, which the harvester captures (a test's description
 describes the test, so it cannot rot apart from it). <id> is repo-unique
-(SYS-TC-<n>, monotonic — `id_counters.sys_tc` in .wf/config.yaml is the high-water
+(SYS-TC-<n>, monotonic — `id_counters.sys_tc` in paths.repo_state is the high-water
 mark, never reused). After a scenario retires, a lingering tag is a historical
 breadcrumb, never an error.
 

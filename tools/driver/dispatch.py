@@ -24,6 +24,8 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import config  # noqa: F401 — import FIRST: it puts the CLI on sys.path
+import envelope  # noqa: E402  (a CLI module — needs the path config.py just added)
 import procs
 import progress
 from runtime import Pause
@@ -76,14 +78,25 @@ class Launched:
 
 
 def build_prompt(cfg, role: str, params: dict) -> str:
-    """The prompt: read this role's file, follow it, and here are its parameters."""
+    """The prompt: read this role's file, follow it, and here is everything it would
+    otherwise have to go find — its own directory, the resolved config values, and this
+    dispatch's parameters.
+
+    The config block is why the role never opens ``.wf/config.yaml``: that file is
+    written for the human who edits it and is ~80% comments, so reading it costs about
+    twelve times what its values do. A call-site parameter wins over the block — the
+    block is repo-wide defaults, a parameter is this dispatch's own state.
+    """
     role_file = cfg.role_file(role)
     if role_file is None:
         raise DispatchError(
             f"{role} is not installed under paths.agents or paths.skills — "
             f"run the wf installer against this repo")
-    lines = [f"Read {role_file} and follow it."]
-    lines += [f"{k}: {v}" for k, v in params.items() if v is not None]
+    given = {k: v for k, v in params.items() if v is not None}
+    lines = [f"Read {role_file} and follow it.", f"role_dir: {role_file.parent}"]
+    lines += [line for line in envelope.render(cfg.config_path).splitlines()
+              if line.split(":", 1)[0] not in given]
+    lines += [f"{k}: {v}" for k, v in given.items()]
     return "\n".join(lines)
 
 
@@ -308,10 +321,13 @@ def check_launch(launched) -> None:
 
 def describe(role: str, mode=None, task_id=None) -> str:
     """How one dispatch is named in the run's commentary. The mode is dropped when it
-    only repeats the role (a closeout step names itself), and the id is printed bare —
-    it is a task for most roles and a capability for the adequacy pass."""
+    only repeats the role — whether it names the role outright (a closeout step names
+    itself) or names what the role already is with the prefix off, which is how a role's
+    ordinary mode reads (``wf-build`` in mode ``build``). A mode that says something the
+    role does not — ``fix``, ``merge``, ``resume`` — survives. The id is printed bare: it
+    is a task for most roles and a capability for the adequacy pass."""
     bits = [role]
-    if mode and str(mode) != role:
+    if mode and str(mode) not in (role, role.removeprefix("wf-")):
         bits.append(f"({mode})")
     if task_id:
         bits.append(f"· {task_id}")

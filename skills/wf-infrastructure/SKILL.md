@@ -6,7 +6,8 @@ description: Sets up and verifies a project's quality-gate infrastructure — te
 # wf-infrastructure
 
 **Read `wf-basics` first** for the `.wf/` layout and the telemetry handshake.
-Record the session start stamp now per `wf-basics` §2. Resolve every path below from `.wf/config.yaml`:
+Record the session start stamp now per `wf-basics` §2. Then resolve every path below by running the `wf envelope show` bootstrap in
+`wf-basics` §1 — never by reading `.wf/config.yaml` whole:
 
 - `PREFLIGHT` = `commands.preflight`, `STAGE_CHECK` = `commands.stage_check` — the repo's gates
 - `BRIEF` = `paths.discover_brief` — read it to know the repo's languages and shape, so you expect the right tools.

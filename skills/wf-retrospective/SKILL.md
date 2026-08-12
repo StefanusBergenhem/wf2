@@ -6,9 +6,11 @@ description: Distils a run into actionable learnings — session telemetry feedb
 # wf-retrospective
 
 **Read `{{WF_SKILLS_DIR}}/wf-basics/SKILL.md` now** for the `.wf/` layout and the telemetry
-handshake. Record the session start stamp now per its §2. Resolve every path below from `.wf/config.yaml`:
+handshake. Record the session start stamp now per its §2. Every path below is a line in
+your dispatch envelope — read it there, do not open `.wf/config.yaml`:
 
 - `TELEMETRY`      = `paths.telemetry`       (append-only session log — read)
+- `REPO_STATE`     = `paths.repo_state`      (the id high-water marks — read + write)
 - `PIPELINE_STATE` = `paths.pipeline_state`  (the finished run's state — read if present)
 - `LEARNINGS`      = `paths.learnings`       (project-code learnings — read + append)
 - `WF_LEARNINGS`   = `paths.wf_learnings`    (wf-toolkit learnings — read + append)
@@ -111,7 +113,7 @@ Turn each unprocessed observation and each cross-task pattern into a learning, h
 - **Dedup against the entries present in the file.** If an observation or pattern restates an
   existing learning, reinforce it: append its source (the session `ended_at`, or
   `sprint:<sprint_id>` for a run pattern) to that entry's `sources` and add no duplicate.
-- Mint each new `L-NNN` id from `max(<lane counter in .wf/config.yaml>, highest id in
+- Mint each new `L-NNN` id from `max(<lane counter in $REPO_STATE>, highest id in
   the file) + 1` — `id_counters.learning` for `$LEARNINGS`, `id_counters.wf_learning`
   for `$WF_LEARNINGS`; never renumber, never reuse a retired number.
 
@@ -139,8 +141,8 @@ the whole deliverable, and the human applies or rejects it.
 ### Phase 6 — Write, summarize & commit
 
 1. Append the new and reinforced entries to `$LEARNINGS` and `$WF_LEARNINGS`, creating either
-   from its template (`assets/learnings.yaml.tmpl`, `assets/wf-learnings.yaml.tmpl`) if absent.
-   If you minted any id, bump its lane's counter in `.wf/config.yaml`
+   from its template (`<role_dir>/assets/learnings.yaml.tmpl`, `<role_dir>/assets/wf-learnings.yaml.tmpl`) if absent.
+   If you minted any id, bump its lane's counter in `$REPO_STATE`
    (`id_counters.learning` / `id_counters.wf_learning`) to the highest id minted.
    **Appending is the only write you make to either file.** Never remove an entry and
    never annotate one as drained, archived, or closed — draining happens at sprint close
@@ -172,9 +174,9 @@ the whole deliverable, and the human applies or rejects it.
    ```
 4. Commit the durable outputs — the learnings, the archived telemetry snapshot, and the
    drained live log — leaving them uncommitted is one `git clean` from gone. Stage explicit
-   paths, never `git add .` (include `.wf/config.yaml` only when you bumped a counter):
+   paths, never `git add .` (include `$REPO_STATE` only when you bumped a counter):
    ```sh
-   git add $LEARNINGS $WF_LEARNINGS .wf/config.yaml
+   git add $LEARNINGS $WF_LEARNINGS $REPO_STATE
    git add -A -- "$(dirname "$TELEMETRY")" <paths.archive>   # the drain + its archive snapshot
    git commit -m "learnings + telemetry drain: <sprint-id or session range>"
    ```

@@ -8,9 +8,26 @@ description: The basics every wf skill assumes — where config and workspace li
 ## 1 — The `.wf/` workspace
 
 - Everything wf keeps in a project lives under `.wf/`.
-- `.wf/config.yaml` is the central project configuration — the source of truth for
-  every path and setting. All config-key references in a skill or instruction (such
-  as `paths.tools`) resolve from `.wf/config.yaml`.
+- Every `paths.<x>` and `commands.<x>` a skill names resolves to a value you are
+  **given**, never one you go and read:
+  - **Dispatched into a worktree** — your prompt carries the resolved block already
+    (`paths.current_task: …`, `commands.preflight: …`, one per line), plus `role_dir`,
+    the directory your own role file and its `assets/` live in. Read the value off the
+    prompt.
+  - **Running in a live session with a human** — you have no envelope, so bootstrap one.
+    `.wf/config.yaml` is the only path anything may hard-code; pull the single key that
+    locates the CLI out of it, then let the CLI print the rest:
+
+    ```sh
+    TOOLS="$(grep -E '^\s+tools:' .wf/config.yaml | head -1 | sed 's/.*: *//; s/ *#.*//; s/"//g')"
+    python3 "$TOOLS/cli/wf" envelope show
+    ```
+- **Never read `.wf/config.yaml` whole.** It is written for the human who edits it and is
+  mostly comments, so reading it costs about twelve times what its values do. If a key
+  a skill names is missing from your block, say so and stop — do not go looking for it
+  in the config.
+- The one file under `.wf/` a role may **write** that is not an artifact of its own work
+  is `paths.repo_state`, and only to bump an id high-water mark it minted from.
 
 ## 2 — Session telemetry
 

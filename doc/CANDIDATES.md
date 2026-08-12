@@ -767,6 +767,43 @@ evidence, two are not:
   either way — its design phase spent four dispatches on scenario prose (C43), which says
   nothing about how it grounded when it finally cut.
 
+**Composition measured 2026-08-11, and the plumbing half is FIXED.** C48 left "where it
+goes is work accumulation, not envelope" as an assertion; attributing all 58 s1–s4
+`wf-build` driver logs splits that accumulation in two. Per dispatch, net of C47's harness
+constant (log-derived, so ~20% low on absolutes — calibrated against one real transcript
+whose true peak was 222,722):
+
+| | light half (52 req) | heavy half (120 req) |
+|---|---|---|
+| role prompt (5 SKILL.md reads) | 7,943 | 7,970 |
+| `config.yaml` | 4,858 | 4,963 |
+| task contract | 2,317 | 2,371 |
+| source/test file reads | 4,816 | **33,632** |
+| bash grep | 1,661 | **11,245** |
+| bash cat/sed | 2,147 | **9,642** |
+| **total** | **38 k** | **93 k** |
+
+The top three rows are flat — a **fixed ~15 k plumbing tax**, of which only 2.3 k is the
+contract. The build spent ~6× more context learning *how to be a wf role* than learning
+*what to build*. Four items were pure protocol overhead and are now fixed: `config.yaml`
+(19,972 chars, **82% comments**, ~922 tokens of data) is replaced by a resolved
+paths/commands/limits/hygiene block in the dispatch prompt — **473 tokens against 4,993**,
+whole-block so no per-role subset can drift; the bare `assets/*.tmpl` path that resolved
+nowhere from a worktree (**48 of 58 runs hunted for it, 35 ran a filesystem-wide `find /`**)
+is anchored on a new `role_dir` param; the feedback-file probe **58 of 58 runs ran** is
+replaced by an explicit `mode: build|fix`; and the preamble's "locate with Grep" rule —
+unfollowable, because the dispatch grants no Grep tool, which is *why* bash `grep`/`cat`
+carry 11–21 k — is reworded to hold with or without one.
+
+**What is NOT fixed, and it is the whole heavy tail.** Exploration is 54.5 k of the heavy
+half's 93 k. Contracts name 8–15 files; the runs touch 15–85, **60–80% never named**
+(S4-T1: 15 named, 85 touched). S4-T1's story even says "eight test files establish boundary
+membership by passing a literal `Members:`" and names none of them, so the build greps for
+them. This is C46's "increment wearing a task costume" measured from the contract side, and
+it needs a designer-side change (grounding enumerates the touch set) or a build-side one
+(build gets `paths.discover_brief`, so ten tasks a stage stop re-deriving the same
+structure by grep ~40× a sprint). Neither is plumbing; both move judgement between roles.
+
 **Trigger to act:** two items remain. The grounding question needs an adversarial read of a
 cut stage against the tree it was cut from — telemetry cannot answer it (a role that reads
 the plan and one that reads the tree both just show tokens); run it at the next cut. The

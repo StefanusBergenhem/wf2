@@ -14,6 +14,7 @@ import support  # noqa: F401
 
 import config as driver_config
 import fakes
+import issues
 import runtime as driver_runtime
 import stages
 
@@ -193,6 +194,28 @@ class StageTest(support.TempProject):
                          ["wf-build", "wf-review", "wf-build", "wf-review"])
         self.assertIn("pipeline reject-task", cli.verbs())
 
+    def test_the_build_is_told_which_mode_it_is_in(self):
+        """Which mode a build is in is the loop's own state — it wrote the feedback, or
+        retired it. Left to the role, every dispatch opens with a filesystem probe for a
+        file only the driver can have put there (58 of 58 dems builds ran one)."""
+        cli = self.happy_cli({
+            ("orchestrate", "inspect-review-return"): [
+                {"task_id": "S7-T1", "verdict": "rejected",
+                 "artifact": ".wf/transient/feedback.yaml"},
+                REVIEW_OK,
+            ],
+        })
+        agents = fakes.FakeAgents(self.cfg)
+        # A rejecting review leaves its feedback in the worktree; that file being there
+        # is what the second dispatch is answering.
+        feedback = self.worktree() / self.cfg.rel("feedback")
+        agents.on("wf-review", lambda *a: (feedback.parent.mkdir(parents=True, exist_ok=True),
+                                           feedback.write_text("failures: []\n")))
+        stages.run_stage(self.rt(cli, agents=agents))
+        modes = [launch["params"].get("mode") for launch in agents.launches
+                 if launch["role"] == "wf-build"]
+        self.assertEqual(modes, ["build", "fix"])
+
     # ── return markers ───────────────────────────────────────────────────────
     # `feedback` and `review_ready` are presence markers: the inspectors route on the
     # file being there, nothing else. Each is read by exactly one dispatch, so the
@@ -274,6 +297,64 @@ class StageTest(support.TempProject):
         self.assertIn("pipeline record-design-issue", cli.verbs())
         self.assertIn("DI-1", self.cfg.path("design_issues").read_text())
         self.assertEqual(rt.state.phase, "designing")
+
+    def test_two_tasks_raising_the_same_issue_id_both_survive_the_promote(self):
+        """`paths.design_issues` sits under the gitignored transient tree, so a fresh
+        worktree has no copy and every agent that raises one mints DI-1 off an empty
+        file. Both entries must reach the host file under distinct ids: the old guard
+        dropped the second as a duplicate but still mirrored it, so the run state's DI-1
+        was re-pointed at T2 while the host file described T1's problem — T1's park was
+        lost and one of the two could never be salvaged."""
+        for task_id in ("S7-T1", "S7-T2"):
+            wt = self.root / f".wf/transient/worktrees/s1-{task_id}/.wf/transient"
+            wt.mkdir(parents=True, exist_ok=True)
+            (wt / "design-issues.yaml").write_text(
+                f'issues:\n  - id: "DI-1"\n    task_id: "{task_id}"\n'
+                f'    severity: high\n    status: open\n'
+                f'    summary: "{task_id} cannot build its contract"\n')
+        cli = self.happy_cli({})
+        rt = self.rt(cli, agents=fakes.FakeAgents(self.cfg))
+        first = issues.promote(rt, self.worktree("S7-T1"), "DI-1", "S7-T1")
+        second = issues.promote(rt, self.worktree("S7-T2"), "DI-1", "S7-T2")
+
+        self.assertNotEqual(first, second)
+        raised = self.cfg.path("design_issues").read_text()
+        self.assertIn("S7-T1 cannot build its contract", raised)
+        self.assertIn("S7-T2 cannot build its contract", raised)
+        # Each mirror must name the id its own entry was filed under.
+        mirrored = [c for c in cli.calls if c[:2] == ["pipeline", "record-design-issue"]]
+        self.assertEqual(
+            sorted((c[2], c[c.index("--task") + 1]) for c in mirrored),
+            sorted([(first, "S7-T1"), (second, "S7-T2")]))
+
+    def test_a_worktree_that_could_not_be_created_halts_instead_of_dispatching_into_it(self):
+        """`worktree_add`'s exit code was discarded. With `commands.provision` unset
+        nothing else touches the directory, so the contract is written into a plain dir
+        and the build is dispatched with a cwd that is not a git worktree — its commit
+        fails, it leaves no marker, and the task burns its whole redispatch budget before
+        blocking for a reason that never names the real one."""
+        cli = self.happy_cli()
+        git = fakes.FakeGit()
+        git.worktree_add_rc = 1
+        with self.assertRaises(driver_runtime.Halt) as caught:
+            stages.run_stage(self.rt(cli, git=git))
+        self.assertEqual(caught.exception.reason, "worktree_failed")
+        self.assertNotIn("pipeline dispatch", cli.verbs())
+
+    def test_re_promoting_one_task_s_own_issue_files_it_once(self):
+        """Renumbering a collision must not turn an idempotent re-promote into a
+        duplicate: same task, same summary is the same issue arriving twice."""
+        wt = self.root / ".wf/transient/worktrees/s1-S7-T1/.wf/transient"
+        wt.mkdir(parents=True, exist_ok=True)
+        (wt / "design-issues.yaml").write_text(
+            'issues:\n  - id: "DI-1"\n    task_id: "S7-T1"\n    severity: high\n'
+            '    status: open\n    summary: "the contract contradicts the flow"\n')
+        rt = self.rt(self.happy_cli({}), agents=fakes.FakeAgents(self.cfg))
+        first = issues.promote(rt, self.worktree("S7-T1"), "DI-1", "S7-T1")
+        again = issues.promote(rt, self.worktree("S7-T1"), "DI-1", "S7-T1")
+        self.assertEqual(first, again)
+        raised = self.cfg.path("design_issues").read_text()
+        self.assertEqual(raised.count("the contract contradicts the flow"), 1)
 
     def test_a_build_that_never_writes_an_artifact_blocks_on_its_own_budget(self):
         cli = self.happy_cli({
@@ -371,6 +452,25 @@ class StageTest(support.TempProject):
         self.assertIn("task/s1-S7-T1", raised)      # the branch the attempts are on
         self.assertIn("no artifact", raised)         # and why it blocked
         self.assertIn("pipeline record-design-issue", cli.verbs())
+
+    def test_an_approval_after_the_redispatches_is_honoured_not_discarded(self):
+        """The chain's budget is for retries, but the terminal "every pass approved"
+        check spent an iteration of it too. With the shipped config the slack is 2, so
+        three redispatches — the untouched-worktree case the chain explicitly retries —
+        followed by a clean approval exhausted the loop, and a green build was thrown
+        away as "did not settle". At review.max_attempts: 1 a single redispatch does it."""
+        cli = self.happy_cli({
+            ("orchestrate", "inspect-review-return"): [
+                {"task_id": "S7-T1", "verdict": "redispatch_same_attempt"},
+                {"task_id": "S7-T1", "verdict": "redispatch_same_attempt"},
+                {"task_id": "S7-T1", "verdict": "redispatch_same_attempt"},
+                REVIEW_OK,
+            ],
+        })
+        rt = self.rt(cli, agents=fakes.FakeAgents(self.cfg), git=fakes.FakeGit())
+        stages.run_stage(rt)
+        self.assertIn("pipeline approve-task", cli.verbs())
+        self.assertNotIn("pipeline block-task", cli.verbs())
 
     def test_a_review_that_rejects_every_attempt_blocks_and_names_its_branch(self):
         cli = self.happy_cli({
@@ -667,6 +767,33 @@ class StageTest(support.TempProject):
         self.with_stage_check(f"touch {ran}")
         stages.run_stage(self.rt(self.happy_cli()))
         self.assertTrue(ran.exists())
+
+    def test_a_close_interrupted_by_a_red_gate_still_ships_at_its_e2e_boundary(self):
+        """`merged` is what THIS invocation merged. A red stage check halts before the
+        artifact is archived, so the resume comes back through the normal path, merges
+        nothing, and a recomputed `landed_e2e` answers False for a stage whose e2e task
+        did land — the PR is not shipped and another stage is cut instead."""
+        e2e = support.task("S7-T1", covers=["CAP-001"])
+        e2e["system_tests"] = [{"id": "SYS-TC-1", "description": "a patch round-trips"}]
+        self.write_stage(tasks=[e2e])
+
+        gate = self.root / "gate-passes"
+        self.with_stage_check(f"test -f {gate}")
+        self.write_stage(tasks=[e2e])
+        rt = self.rt(self.happy_cli(), git=fakes.FakeGit())
+        with self.assertRaises(driver_runtime.Halt):
+            stages.run_stage(rt)
+
+        # The gate goes green and the run resumes; nothing new merges this time.
+        gate.write_text("ok")
+        resumed = self.rt(self.happy_cli({
+            ("pipeline", "next"): [frontier(stage_done=True)],
+        }), git=fakes.FakeGit())
+        resumed.state.stage_closing = rt.state.stage_closing
+        resumed.state.stage_landed_e2e = rt.state.stage_landed_e2e
+        stages.run_stage(resumed)
+        self.assertTrue(resumed.state.stage_landed_e2e,
+                        "the e2e task merged before the halt — the close must remember")
 
     def test_the_close_appends_the_stage_to_the_pr_body_then_archives_it(self):
         """The artifact leaves the working set at its own merge: a copy for the

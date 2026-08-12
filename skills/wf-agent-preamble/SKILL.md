@@ -23,8 +23,8 @@ an absolute path to this task's worktree root.
    with `worktree`.** Paths outside the worktree are forbidden.
 4. The same rule applies to file-mutating bash (`mv`, `>`, `tee`, `sed -i`, append
    operators, `git add` of out-of-tree files).
-5. **`paths.<x>` from `.wf/config.yaml` resolve to worktree-rooted paths.** "Write
-   `paths.review_ready`" means `<worktree>/<configured paths.review_ready>`, never the
+5. **`paths.<x>` from your dispatch envelope resolve to worktree-rooted paths.** "Write
+   `paths.review_ready`" means `<worktree>/<the envelope's paths.review_ready>`, never the
    parent repo's copy.
 6. **Read-only operations are exempt** — `Read`, `Grep`, `cat`, and other non-mutating tools
    may reference files outside `worktree`. The restriction is write-only.
@@ -43,7 +43,7 @@ not the whole log:
 
 Never read raw terminal output for these commands — long output blows context, and the log
 is the artifact a reviewer or post-mortem can cite. Use task-scoped names — `<task-id>` is
-the `task_id` from `paths.current_task` (`/tmp/wf-build-<task-id>-test.log`,
+the `task_id` your dispatch envelope names (`/tmp/wf-build-<task-id>-test.log`,
 `/tmp/wf-build-<task-id>-preflight.log`, `/tmp/wf-review-<task-id>-preflight.log`) — so
 other steps can find them and concurrent tasks never overwrite each other's logs.
 
@@ -58,11 +58,14 @@ the entire file.
 Every byte a tool returns stays in your context for the rest of the session; every
 re-read adds it again.
 
-- **Locate, then window.** Find a symbol with Grep (match lines only — no wide `-A`/`-B`
-  context dumps), then Read only the surrounding region with offset/limit. Read a file
-  whole only when it is a few hundred lines or less, or the task rewrites most of it.
-- **Do not page file content through bash.** `cat`, `sed -n`, and `grep -A/-B/-C`
-  pipelines dump file content as command output; use Grep to locate and Read to view.
+- **Locate, then window.** Find a symbol with a **match-lines-only** search — the Grep
+  tool when your toolset has one, otherwise `grep -rn` with **no** `-A`/`-B`/`-C` — then
+  read only the surrounding region with Read's offset/limit. Read a file whole only when
+  it is a few hundred lines or less, or the task rewrites most of it.
+- **Do not page file content through bash.** `cat`, `sed -n '1,200p'`, and `grep -A/-B/-C`
+  pipelines dump whole files as command output, where no line limit applies and the
+  content lands in your context twice if you then Read it. Locate with a search, view
+  with Read.
 - **Re-read only what changed.** After an edit, re-read the edited region, not the whole
   file. A region already in your context needs no re-read to "check" it.
 

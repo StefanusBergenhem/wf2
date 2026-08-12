@@ -14,7 +14,7 @@ nothing else.
 Read `{{WF_SKILLS_DIR}}/wf-basics/SKILL.md` for the `.wf/` layout and the telemetry
 handshake, and record the session start stamp now per wf-basics §2 — your first action.
 
-Resolve these from `.wf/config.yaml`:
+Every path below is a line in your dispatch envelope. Read it there — do not open `.wf/config.yaml`:
 
 - `DESIGN_ISSUES` = `paths.design_issues`  (where you raise a design issue)
 - `STAGE_CHECK`   = `commands.stage_check` (the heavy checks — repair mode)

@@ -36,7 +36,7 @@ def _stage_id(stage_doc):
     raw = stage_doc.get("stage")
     if raw is None:
         common.die("the stage artifact declares no `stage:` id — mint one from "
-                   "id_counters.stage")
+                   "id_counters.stage in paths.repo_state")
     try:
         return int(raw)
     except (TypeError, ValueError):

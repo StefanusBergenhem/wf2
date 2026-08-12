@@ -6,9 +6,11 @@ description: Product Owner — turns unstructured product input and the discover
 # wf-po
 
 **Read `{{WF_SKILLS_DIR}}/wf-basics/SKILL.md` now** for the `.wf/` layout and config
-rules. Resolve every path below from `.wf/config.yaml`:
+rules. Then resolve every path below by running the `wf envelope show` bootstrap in
+`wf-basics` §1 — never by reading `.wf/config.yaml` whole:
 
 - `CAPABILITIES` = `paths.capabilities`    (the durable capabilities file — read + write, committed)
+- `REPO_STATE`   = `paths.repo_state`      (the id high-water marks — read + write, committed)
 - `BRIEF`        = `paths.discover_brief`  (discover's agent digest — read, if present)
 - `DRILL_CACHE`  = `paths.drill_cache`     (shared scout digests — read; append via wf-drill)
 
@@ -56,10 +58,10 @@ wording; nothing from it is written durably beyond the capability itself.
 
 ### Phase 1 — Load context
 
-1. Read `.wf/config.yaml` for paths.
+1. Run the `wf envelope show` bootstrap (`wf-basics` §1) for paths.
 2. Read `$CAPABILITIES` if it exists. It holds the **open work-set** — user-voice
    intent not yet built. Mint new ids from
-   `max(id_counters.cap in .wf/config.yaml, highest CAP-NNN in the file) + 1` (CAP-001
+   `max(id_counters.cap in $REPO_STATE, highest CAP-NNN in the file) + 1` (CAP-001
    when both are empty/zero); existing entries are open intent the user may revise.
    An empty file does **not** mean a new product — a mature product
    with no open intent recorded yet is the normal legacy-adoption case, which step 3
@@ -154,13 +156,13 @@ any unresolved blocker that should gate downstream work.
 ### Phase 7 — Write & commit
 
 On explicit approval, write `$CAPABILITIES` (init scaffolds it; create it from
-`assets/capabilities.yaml.tmpl` if somehow absent). If you minted any id, bump
-`id_counters.cap` in `.wf/config.yaml` to the highest id minted. Then **offer to
+`<paths.skills>/wf-po/assets/capabilities.yaml.tmpl` if somehow absent). If you minted
+any id, bump `id_counters.cap` in `$REPO_STATE` to the highest id minted. Then **offer to
 commit** (one commit, e.g. `capabilities: <short summary>`) — the open work-set is
 durable, and leaving it uncommitted is one `git clean` from gone:
 
 - If the human approves, `git add` + `git commit` — stage `$CAPABILITIES` and, when
-  you bumped the counter, `.wf/config.yaml`.
+  you bumped the counter, `$REPO_STATE`.
 - If the human declines, or the environment forbids committing (a sandbox, CI, a
   detached-HEAD or read-only worktree), **leave it written-but-uncommitted, report
   exactly what is unstaged, and stop** — a clean outcome, not a failure. Never

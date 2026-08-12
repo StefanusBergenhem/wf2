@@ -16,7 +16,8 @@ direction artifacts: the charter, the architecture map, and the ADRs.
 **Read `{{WF_SKILLS_DIR}}/wf-basics/SKILL.md` now** for the `.wf/` layout, the unit
 hierarchy, and the telemetry handshake — then record the session start now per its §2.
 
-Resolve from `.wf/config.yaml`: `paths.charter`, `paths.architecture`, `paths.adrs`,
+Resolve by running the `wf envelope show` bootstrap in `wf-basics` §1, never by reading
+`.wf/config.yaml` whole: `paths.charter`, `paths.architecture`, `paths.adrs`,
 `paths.capabilities`, `paths.decision_prep`, `paths.discover_brief`, `paths.drill_cache`,
 `hygiene.charter_max`, `hygiene.architecture_max`, `paths.tools`, `paths.telemetry`,
 `paths.learnings`.
@@ -222,7 +223,7 @@ python3 <paths.tools>/design_view/render_design.py --out <paths.design_view> < <
 Name each component with the id `paths.discover_brief` lists for it (e.g. `internal/auth`) —
 the renderer resolves an id it shares with the brief, and invents nothing for one it does
 not. **Author only what this direction adds or changes.** The renderer reads discover's
-structure model and the test tree itself — straight from `.wf/config.yaml`, no path from
+structure model and the test tree itself — straight from the envelope block, no path from
 you — and derives every component's description and the system-test scenarios already
 proven. Retyping those burns your context and drifts from the tests, which are the truth.
 

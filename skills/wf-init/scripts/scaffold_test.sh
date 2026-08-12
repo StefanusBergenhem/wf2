@@ -43,6 +43,11 @@ check "telemetry sink created"     "[ -f '$PROJ/.wf/telemetry/sessions.jsonl' ]"
 check "gitignore ignores telemetry" "grep -qF '.wf/telemetry/' '$PROJ/.gitignore'"
 check "adrs dir created"           "[ -d '$PROJ/.wf/adrs' ]"
 check "adrs gitkeep created"       "[ -f '$PROJ/.wf/adrs/.gitkeep' ]"
+check "repo-state home created"    "[ -f '$PROJ/.wf/wf-repo-state.yaml' ]"
+check "repo-state carries every id lane" "grep -q 'cap:' '$PROJ/.wf/wf-repo-state.yaml' && grep -q 'sys_tc:' '$PROJ/.wf/wf-repo-state.yaml' && grep -q 'stage:' '$PROJ/.wf/wf-repo-state.yaml' && grep -q 'learning:' '$PROJ/.wf/wf-repo-state.yaml' && grep -q 'wf_learning:' '$PROJ/.wf/wf-repo-state.yaml'"
+# The counters left config.yaml — a lingering copy there is the one a role would bump,
+# and the two would silently diverge.
+check "config carries no id_counters" "! grep -q '^id_counters:' '$PROJ/.wf/config.yaml'"
 check "capabilities home created"  "[ -f '$PROJ/.wf/CAPABILITIES.yaml' ]"
 check "capabilities has structure" "grep -q 'capabilities:' '$PROJ/.wf/CAPABILITIES.yaml'"
 check "charter home created"       "[ -f '$PROJ/.wf/charter.md' ]"
@@ -158,9 +163,71 @@ check "custom transient dir honored"  "[ -d '$CUSTOM/.wf/t2' ]"
 check "custom transient gitignored"   "grep -qxF '.wf/t2/' '$CUSTOM/.gitignore'"
 check "default sink NOT created"      "! [ -f '$CUSTOM/.wf/telemetry/sessions.jsonl' ]"
 check "no home when key absent"       "! [ -f '$CUSTOM/.wf/CAPABILITIES.yaml' ]"
+check "no repo-state when key absent" "! [ -f '$CUSTOM/.wf/wf-repo-state.yaml' ]"
 check "no charter when key absent"    "! [ -f '$CUSTOM/.wf/charter.md' ]"
 check "no plan when key absent"       "! [ -f '$CUSTOM/.wf/plan.md' ]"
 check "no architecture when key absent" "! [ -f '$CUSTOM/.wf/architecture.md' ]"
+
+echo "== migration: counters that still live in config.yaml =="
+# An install made before the counters moved carries them in config.yaml and has no
+# repo-state file. Scaffolding a zeroed one beside them would hand every lane's next
+# mint an id it already used.
+MIG="$WORK/t-migrate"; mkdir -p "$MIG"
+bash "$SCAFFOLD" --dir "$MIG" --target claude --name mig > "$WORK/mig1.log" 2>&1 \
+    || fail "migration setup scaffold failed (see $WORK/mig1.log)"
+rm -f "$MIG/.wf/wf-repo-state.yaml"
+cat >> "$MIG/.wf/config.yaml" <<'YAML'
+
+id_counters:
+  cap: 15
+  learning: 137
+  wf_learning: 52
+  sys_tc: 41
+  stage: 4
+YAML
+bash "$SCAFFOLD" --dir "$MIG" --target claude --name mig > "$WORK/mig2.log" 2>&1 \
+    || fail "migrating scaffold exited non-zero (see $WORK/mig2.log)"
+
+check "migrated state file created" "[ -f '$MIG/.wf/wf-repo-state.yaml' ]"
+for pair in "cap:15" "learning:137" "wf_learning:52" "sys_tc:41" "stage:4"; do
+    k="${pair%%:*}"; v="${pair##*:}"
+    check "migrated $k carried over as $v" \
+        "grep -qE '^  $k: $v( |$)' '$MIG/.wf/wf-repo-state.yaml'"
+done
+# Two copies of a counter is worse than one in the wrong file: a role bumps the new one
+# and a re-scaffold would read the stale old one back.
+check "config's id_counters retired after the move" \
+    "! grep -q '^id_counters:' '$MIG/.wf/config.yaml'"
+# A repo that already moved must not be re-migrated back to whatever config once held.
+echo "  cap: 99" >> "$MIG/.wf/wf-repo-state.yaml"
+bash "$SCAFFOLD" --dir "$MIG" --target claude --name mig > "$WORK/mig3.log" 2>&1 \
+    || fail "third scaffold exited non-zero (see $WORK/mig3.log)"
+check "an already-migrated state file is left alone" \
+    "grep -q 'cap: 99' '$MIG/.wf/wf-repo-state.yaml'"
+
+# The real shape of an install made before the move: counters in config.yaml and no
+# paths.repo_state key at all, because scaffold never rewrites an existing config. The
+# migration has to add the key too, or it silently skips and every counter read dies.
+OLD="$WORK/t-oldconfig"; mkdir -p "$OLD"
+bash "$SCAFFOLD" --dir "$OLD" --target claude --name old > "$WORK/old1.log" 2>&1 \
+    || fail "old-config setup scaffold failed (see $WORK/old1.log)"
+rm -f "$OLD/.wf/wf-repo-state.yaml"
+python3 - "$OLD/.wf/config.yaml" <<'PY'
+import re, sys
+p = sys.argv[1]; t = open(p).read()
+t = re.sub(r'^\s+repo_state:.*\n', '', t, flags=re.M)   # the key an old config lacks
+open(p, 'w').write(t + '\nid_counters:\n  cap: 7\n  sys_tc: 33\n  stage: 2\n')
+PY
+bash "$SCAFFOLD" --dir "$OLD" --target claude --name old > "$WORK/old2.log" 2>&1 \
+    || fail "old-config migration exited non-zero (see $WORK/old2.log)"
+check "paths.repo_state added to an old config" \
+    "grep -qE '^  repo_state: \"?\.wf/wf-repo-state\.yaml' '$OLD/.wf/config.yaml'"
+check "old-config state file created"    "[ -f '$OLD/.wf/wf-repo-state.yaml' ]"
+check "old-config cap carried over"      "grep -qE '^  cap: 7( |$)' '$OLD/.wf/wf-repo-state.yaml'"
+check "old-config sys_tc carried over"   "grep -qE '^  sys_tc: 33( |$)' '$OLD/.wf/wf-repo-state.yaml'"
+check "old-config id_counters retired"   "! grep -q '^id_counters:' '$OLD/.wf/config.yaml'"
+# The lanes that config never carried still have to exist, or the first mint dies.
+check "absent lanes default to zero"     "grep -qE '^  learning: 0( |$)' '$OLD/.wf/wf-repo-state.yaml' && grep -qE '^  wf_learning: 0( |$)' '$OLD/.wf/wf-repo-state.yaml'"
 
 echo "== bad target rejected =="
 if bash "$SCAFFOLD" --dir "$WORK/proj2" --target frobnicate --name x > /dev/null 2>&1; then

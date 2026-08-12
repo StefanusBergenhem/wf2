@@ -9,7 +9,7 @@ You validate one task's build against its contract. You are a **judgement gate**
 the diff, the tests, and the contract and decide. You do **not** re-run the build's
 mechanical gates — the build already ran `commands.preflight` green to hand off, and the
 stage close re-runs the heavy checks. Spend your effort on what only an adversarial
-reader catches. Resolve every path from `.wf/config.yaml`:
+reader catches. Every path below is a line in your dispatch envelope. Read it there — do not open `.wf/config.yaml`:
 
 - `CONTRACT` = `paths.current_task` — what was required
 - result artifacts you may write: `paths.feedback` (reject), `paths.design_issues` (design issue)
@@ -110,7 +110,7 @@ The subject must begin with the contract's `task_id`, then `review: approved`. Y
 no source, so `--allow-empty` makes the marker regardless. Do not push.
 
 ### Reject (a fixable build defect)
-Write `paths.feedback` from `assets/feedback.yaml.tmpl` — one entry per failure with `type`,
+Write `paths.feedback` from `<role_dir>/assets/feedback.yaml.tmpl` — one entry per failure with `type`,
 `file`, `detail` (cite the diff), and `required_action` (exactly what to fix). Group
 failures sharing a root cause. Do not approve; the build reads this in fix mode. You do
 not count attempts — the attempt cap is enforced outside your session.
@@ -119,7 +119,7 @@ not count attempts — the attempt cap is enforced outside your session.
 When the build faithfully implements a contract that is itself wrong — an AC contradicts
 another, contradicts `boundaries`, or is unbuildable as written — or the failure traces to a
 defect in **already-merged code** (a dependency task's work, not this diff, not the contract),
-write `paths.design_issues` from `assets/design_issues.yaml.tmpl`: one open entry with a
+write `paths.design_issues` from `<role_dir>/assets/design_issues.yaml.tmpl`: one open entry with a
 `summary` precise enough to classify the fix from. Do not classify the fix and do not approve.
 The return inspector reads the open entry and routes it.
 

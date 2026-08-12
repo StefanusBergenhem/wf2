@@ -53,6 +53,8 @@ paths:
                                               # read) — and that archive snapshot IS the committed
                                               # record.
 
+  repo_state: ".wf/wf-repo-state.yaml"        # The id high-water marks (id_counters.*) the minting roles bump — the ONLY state a role writes that is not an artifact of its own. It lives here, not in this file, because this file is read-only intent: a role that had to open it to change one integer paid the whole commented file to do so, and committed it. Committed.
+
   # The durable why + the durable direction. Both are human-owned; the autonomous
   # design role reads them and writes only paths.plan.
   capabilities: ".wf/CAPABILITIES.yaml"       # User-voice capabilities (wf-po appends promises; the design role appends each capability's SYS-TC scenario set when it takes the capability up; `pipeline drain-capability` removes one on an adequate verdict). A capability carrying no scenario set has simply not been taken up yet. Committed.
@@ -238,12 +240,5 @@ closeout: [wf-retrospective, ship]
 orchestrate:
   history_cap: 50          # live pipeline-state history entries kept; older spill to pipeline_history.
 
-id_counters:            # high-water marks for draining id lanes — only ever increase.
-  cap: 0                # CAP-NNN (wf-po bumps)
-  learning: 0           # L-NNN in paths.learnings (wf-retrospective bumps)
-  wf_learning: 0        # L-NNN in paths.wf_learnings (wf-retrospective bumps)
-  sys_tc: 0             # SYS-TC-<n> — system test cases (the design role bumps; ids persist as [SYS-TC:] tags in tests)
-  stage: 0              # stage number — monotonic over the repo's LIFETIME, never restarting
-                        # per sprint. It keys the task ids (S7-T1), the archive filename and
-                        # the stage-timing state. A key that restarts silently inherits the
-                        # previous run's timings, which reads as a stage lasting days.
+# The id high-water marks moved to paths.repo_state — this file is read-only intent, and
+# a counter is state a role writes.

@@ -12,7 +12,8 @@ before anything else.
 Run the phases below in order. When your dispatch names mode `resume`, run **resume**
 instead.
 
-Resolve every path and limit from `.wf/config.yaml`:
+Every path and limit below is a line in your dispatch envelope. Read it there — do not
+open `.wf/config.yaml`:
 
 - `paths.charter`, `paths.architecture` — direction and planned structure. **Read-only.**
 - `paths.plan` — the rolling plan. The one durable design file you write.
@@ -22,8 +23,11 @@ Resolve every path and limit from `.wf/config.yaml`:
 - `paths.stage` — the stage you release.
 - `paths.design_issues` — what the last stage could not answer.
 - `paths.decision_prep` — your escalation brief.
-- `limits.tasks_per_stage`, `hygiene.plan_max`, `id_counters.sys_tc`, `id_counters.stage`
+- `limits.tasks_per_stage`, `hygiene.plan_max`
+- `paths.repo_state` — the id high-water marks (`id_counters.sys_tc`, `id_counters.stage`).
+  The one durable file besides `paths.plan` you write, and only to bump a lane you minted from.
 - `paths.tools`, `paths.telemetry` — the telemetry recorder and its sink.
+- `role_dir` — where your own `assets/` templates live.
 
 ## Scouting & the drill-cache
 
@@ -141,7 +145,8 @@ quantifiers unreached.
    register, so the entry can never drain.
 2. Sweep the promise per `references/promise-sweep.md`, then write the scenarios that
    close it. Mint each new `SYS-TC-<n>` from
-   `max(id_counters.sys_tc, highest SYS-TC-<n> in the register) + 1` upward, monotonic,
+   `max(id_counters.sys_tc in paths.repo_state, highest SYS-TC-<n> in the register) + 1`
+   upward, monotonic,
    never reused.
 3. Write the set into the entry in `paths.capabilities` (or `paths.learnings`), nested
    under it. A scenario that proves a second entry is **duplicated under that entry with
@@ -156,7 +161,7 @@ quantifiers unreached.
    **After three consecutive inadequate verdicts, stop**: the promise is not decomposable
    as worded. Report `escalated` naming the entry for a PO session.
 
-**Then stop.** Commit `paths.capabilities` (or `paths.learnings`) and `.wf/config.yaml`
+**Then stop.** Commit `paths.capabilities` (or `paths.learnings`) and `paths.repo_state`
 with the bumped `id_counters.sys_tc`, and report what you authored. The next dispatch cuts
 the stage.
 
@@ -167,7 +172,7 @@ register, and this cut's drills. **Rewrite it only when a milestone has shipped 
 evidence contradicts one** — delete what the repo has reached, re-order what the current
 state argues for, replace what it contradicts.
 
-**When `paths.plan` does not exist, write it from `assets/plan.md.tmpl`** before cutting
+**When `paths.plan` does not exist, write it from `<role_dir>/assets/plan.md.tmpl`** before cutting
 anything: the milestones you are sequencing toward are what makes this stage the right one
 to build next, and a cut with nothing to sequence against is a guess.
 
@@ -178,8 +183,8 @@ to build next, and a cut with nothing to sequence against is a guess.
 
 ## Phase 5 — Cut the stage
 
-Write `paths.stage` from `assets/stage.yaml.tmpl`. Set `stage:` to
-`id_counters.stage + 1`.
+Write `paths.stage` from `<role_dir>/assets/stage.yaml.tmpl`. Set `stage:` to
+`id_counters.stage + 1`, read from `paths.repo_state`.
 
 **Header:**
 
@@ -246,14 +251,14 @@ here returns you to Phase 5; do not paper it over.
 2. **Gate: run `python3 <paths.tools>/cli/wf stage check`. Do not release until it reports
    `verdict: pass` (exit 0).** Fix what it names and re-run; never edit a marker to
    silence it. Read its warnings too.
-3. Bump `id_counters.stage` to this stage's number, and `id_counters.sys_tc` to the
-   highest id you minted.
+3. In `paths.repo_state`, bump `id_counters.stage` to this stage's number, and
+   `id_counters.sys_tc` to the highest id you minted.
 4. Commit the durable files on the current branch — `paths.plan`, `paths.capabilities` or
-   `paths.learnings` when you touched them, and `.wf/config.yaml` for the counters. Stage
+   `paths.learnings` when you touched them, and `paths.repo_state` for the counters. Stage
    explicit paths, never `git add .`:
 
    ```sh
-   git add <paths.plan> .wf/config.yaml
+   git add <paths.plan> <paths.repo_state>
    git diff --cached --stat        # verify nothing unexpected is staged
    ```
 

@@ -6,19 +6,27 @@ description: TDD developer procedure — executes one task contract red→green�
 # wf-build — execute one task contract
 
 You execute the contract at `paths.current_task` under TDD. You do not plan or read the
-spec layer (ADRs, the plan, the architecture map) — the contract, with the stage design
-that rides with it, is complete for what this task builds.
-Resolve every path and command from `.wf/config.yaml`:
+spec layer (ADRs, the plan, the architecture map, the capabilities file) — the contract,
+with the stage design that rides with it, is complete for what this task builds. A
+`covers:` id is a label, not a pointer: never go read what it refers to.
+
+Every path and command below is a line in your dispatch envelope. Read it there — do not
+open `.wf/config.yaml`:
 
 - `CONTRACT` = `paths.current_task` — what to build (the single source)
-- `FEEDBACK` = `paths.feedback` — a prior review's rejection; present → Fix mode
+- `FEEDBACK` = `paths.feedback` — a prior review's rejection, when `mode` is `fix`
 - `commands.preflight` — the mechanical gate to pass before handoff
+- `role_dir` — where your own `assets/` templates live
 - result artifacts you may write: `paths.review_ready`, `paths.design_issues`
 
 ## Step 0 — Mode
 
-- `FEEDBACK` exists → **Fix mode** (see below).
-- otherwise → **Build mode**, from Step 1.
+Your envelope carries `mode`:
+
+- `mode: fix` → **Fix mode** (see below); `FEEDBACK` is present and is what you address.
+- `mode: build` → **Build mode**, from Step 1.
+
+Do not probe the filesystem to work out which — the envelope is the answer.
 
 ## Step 1 — Load the contract
 
@@ -122,7 +130,7 @@ If the blocker is **not your own code** — an AC contradicts the source code, t
 contradict each other, an AC contradicts `boundaries`, the contract asks for something the
 source code makes impossible, or an AC fails because **already-merged code** (work that
 landed before this stage, not this task's diff) is defective — do not retry or work around
-it. Write `paths.design_issues` from `assets/design_issues.yaml.tmpl`: one open entry,
+it. Write `paths.design_issues` from `<role_dir>/assets/design_issues.yaml.tmpl`: one open entry,
 `task_id` your task, and a `summary` of what is unbuildable and why — when the defect is in
 already-merged code, name which merged behaviour violates which acceptance criterion.
 
@@ -164,12 +172,12 @@ you cannot fix without restructuring beyond the contract is a design issue (Step
    git add -A && git commit -m "<task-id> <title>"
    ```
    Do not push.
-3. Write `paths.review_ready` from `assets/review_ready.yaml.tmpl` — a presence marker. Its
+3. Write `paths.review_ready` from `<role_dir>/assets/review_ready.yaml.tmpl` — a presence marker. Its
    presence is the ready-for-review signal; the reviewer judges the committed diff
    against the contract, never a build self-report, so the file carries nothing but the
    task id.
 
-## Fix mode (`paths.feedback` present)
+## Fix mode (`mode: fix`)
 
 1. Read `FEEDBACK` — address only its listed failures, each with the minimal change. Do
    not rewrite, and do not touch anything it does not name.

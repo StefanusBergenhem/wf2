@@ -526,6 +526,64 @@ class PhaseTest(support.TempProject):
         self.assertIn("Users can patch a zone", launch["params"]["Statement"])
         self.assertIn(["pipeline", "drain-capability", "CAP-001"], cli.calls)
 
+    def test_a_learning_whose_scenarios_shipped_is_not_sent_to_the_capability_gate(self):
+        """A learning may carry a scenario set, and that set never gates its drain — its
+        proof is its tasks' criteria plus the merge record. Routed here it burns an
+        adequacy dispatch and then `drain-capability` dies twice over: the digest heading
+        matches CAP-\\d+ only, and the drop targets the capabilities file, where no L- id
+        lives. Every stage close, and each failure reads as one more inadequate verdict."""
+        self.cfg.path("capabilities").write_text(CAPS)
+        cli = fakes.FakeCli({
+            ("pipeline", "capability-complete"): {
+                "shipped": ["SYS-TC-1", "SYS-TC-9"],
+                "complete": [{"id": "CAP-001", "kind": "capability",
+                              "system_tests": ["SYS-TC-1"], "missing": []},
+                             {"id": "L-042", "kind": "learning",
+                              "system_tests": ["SYS-TC-9"], "missing": []}],
+                "pending": []},
+            ("pipeline", "drain-capability"): {"drained": True, "verdict": "adequate"},
+        })
+        agents = fakes.FakeAgents(self.cfg)
+        rt = self.rt(cli=cli, agents=agents)
+        self.assertEqual(phases.capability_gate(rt), ["CAP-001"])
+        self.assertEqual([l["params"]["Capability"] for l in agents.launches], ["CAP-001"])
+        self.assertNotIn(["pipeline", "drain-capability", "L-042"], cli.calls)
+
+    def test_a_pause_partway_down_the_candidates_does_not_re_review_the_earlier_ones(self):
+        """`capability_gate` banks once, for the whole list, but each capability inside
+        it has already had its verdict applied — residuals appended, park count moved.
+        A refused launch on the second candidate pauses the close with the first's
+        verdict on disk and nothing banked, so the resume reviews it again: a second
+        inadequate digest, its residuals appended twice, and the park count one closer
+        to parking a capability on no new evidence."""
+        self.cfg.path("capabilities").write_text(CAPS)
+        complete = [{"id": "CAP-001", "kind": "capability", "missing": []},
+                    {"id": "CAP-002", "kind": "capability", "missing": []}]
+        cli = fakes.FakeCli({
+            ("pipeline", "capability-complete"): {"complete": complete, "pending": []},
+            ("pipeline", "drain-capability"): (1, {"drained": False,
+                                                   "verdict": "inadequate"}),
+        })
+        agents = fakes.FakeAgents(self.cfg)
+        # CAP-001's review lands and its inadequate verdict is applied; the harness then
+        # refuses CAP-002's, which pauses the close.
+        agents.on("wf-adequacy",
+                  lambda a, *_: a.exit_codes.__setitem__("wf-adequacy", 1)
+                  if len(a.launches) >= 2 else None)
+        rt = self.rt(cli=cli, agents=agents)
+
+        with self.assertRaises(driver_runtime.Pause):
+            phases.capability_gate(rt)
+        reviewed_first = [l["params"]["Capability"] for l in agents.launches]
+        self.assertEqual(reviewed_first, ["CAP-001", "CAP-002"])
+
+        # The resume re-enters the gate; CAP-001's verdict is already applied.
+        with self.assertRaises(driver_runtime.Pause):
+            phases.capability_gate(rt)
+        reviewed = [l["params"]["Capability"] for l in agents.launches]
+        self.assertEqual(reviewed.count("CAP-001"), 1,
+                         "CAP-001 was reviewed twice on one stage's evidence")
+
     def test_nothing_complete_dispatches_no_review(self):
         cli = fakes.FakeCli({("pipeline", "capability-complete"): {"complete": []}})
         agents = fakes.FakeAgents(self.cfg)

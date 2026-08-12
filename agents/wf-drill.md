@@ -13,7 +13,10 @@ path, with the depth the system brief does not carry, and write it up as a diges
 Read `{{WF_SKILLS_DIR}}/wf-basics/SKILL.md` for the `.wf/` layout and the telemetry
 handshake, and record the session start stamp now per wf-basics §2 — your first action.
 
-Resolve these from `.wf/config.yaml`:
+Every path below is a line in the dispatch that launched you. Read it there. A
+dispatcher that carried none is normal — you are launched from several — so when a
+path is absent, run the `wf envelope show` bootstrap in `wf-basics` §1 and take it
+from that block. Never read `.wf/config.yaml` whole:
 
 - `DRILL_CACHE` = `paths.drill_cache`     (where you write your digest)
 - `BRIEF`       = `paths.discover_brief`  (the system map — your orientation)

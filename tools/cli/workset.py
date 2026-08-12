@@ -67,15 +67,26 @@ _GWT_WORDS = {"given", "when", "then"}
 
 
 def counter(config, key):
-    """Read ``id_counters.<key>`` — a high-water mark with no in-code default, so a check
-    and the role that mints ids can never disagree about where the lane stands."""
-    counters = common.config_doc(config).get("id_counters")
+    """Read ``id_counters.<key>`` from ``paths.repo_state`` — a high-water mark with no
+    in-code default, so a check and the role that mints ids can never disagree about
+    where the lane stands.
+
+    It lives in its own file rather than in the config because the minting roles WRITE
+    it: config.yaml is read-only intent, and a role that has to open it to bump a
+    counter pays the whole commented file to change one integer — and commits it.
+    """
+    state = common.resolve_path(config, "repo_state")
+    if not state.is_file():
+        common.die(f"paths.repo_state does not exist: {state} — the id high-water marks "
+                   f"live there; run wf-init against this repo")
+    counters = common.load_yaml(state).get("id_counters")
     if not isinstance(counters, dict) or key not in counters:
-        common.die(f"id_counters.{key} not set in {config} — add it (see the config template)")
+        common.die(f"id_counters.{key} not set in {state} — add it "
+                   f"(see the repo-state template)")
     try:
         return int(counters[key])
     except (TypeError, ValueError):
-        common.die(f"id_counters.{key} in {config} is not a number: {counters[key]!r}")
+        common.die(f"id_counters.{key} in {state} is not a number: {counters[key]!r}")
 
 
 def _blank(value):

@@ -95,7 +95,15 @@ def record(rt, summary: str, *, task_id=None, severity: str = "high",
 
 def promote(rt, worktree, di_id: str, task_id: str) -> str:
     """Copy the entry a build/review agent raised in its worktree into the host file
-    — the repair role reads only the host file — and mirror it into the run state."""
+    — the repair role reads only the host file — and mirror it into the run state.
+
+    The id an agent minted is worktree-local and collides by construction:
+    ``paths.design_issues`` lives under the gitignored transient tree, so every worktree
+    starts without one and each agent mints ``DI-1`` off an empty file. A colliding entry
+    is therefore RENUMBERED into the host file's id space, never dropped — both tasks
+    raised a real issue, the repair role has to see both, and the mirror below must name
+    the id this entry was actually filed under or the run state parks the wrong task.
+    """
     rel = rt.cfg.rel("design_issues")
     with _LOCK:
         source = _read(worktree / rel) if rel else {}
@@ -104,8 +112,20 @@ def promote(rt, worktree, di_id: str, task_id: str) -> str:
             item = {"id": di_id, "task_id": task_id, "severity": "high",
                     "status": "open",
                     "summary": f"raised in {worktree} with no readable entry"}
+        item = dict(item)
         doc = _read(rt.cfg.path_opt("design_issues")) or {}
-        if not any(str(e.get("id")) == str(di_id) for e in _entries(doc)):
+        already = next((e for e in _entries(doc)
+                        if str(e.get("task_id") or "") == str(item.get("task_id") or "")
+                        and str(e.get("summary") or "") == str(item.get("summary") or "")),
+                       None)
+        if already is not None:
+            # The same task re-promoting the same issue — file it once.
+            item = already
+        else:
+            taken = {str(e.get("id")) for e in _entries(doc)}
+            if str(item.get("id")) in taken:
+                item["id"] = _next_id(doc)
+                item["raised_as"] = str(di_id)
             doc.setdefault("issues", []).append(item)
             _write(rt, doc)
     mirror(rt, item)

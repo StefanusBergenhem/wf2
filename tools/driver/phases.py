@@ -355,8 +355,16 @@ def capability_gate(rt) -> list:
     review whatever came out whole. Pure mechanism — the driver decides nothing here,
     it only asks the question when the evidence says it is answerable."""
     res = rt.cli.read("pipeline", "capability-complete")
+    # Capabilities only. A learning MAY carry a scenario set, and the verb reports its
+    # shipped-ness the same way — but that set never gates a learning's drain: its proof
+    # is its tasks' own criteria plus the merge record, and it drains at sprint close off
+    # that. Sent down this path it spends an adequacy dispatch and then `drain-capability`
+    # fails twice over — the digest heading matches `CAP-\d+`, and the drop targets the
+    # capabilities file, where no L- id lives — with each failure reading as one more
+    # inadequate verdict against an entry nothing is wrong with.
     complete = [str(e.get("id")) if isinstance(e, dict) else str(e)
-                for e in (res.data.get("complete") or [])]
+                for e in (res.data.get("complete") or [])
+                if not isinstance(e, dict) or e.get("kind", "capability") == "capability"]
     if complete:
         adequacy_pass(rt, complete)
     return complete
@@ -368,6 +376,16 @@ def adequacy_pass(rt, candidates) -> None:
     on what it said."""
     rt.report.line(f"adequacy · {', '.join(candidates)}", indent=1)
     for cap in candidates:
+        # Banked per capability, not per gate. Each pass through this loop APPLIES its
+        # verdict — drains the entry, or appends residuals and moves the park count — so
+        # a refused launch partway down the list would otherwise pause the close with
+        # earlier verdicts already on disk and nothing recorded, and the resume would
+        # review them again: a second inadequate digest and its residuals appended twice,
+        # against a capability with no new evidence either way. The banked list is reset
+        # per stage, so the next close does re-review what is still open.
+        step = f"adequacy:{cap}"
+        if step in rt.state.stage_close_done:
+            continue
         entry = _workset_entry(rt, cap)
         # a refused launch leaves no digest, which reads as "inadequate" and pushes the
         # capability one step closer to being parked — on no evidence at all
@@ -391,6 +409,7 @@ def adequacy_pass(rt, candidates) -> None:
             f"{'drained' if drained else 'stays open'}",
             symbol=progress.OK if drained else progress.BAD, indent=2)
         if drained:
+            rt.state.close_step_done(step)
             continue
         # inadequate: the residuals are the next cut's input, so they go back onto the
         # capability before the park count decides whether it is designable at all.
@@ -403,6 +422,7 @@ def adequacy_pass(rt, candidates) -> None:
                               consecutive=adequacy.consecutive_inadequate(rt.cfg, cap))
                 rt.log(f"{cap} parked after {adequacy.PARK_THRESHOLD} inadequate "
                        f"verdicts — it needs a PO session")
+        rt.state.close_step_done(step)
 
 
 def _workset_entry(rt, ident) -> dict:

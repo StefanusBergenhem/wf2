@@ -44,6 +44,7 @@ paths:
   discover_brief: ".wf/transient/discover/brief.md"
   pi_sessions: ".wf/transient/pi-sessions"
   telemetry: ".wf/telemetry/sessions.jsonl"
+  repo_state: ".wf/wf-repo-state.yaml"
   capabilities: ".wf/CAPABILITIES.yaml"
   charter: ".wf/charter.md"
   plan: ".wf/plan.md"
@@ -104,12 +105,6 @@ closeout: [wf-retrospective, ship]
 
 orchestrate:
   history_cap: 50
-
-id_counters:
-  cap: 0
-  learning: 0
-  sys_tc: 0
-  stage: 0
 """
 
 
@@ -132,6 +127,11 @@ def write_config(root: Path, *, tools=None, agent_cmd='echo "{prompt}"',
         provision=provision,
         max_stages_per_sprint=max_stages_per_sprint,
     ))
+    # The id high-water marks live beside the config, not in it — wf-init scaffolds this
+    # file, so a project the driver runs against always has one.
+    (root / ".wf" / "wf-repo-state.yaml").write_text(
+        "version: 1\nid_counters:\n  cap: 0\n  learning: 0\n  wf_learning: 0\n"
+        "  sys_tc: 0\n  stage: 0\n")
     return cfg
 
 
@@ -186,7 +186,9 @@ def commit_wf(root: Path) -> None:
     has. Only the transient tree is ignored: `wf-init`'s scaffold creates the telemetry
     sink as a TRACKED, committed file, so rows appended to it dirty the working tree."""
     (root / ".gitignore").write_text(".wf/transient/\n")
-    git(root, "add", ".gitignore", ".wf/config.yaml")
+    # paths.repo_state is committed too — it is durable state (the id high-water marks),
+    # and an untracked one would read as a dirty tree at every clean-tree gate.
+    git(root, "add", ".gitignore", ".wf/config.yaml", ".wf/wf-repo-state.yaml")
     git(root, "commit", "-q", "-m", "wf: config")
 
 

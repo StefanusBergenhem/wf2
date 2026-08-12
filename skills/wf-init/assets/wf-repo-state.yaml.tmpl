@@ -1,0 +1,25 @@
+# wf repo state — the id high-water marks, and nothing else.
+#
+# This is the one file a wf role WRITES that is not an artifact of its own work.
+# It is separate from .wf/config.yaml because that file is read-only intent: bumping
+# one integer there meant opening ~20 KB of commented configuration to change a digit,
+# and committing it on every mint.
+#
+# Each counter only ever INCREASES. A number here is "the highest id this lane ever
+# minted", which is not derivable from the files the ids live in — those drain, and a
+# drained id must never be handed out again. That is the whole reason it is stored.
+#
+# Committed. A role bumps its own lane to the highest id it minted, and commits this
+# file alongside the artifact that carries those ids.
+version: 1
+
+id_counters:
+  cap: 0          # CAP-NNN in paths.capabilities (wf-po bumps)
+  learning: 0     # L-NNN in paths.learnings (wf-retrospective bumps)
+  wf_learning: 0  # L-NNN in paths.wf_learnings (wf-retrospective bumps)
+  sys_tc: 0       # SYS-TC-<n> — system test cases (the design role bumps; ids persist
+                  # as [SYS-TC:] tags in the test tree long after the capability drains)
+  stage: 0        # stage number — monotonic over the repo's LIFETIME, never restarting
+                  # per sprint. It keys the task ids (S7-T1), the archive filename and
+                  # the stage-timing state. A key that restarts silently inherits the
+                  # previous run's timings, which reads as a stage lasting days.

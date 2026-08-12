@@ -13,7 +13,7 @@ You derive a transient subsystem read-view of a repo.
 Read `{{WF_SKILLS_DIR}}/wf-basics/SKILL.md` for the `.wf/` layout and the telemetry
 handshake, and record the session start stamp now per wf-basics §2 — your first action.
 
-Resolve every path below from `.wf/config.yaml`:
+Every path below is a line in your dispatch envelope. Read it there — do not open `.wf/config.yaml`:
 
 - `DIR`         = `paths.discover`        (working dir, cleared each run)
 - `MODEL`       = `paths.discover_model`
