@@ -12,8 +12,8 @@ description: The basics every wf skill assumes — where config and workspace li
   **given**, never one you go and read:
   - **Dispatched into a worktree** — your prompt carries the resolved block already
     (`paths.current_task: …`, `commands.preflight: …`, one per line), plus `role_dir`,
-    the directory your own role file and its `assets/` live in. Read the value off the
-    prompt.
+    the directory your own `assets/` templates live in — which is not always the
+    directory the file you were told to read sits in. Read the value off the prompt.
   - **Running in a live session with a human** — you have no envelope, so bootstrap one.
     `.wf/config.yaml` is the only path anything may hard-code; pull the single key that
     locates the CLI out of it, then let the CLI print the rest:

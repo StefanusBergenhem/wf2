@@ -67,6 +67,19 @@ class Config:
         skill = (self.root / self.path_str("skills") / role / "SKILL.md").resolve()
         return skill if skill.is_file() else None
 
+    def role_dir(self, role: str, role_file: Path) -> Path:
+        """Where a role's own `assets/` templates live — its skill dir when it has one,
+        otherwise the file's own parent.
+
+        Not simply `role_file.parent`: `paths.agents` is flat, one .md per agent, while
+        an installed skill is a directory carrying its `assets/`. An agent-shaped role
+        that writes from a template (wf-build, wf-review, wf-retrospective) is wrapped
+        — the agent file redirects to the same-named skill — so its templates are in
+        the skill dir, and pointing at the shared agents dir sends it hunting, which is
+        the whole thing this resolves away."""
+        skill = (self.root / self.path_str("skills") / role).resolve()
+        return skill if skill.is_dir() else role_file.parent
+
     # ── knobs ────────────────────────────────────────────────────────────────
 
     def block(self, name: str) -> dict:

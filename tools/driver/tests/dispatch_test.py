@@ -54,6 +54,30 @@ class PromptTest(support.TempProject):
         prompt = driver_dispatch.build_prompt(cfg, "wf-designer", {})
         self.assertIn(f"role_dir: {self.root / '.claude/skills/wf-designer'}", prompt)
 
+    def test_an_agent_wrapped_role_gets_the_skill_dir_that_holds_its_assets(self):
+        """`paths.agents` is FLAT — every agent is one .md file, and the `assets/` a
+        role writes from only ever live in its skill dir. So an agent-shaped role's
+        role_file.parent is the shared agents dir, where `<role_dir>/assets/` resolves
+        to nothing. That hits exactly the three roles that write from a template
+        (wf-build, wf-review, wf-retrospective), which is to say the hunting this
+        param exists to stop."""
+        (self.root / ".claude/agents").mkdir(parents=True, exist_ok=True)
+        (self.root / ".claude/agents/wf-build.md").write_text("agent\n")
+        (self.root / ".claude/skills/wf-build/assets").mkdir(parents=True)
+        (self.root / ".claude/skills/wf-build/SKILL.md").write_text("skill\n")
+        prompt = driver_dispatch.build_prompt(self.cfg(), "wf-build", {})
+        # The file it reads is still the agent; only where its templates live differs.
+        self.assertIn(str(self.root / ".claude/agents/wf-build.md"), prompt)
+        self.assertIn(f"role_dir: {self.root / '.claude/skills/wf-build'}", prompt)
+
+    def test_an_agent_with_no_skill_of_its_own_falls_back_to_its_file(self):
+        """wf-drill and wf-discover are agent-only — no skill dir, no assets. The
+        param still has to name a real directory."""
+        (self.root / ".claude/agents").mkdir(parents=True, exist_ok=True)
+        (self.root / ".claude/agents/wf-drill.md").write_text("agent\n")
+        prompt = driver_dispatch.build_prompt(self.cfg(), "wf-drill", {})
+        self.assertIn(f"role_dir: {self.root / '.claude/agents'}", prompt)
+
     def test_call_site_parameters_win_over_the_config_block(self):
         """A param names this dispatch's own state (which worktree, which task). The
         block is repo-wide defaults, so it must never overwrite one."""

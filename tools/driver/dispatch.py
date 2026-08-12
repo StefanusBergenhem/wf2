@@ -93,7 +93,8 @@ def build_prompt(cfg, role: str, params: dict) -> str:
             f"{role} is not installed under paths.agents or paths.skills — "
             f"run the wf installer against this repo")
     given = {k: v for k, v in params.items() if v is not None}
-    lines = [f"Read {role_file} and follow it.", f"role_dir: {role_file.parent}"]
+    lines = [f"Read {role_file} and follow it.",
+             f"role_dir: {cfg.role_dir(role, role_file)}"]
     lines += [line for line in envelope.render(cfg.config_path).splitlines()
               if line.split(":", 1)[0] not in given]
     lines += [f"{k}: {v}" for k, v in given.items()]
