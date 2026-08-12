@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import threading
 import unittest
+from pathlib import Path
 
 import support  # noqa: F401
 
@@ -215,6 +216,50 @@ class StageTest(support.TempProject):
         modes = [launch["params"].get("mode") for launch in agents.launches
                  if launch["role"] == "wf-build"]
         self.assertEqual(modes, ["build", "fix"])
+
+    # ── the drill digests a contract points at ───────────────────────────────
+
+    def contract_writing_cli(self, body: str, extra=None):
+        """A cli whose `stage task` actually writes the contract the driver asked for,
+        so what the build would find in its worktree is what the test inspects."""
+        def write(cli, args):
+            dest = Path(args[args.index("--write") + 1])
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_text(body)
+            return {}
+        return self.happy_cli({("stage", "task"): write, **(extra or {})})
+
+    def test_a_drill_digest_the_contract_points_at_is_carried_into_the_worktree(self):
+        """The cache is host-level — the designer's drills wrote it in the main checkout
+        and the host prunes it at stage close — but it sits under `paths.transient`,
+        which is gitignored, so a fresh worktree has none of it and the contract's own
+        pointer resolves nowhere. One dems build had to fall back to the main repo's
+        absolute path to read its own grounding."""
+        digest = self.cfg.path("drill_cache") / "sys-tc-120-doors-20260812T101500Z.md"
+        digest.parent.mkdir(parents=True, exist_ok=True)
+        digest.write_text("# Drill: how doors persist\n")
+        rel = self.cfg.rel("drill_cache") + "/sys-tc-120-doors-20260812T101500Z.md"
+        cli = self.contract_writing_cli(f"id: S7-T1\ngrounding:\n  - \"{rel}\"\n")
+        stages.run_stage(self.rt(cli, agents=fakes.FakeAgents(self.cfg)))
+        carried = self.worktree() / rel
+        self.assertTrue(carried.is_file(),
+                        f"the contract's own grounding pointer resolves nowhere: {rel}")
+        self.assertEqual(carried.read_text(), "# Drill: how doors persist\n")
+
+    def test_digests_the_contract_never_names_stay_out_of_the_worktree(self):
+        """The cache holds every drill of the sprint — 19 digests, 340 KB, ~85 k tokens
+        in dems. Carrying the lot would hand a build nine other tasks' reading, against
+        a contract that tells it to read only what its grounding names."""
+        cache = self.cfg.path("drill_cache")
+        cache.mkdir(parents=True, exist_ok=True)
+        (cache / "mine.md").write_text("mine\n")
+        (cache / "someone-elses.md").write_text("theirs\n")
+        rel = self.cfg.rel("drill_cache")
+        cli = self.contract_writing_cli(f"id: S7-T1\ngrounding:\n  - \"{rel}/mine.md\"\n")
+        stages.run_stage(self.rt(cli, agents=fakes.FakeAgents(self.cfg)))
+        self.assertTrue((self.worktree() / rel / "mine.md").is_file())
+        self.assertFalse((self.worktree() / rel / "someone-elses.md").exists(),
+                         "a digest no pointer names was carried in")
 
     # ── return markers ───────────────────────────────────────────────────────
     # `feedback` and `review_ready` are presence markers: the inspectors route on the

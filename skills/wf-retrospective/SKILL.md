@@ -172,12 +172,16 @@ the whole deliverable, and the human applies or rejects it.
    ```sh
    python3 <paths.tools>/cli/wf archive add $TELEMETRY --label <sprint-id> --move
    ```
-4. Commit the durable outputs — the learnings, the archived telemetry snapshot, and the
-   drained live log — leaving them uncommitted is one `git clean` from gone. Stage explicit
-   paths, never `git add .` (include `$REPO_STATE` only when you bumped a counter):
+4. Commit the durable outputs — the learnings and the archived telemetry snapshot —
+   leaving them uncommitted is one `git clean` from gone. Stage explicit paths, never
+   `git add .` (include `$REPO_STATE` only when you bumped a counter). **Do not stage
+   `$TELEMETRY` or its directory**: the live log is gitignored, and `git add` refuses an
+   explicitly-named ignored pathspec instead of skipping it — it exits non-zero having
+   staged *nothing*, so the archive snapshot in the same command is lost too. The drain
+   needs no staging; the snapshot is the record:
    ```sh
    git add $LEARNINGS $WF_LEARNINGS $REPO_STATE
-   git add -A -- "$(dirname "$TELEMETRY")" <paths.archive>   # the drain + its archive snapshot
+   git add -A -- <paths.archive>          # the snapshot step 3 just wrote
    git commit -m "learnings + telemetry drain: <sprint-id or session range>"
    ```
    If the commit fails (hook, identity), report the exact error and halt — never `--no-verify`.

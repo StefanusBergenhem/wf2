@@ -15,6 +15,8 @@ Nothing routes on what an agent said.
 """
 from __future__ import annotations
 
+import re
+import shutil
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from pathlib import Path
 
@@ -153,6 +155,43 @@ def _reap(running) -> None:
             future.result()
 
 
+def _carry_drill_digests(rt, worktree, contract) -> list:
+    """Copy every drill digest the contract points at into the worktree, at the same
+    relative path the contract names. Returns the digests carried.
+
+    The cache is host-level in every way that matters — the design role's drills wrote
+    it in the main checkout, and the host prunes it at stage close — but it lives under
+    ``paths.transient``, which is gitignored, so a fresh worktree holds none of it and a
+    pointer written before the worktree existed resolves nowhere inside it. Carrying the
+    file is what makes the contract's own relative pointer true, rather than teaching
+    every role a second rooting rule for one directory.
+
+    Only what the contract names: the cache holds every drill of the sprint, and handing
+    a build the lot is nine other tasks' reading against a contract that tells it to read
+    only its own grounding.
+    """
+    rel = rt.cfg.rel("drill_cache")
+    cache = rt.cfg.path_opt("drill_cache")
+    if not rel or not cache or not cache.is_dir() or not contract.is_file():
+        return []
+    # Any pointer at the cache, wherever the contract carries it — grounding is where the
+    # designer writes one, but a flow or a boundaries note names the same digest the same way.
+    pattern = re.escape(str(rel)) + r"/([^\s\"'\]},]+)"
+    named = set(re.findall(pattern, contract.read_text()))
+    carried = []
+    for name in sorted(named):
+        source = (cache / name).resolve()
+        # A pointer is text a design role wrote: it may name a digest that was pruned, or
+        # try to climb out of the cache. Carry only a real file that is genuinely under it.
+        if not source.is_file() or cache.resolve() not in source.parents:
+            continue
+        dest = worktree / rel / name
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, dest)
+        carried.append(name)
+    return carried
+
+
 def _run_task(rt, entry) -> None:
     task_id = entry["task_id"]
     worktree = (rt.cfg.root / entry["worktree"]).resolve()
@@ -168,6 +207,7 @@ def _run_task(rt, entry) -> None:
                        symbol=progress.BAD, indent=2)
         _block(rt, task_id, "the build envelope could not be written")
         return
+    _carry_drill_digests(rt, worktree, contract)
 
     rejections = redispatches = 0
     while True:
