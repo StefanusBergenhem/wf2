@@ -43,9 +43,9 @@ class StageTest(support.TempProject):
         self.cfg = driver_config.load(str(support.write_config(self.root)))
         (self.root / ".claude/agents").mkdir(parents=True)
         for role in ("wf-build", "wf-review", "wf-stage-repair", "wf-adequacy"):
-            (self.root / f".claude/agents/{role}.md").write_text("x\n")
+            (self.root / f".claude/agents/{role}.md").write_text(support.ROLE_STUB)
         (self.root / ".claude/skills/wf-designer").mkdir(parents=True)
-        (self.root / ".claude/skills/wf-designer/SKILL.md").write_text("x\n")
+        (self.root / ".claude/skills/wf-designer/SKILL.md").write_text(support.ROLE_STUB)
         self.cfg.path("transient").mkdir(parents=True, exist_ok=True)
         self.write_stage()
 
@@ -100,6 +100,18 @@ class StageTest(support.TempProject):
         self.assertEqual(git.merges, ["task/s1-S7-T1"])
         self.assertEqual(git.removed,
                          [str(self.root / ".wf/transient/worktrees/s1-S7-T1")])
+
+    def test_a_build_is_handed_only_the_parameters_its_role_file_reads(self):
+        """A parameter no role reads is context the dispatch pays for and the role has
+        to decide to ignore. `contract` restated `paths.current_task`, which the envelope
+        block already carries under that name, and `attempt` was named nowhere in the
+        role at all."""
+        agents = fakes.FakeAgents(self.cfg)
+        stages.run_stage(self.rt(self.happy_cli(), agents=agents))
+        self.assertEqual(set(agents.launches[0]["params"]),
+                         {"task_id", "worktree", "mode"})
+        self.assertEqual(set(agents.launches[1]["params"]),
+                         {"task_id", "worktree", "sprint_branch"})
 
     def test_there_is_no_layering_step(self):
         """A stage IS the tasks with no dependency between them, so there is nothing to

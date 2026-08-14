@@ -175,6 +175,34 @@ rm -rf "$PROJ/.wf/tools"
 [ "$(has "$OUT" comment-ratio chatty.go)" = "True" ] && ok "H3c: comment-heavy file flagged" || bad "H3c" "$OUT"
 
 # ---------------------------------------------------------------------------
+# test-harness: a directory holding tests whose AGENTS.md names no harness. The
+# locations are what a task's grounding never carries, so every build rediscovers
+# them — a repo-stable fact paid for once per task, in parallel, every stage.
+# ---------------------------------------------------------------------------
+mkdir -p "$PROJ/svc"
+printf 'package svc\n\nfunc TestThing(t *T) {}\n' > "$PROJ/svc/thing_test.go"
+printf '# svc\n\n- run it with go test\n' > "$PROJ/svc/AGENTS.md"
+OUT="$(wf hygiene check --format json)"
+[ "$(has "$OUT" test-harness svc/AGENTS.md)" = "True" ] \
+  && ok "a test directory with no Test harness section is reported" || bad "harness missing" "$OUT"
+[ "$(jget "$OUT" "next(f['severity'] for f in d['findings'] if f['rule']=='test-harness')")" = "warn" ] \
+  && ok "the harness finding is a warning, not a build-blocking error" || bad "harness sev" "$OUT"
+
+printf '# svc\n\n- run it with go test\n\n## Test harness\n\n- the stub DB is mockDB in testdb.go\n' > "$PROJ/svc/AGENTS.md"
+OUT="$(wf hygiene check --format json)"
+[ "$(has "$OUT" test-harness svc/AGENTS.md)" = "False" ] \
+  && ok "an AGENTS.md carrying the section is clean" || bad "harness present" "$OUT"
+
+# a directory with no tests needs no harness section
+mkdir -p "$PROJ/plain"
+printf 'package plain\n' > "$PROJ/plain/a.go"
+printf '# plain\n\n- nothing to run\n' > "$PROJ/plain/AGENTS.md"
+OUT="$(wf hygiene check --format json)"
+[ "$(has "$OUT" test-harness plain/AGENTS.md)" = "False" ] \
+  && ok "a directory holding no tests is not asked for one" || bad "harness plain" "$OUT"
+rm -rf "$PROJ/svc" "$PROJ/plain"
+
+# ---------------------------------------------------------------------------
 # full-sweep filters + summary (L-060): an agent must be able to read its own output
 # ---------------------------------------------------------------------------
 RULEOUT="$(wf hygiene check --format json --rule spec-narrative)"

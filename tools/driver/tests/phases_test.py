@@ -33,10 +33,10 @@ class PhaseTest(support.TempProject):
         super().setUp()
         self.cfg = driver_config.load(str(support.write_config(self.root)))
         (self.root / ".claude/skills/wf-designer").mkdir(parents=True)
-        (self.root / ".claude/skills/wf-designer/SKILL.md").write_text("x\n")
+        (self.root / ".claude/skills/wf-designer/SKILL.md").write_text(support.ROLE_STUB)
         (self.root / ".claude/agents").mkdir(parents=True)
         for role in ("wf-discover", "wf-adequacy", "wf-retrospective"):
-            (self.root / f".claude/agents/{role}.md").write_text("x\n")
+            (self.root / f".claude/agents/{role}.md").write_text(support.ROLE_STUB)
         self.cfg.path("transient").mkdir(parents=True, exist_ok=True)
 
     def rt(self, **kw):

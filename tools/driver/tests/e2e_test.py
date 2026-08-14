@@ -60,10 +60,20 @@ grounded_in: [".wf/transient/discover/brief.md"]
 allocation:
   - component: greeting
     does: "hold the greeting behind one seam"
-flow: |
-  The entry point calls the greeting module, which returns the line, and the caller
-  reads it back out — one path, wired in the composition root.
-checkpoint: "after this stage, greeting a caller demonstrably works"
+    tasks: [S$stage-T1, S$stage-T2]
+flow:
+  - task: S$stage-T1
+    does: |
+      The entry point calls the greeting module, which returns the line, and the caller
+      reads it back out — one path, wired in the composition root.
+  - task: S$stage-T2
+    does: |
+      The system test drives the assembled path end to end.
+checkpoint:
+  - task: S$stage-T1
+    observable: "the greeting module answers behind its seam"
+  - task: S$stage-T2
+    observable: "after this stage, greeting a caller demonstrably works"
 supersessions: []
 nfr: []
 authz: []
@@ -198,12 +208,8 @@ class EndToEndTest(support.TempProject):
         self.cfg = driver_config.load(str(cfg_path))
         for role in ("wf-discover", "wf-build", "wf-review", "wf-adequacy",
                      "wf-retrospective", "wf-stage-repair"):
-            path = self.root / ".claude/agents" / f"{role}.md"
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(f"# {role}\n")
-        path = self.root / ".claude/skills/wf-designer/SKILL.md"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("# wf-designer\n")
+            support.write_role(self.root, role)
+        support.write_role(self.root, "wf-designer", shape="skill")
         self.cfg.path("capabilities").write_text(CAPS)
         self.cfg.path("learnings").write_text("version: 1\nlearnings: []\n")
         self.cfg.path("architecture").write_text(ARCHITECTURE)

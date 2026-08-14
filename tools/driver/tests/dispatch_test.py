@@ -24,7 +24,7 @@ class PromptTest(support.TempProject):
     def setUp(self):
         super().setUp()
         (self.root / ".claude/skills/wf-designer").mkdir(parents=True)
-        (self.root / ".claude/skills/wf-designer/SKILL.md").write_text("skill\n")
+        (self.root / ".claude/skills/wf-designer/SKILL.md").write_text(support.ROLE_STUB)
 
     def cfg(self, **kw):
         return driver_config.load(str(support.write_config(self.root, **kw)))
@@ -40,11 +40,36 @@ class PromptTest(support.TempProject):
         """The role reads its paths and commands here instead of opening config.yaml —
         which costs the whole commented file (~5 k tokens) for ~400 tokens of values."""
         cfg = self.cfg()
+        (self.root / ".claude/skills/wf-designer/SKILL.md").write_text(
+            "---\nname: wf-designer\nenvelope:\n  - paths.current_task\n"
+            "  - commands.preflight\n---\nskill\n")
         prompt = driver_dispatch.build_prompt(cfg, "wf-designer", {})
         self.assertIn("paths.current_task:", prompt)
         self.assertIn("commands.preflight:", prompt)
         # Loop knobs are not the role's business, and agent_cmd carries harness flags.
         self.assertNotIn("agent_cmd", prompt)
+
+    def test_prompt_carries_only_the_keys_the_role_declares(self):
+        """A key the role never names is a line every one of its dispatches pays for and
+        the role has to decide to ignore — and half of them point at the spec layer its
+        own skill forbids it to open."""
+        cfg = self.cfg()
+        (self.root / ".claude/skills/wf-designer/SKILL.md").write_text(
+            "---\nname: wf-designer\nenvelope:\n  - paths.current_task\n---\nskill\n")
+        prompt = driver_dispatch.build_prompt(cfg, "wf-designer", {})
+        self.assertIn("paths.current_task:", prompt)
+        self.assertNotIn("paths.capabilities:", prompt)
+        self.assertNotIn("commands.preflight:", prompt)
+
+    def test_a_role_declaring_no_envelope_is_a_named_failure(self):
+        """Rendering the whole config instead would hand the role every key there is —
+        the state this replaced. Failing names the role that has to declare."""
+        cfg = self.cfg()
+        (self.root / ".claude/skills/wf-designer/SKILL.md").write_text("skill\n")
+        with self.assertRaises(driver_dispatch.DispatchError) as caught:
+            driver_dispatch.build_prompt(cfg, "wf-designer", {})
+        self.assertIn("wf-designer", str(caught.exception))
+        self.assertIn("envelope", str(caught.exception))
 
     def test_prompt_carries_the_roles_own_directory(self):
         """A role writes artifacts from templates beside its installed file. Without
@@ -62,7 +87,7 @@ class PromptTest(support.TempProject):
         (wf-build, wf-review, wf-retrospective), which is to say the hunting this
         param exists to stop."""
         (self.root / ".claude/agents").mkdir(parents=True, exist_ok=True)
-        (self.root / ".claude/agents/wf-build.md").write_text("agent\n")
+        (self.root / ".claude/agents/wf-build.md").write_text(support.ROLE_STUB)
         (self.root / ".claude/skills/wf-build/assets").mkdir(parents=True)
         (self.root / ".claude/skills/wf-build/SKILL.md").write_text("skill\n")
         prompt = driver_dispatch.build_prompt(self.cfg(), "wf-build", {})
@@ -74,7 +99,7 @@ class PromptTest(support.TempProject):
         """wf-drill and wf-discover are agent-only — no skill dir, no assets. The
         param still has to name a real directory."""
         (self.root / ".claude/agents").mkdir(parents=True, exist_ok=True)
-        (self.root / ".claude/agents/wf-drill.md").write_text("agent\n")
+        (self.root / ".claude/agents/wf-drill.md").write_text(support.ROLE_STUB)
         prompt = driver_dispatch.build_prompt(self.cfg(), "wf-drill", {})
         self.assertIn(f"role_dir: {self.root / '.claude/agents'}", prompt)
 
@@ -125,7 +150,7 @@ class LaunchTest(support.TempProject):
     def setUp(self):
         super().setUp()
         (self.root / ".claude/agents").mkdir(parents=True)
-        (self.root / ".claude/agents/wf-build.md").write_text("agent\n")
+        (self.root / ".claude/agents/wf-build.md").write_text(support.ROLE_STUB)
         self.marker = self.root / "agent-ran.json"
 
     def dispatcher(self, agent_cmd, dry_run=False):
@@ -198,7 +223,7 @@ class LaunchTest(support.TempProject):
         script = self.root / "pinned-agent.sh"
         script.write_text('#!/usr/bin/env bash\nprintf "pinned" > "$2"\n')
         script.chmod(0o755)
-        (self.root / ".claude/agents/wf-designer.md").write_text("agent\n")
+        (self.root / ".claude/agents/wf-designer.md").write_text(support.ROLE_STUB)
         cfg = driver_config.load(str(support.write_config(
             self.root, agent_cmd=f'bash -c "true" "{{prompt}}"',
             agent_cmd_overrides={"wf-designer": f'{script} "{{prompt}}" {self.marker}'})))
@@ -456,7 +481,7 @@ class DispatchRowTest(support.TempProject):
     def setUp(self):
         super().setUp()
         (self.root / ".claude/agents").mkdir(parents=True)
-        (self.root / ".claude/agents/wf-build.md").write_text("agent\n")
+        (self.root / ".claude/agents/wf-build.md").write_text(support.ROLE_STUB)
 
     def rows(self, stream):
         """Run a fake agent whose whole stdout is `stream`, and return the rows it left."""
@@ -491,7 +516,7 @@ class RateLimitWaitTest(support.TempProject):
     def setUp(self):
         super().setUp()
         (self.root / ".claude/agents").mkdir(parents=True)
-        (self.root / ".claude/agents/wf-build.md").write_text("agent\n")
+        (self.root / ".claude/agents/wf-build.md").write_text(support.ROLE_STUB)
         self.slept = []
 
     def dispatcher(self, agent_cmd, *, now=1_786_000_000):
@@ -604,7 +629,7 @@ class PiDispatchUsageTest(support.TempProject):
     def setUp(self):
         super().setUp()
         (self.root / ".claude/agents").mkdir(parents=True)
-        (self.root / ".claude/agents/wf-build.md").write_text("agent\n")
+        (self.root / ".claude/agents/wf-build.md").write_text(support.ROLE_STUB)
 
     def make_pi(self, session_id="pi-sid-001", usage=True):
         """A stub `pi` that prints its session line and writes a real pi session file
@@ -688,7 +713,37 @@ WF_EOF
         self.assertFalse(driver_dispatch._is_pi_cmd('cat log # {prompt}'))
         f = self.root / "log.jsonl"
         f.write_text('{"not":"session"}\n{"type":"session","id":"abc"}\n')
-        self.assertEqual(driver_dispatch._pi_session_id(f), "abc")
+        self.assertEqual(driver_dispatch.session_id(f), "abc")
+
+    def test_session_id_reads_either_harnesss_opening_line(self):
+        """Both harnesses name the session they are about to run in their first stream
+        line, under their own key."""
+        f = self.root / "claude.jsonl"
+        f.write_text('{"type":"system","subtype":"init","session_id":"c-123",'
+                     '"cwd":"/x"}\n{"type":"assistant"}\n')
+        self.assertEqual(driver_dispatch.session_id(f), "c-123")
+        f.write_text('{"type":"assistant"}\n')
+        self.assertIsNone(driver_dispatch.session_id(f))
+
+    def test_the_dispatch_row_names_the_session_it_launched(self):
+        """The usage rows the harness hook writes are keyed by session id, and the
+        dispatch row is the only place the role that ran it is recorded. Without the id
+        on both, the two are matched by comparing time windows — and parallel dispatches
+        nest, so a long build's window contains a faster sibling's whole chain."""
+        stub = self.root / "claude-stub.sh"
+        stub.write_text('#!/usr/bin/env bash\n'
+                        'echo \'{"type":"system","subtype":"init",'
+                        '"session_id":"c-789"}\'\n')
+        stub.chmod(0o755)
+        cfg = driver_config.load(str(support.write_config(
+            self.root, agent_cmd=f'{stub} "{{prompt}}"')))
+        driver_dispatch.Dispatcher(cfg, driver_events.Telemetry(cfg)) \
+                       .launch("wf-build", {}, task_id="T1")
+        rows = [json.loads(x) for x in
+                self.root.joinpath(".wf/telemetry/sessions.jsonl").read_text().splitlines()
+                if x.strip()]
+        dispatch_rows = [r for r in rows if r.get("event") == "dispatch"]
+        self.assertEqual([r.get("session_id") for r in dispatch_rows], ["c-789"])
 
 
 if __name__ == "__main__":

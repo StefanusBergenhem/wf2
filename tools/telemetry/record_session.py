@@ -10,14 +10,15 @@ continuous-improvement questions, see wf-basics) that the retrospective later
 distils into durable lessons. All feedback fields are optional — empty (and
 `friction_kind: none`) is the expected value for a clean session. `friction_kind`
 is a closed enum classifying the `wf_friction` prose so the retrospective can
-cluster mechanically; `gotcha` is a repo setup/env/convention trap destined for
-an AGENTS.md proposal, not the learnings streams.
+cluster mechanically; `gotcha` and `had_to_find` are repo knowledge destined for
+an AGENTS.md file, not the learnings streams.
 
 Usage:
   record_session.py --agent <name> --started-at <iso> --ended-at <iso> \
                     --outcome <completed|halted|escalated> \
                     [--wf-friction <text>] [--friction-kind <enum>] \
                     [--repo-observation <text>] [--gotcha <text>] \
+                    [--had-to-find <text>] \
                     --sink <path>
 """
 import argparse
@@ -75,7 +76,10 @@ def main(argv=None):
     p.add_argument("--repo-observation", dest="repo_observation", default="",
                    help="concrete codebase observation, or empty (-> learnings)")
     p.add_argument("--gotcha", default="",
-                   help="repo env/setup/convention trap, or empty (-> AGENTS.md proposal)")
+                   help="repo env/setup/convention trap, or empty (-> AGENTS.md)")
+    p.add_argument("--had-to-find", dest="had_to_find", default="",
+                   help="what the session had to locate that no pointer named, and where "
+                        "it turned out to be, or empty (-> AGENTS.md)")
     p.add_argument("--sink", required=True)
     args = p.parse_args(argv)
 
@@ -93,6 +97,7 @@ def main(argv=None):
             "friction_kind": args.friction_kind,
             "repo_observation": args.repo_observation,
             "gotcha": args.gotcha,
+            "had_to_find": args.had_to_find,
         },
     }
 

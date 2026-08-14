@@ -3,6 +3,17 @@ name: wf-discover
 description: Derives a transient subsystem read-view of a repo — a mechanical structure spine plus LLM-scout descriptions, rendered to an interactive HTML map and an agent brief. Run when orienting on an unfamiliar repo before planning.
 tools: Read, Grep, Glob, Bash, Write
 model: sonnet
+envelope:
+  - paths.discover
+  - paths.discover_brief
+  - paths.discover_clusters
+  - paths.discover_model
+  - paths.discover_subsystems
+  - paths.discover_view
+  - paths.repo_state
+  - paths.telemetry
+  - paths.tools
+  - paths.transient
 ---
 
 

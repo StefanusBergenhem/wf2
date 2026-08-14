@@ -24,8 +24,8 @@ an absolute path to this task's worktree root.
 4. The same rule applies to file-mutating bash (`mv`, `>`, `tee`, `sed -i`, append
    operators, `git add` of out-of-tree files).
 5. **`paths.<x>` from your dispatch envelope resolve to worktree-rooted paths.** "Write
-   `paths.review_ready`" means `<worktree>/<the envelope's paths.review_ready>`, never the
-   parent repo's copy.
+   `paths.<x>`" means `<worktree>/<the envelope's paths.<x>>`, never the parent repo's
+   copy.
 6. **Read-only operations are exempt** — `Read`, `Grep`, `cat`, and other non-mutating tools
    may reference files outside `worktree`. The restriction is write-only.
 
@@ -52,6 +52,13 @@ the exit code is the whole result — do not read the log body; a green gate car
 information you must hold. On a failure, read only the failing portion — grep the failing
 cases or read the tail (`grep -nE 'FAIL|Error|panic|✗' <log>`, `tail -n 40 <log>`), never
 the entire file.
+
+**Pass an explicit tool timeout of at least 600000 ms on every one of these calls.** A
+test suite, build, install or gate routinely outruns the Bash tool's ~120 s default, and
+past that the tool backgrounds the run on its own however you invoked it. Whether you then
+get a usable completion notification is the harness's call, not yours — sessions have been
+lost waiting for one that never came. If you do end up backgrounded, do not park: poll the
+log file and carry on from what it says.
 
 ## Reading discipline
 

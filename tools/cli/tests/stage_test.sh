@@ -131,12 +131,31 @@ grounded_in: [".wf/transient/discover/brief.md"]
 allocation:
   - component: internal/zones
     does: "patch one zone and expose it"
-flow: |
-  The handler reads the patch body, the zone service validates it, and the store
-  writes only the named fields before the handler re-reads the row.
-checkpoint: "after this stage, PATCH /zones/{id} demonstrably updates a stored zone"
-supersessions: []
-nfr: []
+    tasks: [S7-T1]
+  - component: internal/httpapi
+    does: "mount the patch route"
+    tasks: [S7-T2]
+flow:
+  - task: S7-T1
+    does: |
+      The zone service validates the patch body and the store writes only the named
+      fields before the caller re-reads the row.
+  - task: S7-T2
+    does: |
+      The handler reads the patch body and calls the service the sibling task built.
+checkpoint:
+  - task: S7-T1
+    observable: "a patch of one field leaves the others demonstrably untouched"
+  - task: S7-T2
+    observable: "after this stage, PATCH /zones/{id} demonstrably updates a stored zone"
+supersessions:
+  - retires: "a zone is replaced whole on every write"
+    proven_by: "store/zones_test.go"
+    reason: "the partial write is the point of this stage"
+    successor: S7-T1
+nfr:
+  - envelope: "zone patch · writes per call · one · any field count · store/zones_test.go"
+    task: S7-T1
 authz: []
 soundness: {boundary_srp: "the store owns persistence, the handler owns transport"}
 decisions: ["Assumption — a patch never creates a zone"]
@@ -284,16 +303,36 @@ write_capabilities
 write_stage; wf stage materialize >/dev/null
 OUT="$(wf stage task S7-T1 --format json)"
 [ "$(jget "$OUT" "d['id']")" = "S7-T1" ] && ok "stage task emits the requested task" || bad "env id" "$OUT"
-[ "$(jget "$OUT" "list(d)")" = "['id', 'title', 'goal', 'allocation', 'flow', 'checkpoint', 'covers', 'story', 'acceptance', 'boundaries', 'grounding']" ] \
+[ "$(jget "$OUT" "list(d)")" = "['id', 'title', 'goal', 'allocation', 'flow', 'checkpoint', 'covers', 'story', 'acceptance', 'boundaries', 'grounding', 'nfr', 'supersedes']" ] \
   && ok "stage task emits the envelope fields in reading order" || bad "env order" "$OUT"
 [ "$(jget "$OUT" "d['goal']")" = "the zone patch path exists and is reachable over HTTP" ] \
   && ok "envelope carries the stage goal" || bad "env goal" "$OUT"
-[ "$(jget "$OUT" "d['allocation'][0]['component']")" = "internal/zones" ] \
-  && ok "envelope carries the stage allocation" || bad "env alloc" "$OUT"
-echo "$OUT" | grep -q "the zone service validates it" \
-  && ok "envelope carries the stage flow" || bad "env flow" "$OUT"
-echo "$OUT" | grep -q "demonstrably updates a stored zone" \
-  && ok "envelope carries the stage checkpoint" || bad "env checkpoint" "$OUT"
+
+# Every per-task-keyed header field is filtered to THIS task. A sibling's allocation,
+# flow and checkpoint describe work this task's own boundaries forbid it to touch.
+[ "$(jget "$OUT" "[a['component'] for a in d['allocation']]")" = "['internal/zones']" ] \
+  && ok "envelope carries only this task's allocation" || bad "env alloc" "$OUT"
+echo "$OUT" | grep -q "the store writes only the named" \
+  && ok "envelope carries this task's flow" || bad "env flow" "$OUT"
+echo "$OUT" | grep -q "calls the service the sibling task built" \
+  && bad "sibling flow is dropped" "$OUT" || ok "envelope drops the sibling's flow"
+echo "$OUT" | grep -q "leaves the others demonstrably untouched" \
+  && ok "envelope carries this task's checkpoint" || bad "env checkpoint" "$OUT"
+echo "$OUT" | grep -q "PATCH /zones/{id} demonstrably updates" \
+  && bad "sibling checkpoint is dropped" "$OUT" || ok "envelope drops the sibling's checkpoint"
+
+# Both are authored keyed by task already, and both were dropped: an AC citing "the
+# stage's NFR envelope" named a section the build never received.
+echo "$OUT" | grep -q "writes per call" \
+  && ok "envelope carries this task's nfr entry" || bad "env nfr" "$OUT"
+echo "$OUT" | grep -q "replaced whole on every write" \
+  && ok "envelope carries what this task supersedes" || bad "env supersedes" "$OUT"
+
+OUT2="$(wf stage task S7-T2 --format json)"
+[ "$(jget "$OUT2" "[a['component'] for a in d['allocation']]")" = "['internal/httpapi']" ] \
+  && ok "a sibling task gets its own allocation" || bad "env alloc sibling" "$OUT2"
+[ "$(jget "$OUT2" "any(k in d for k in ('nfr', 'supersedes'))")" = "False" ] \
+  && ok "a task with no nfr or supersession carries neither key" || bad "env empty" "$OUT2"
 [ "$(jget "$OUT" "d['covers']")" = "['CAP-24']" ] \
   && ok "envelope carries covers (build/review judge scope against it)" || bad "env covers" "$OUT"
 [ "$(jget "$OUT" "d['title']")" = "Zone store patch path" ] \
@@ -331,7 +370,7 @@ write_stage; wf stage materialize >/dev/null
 DEST="$PROJ/.wf/transient/current-task.yaml"
 WR="$(wf stage task S7-T1 --write "$DEST" --format json)"
 [ "$(jget "$WR" "d['written']")" = "$DEST" ] && ok "stage task --write reports the path" || bad "write report" "$WR"
-grep -q "the zone service validates it" "$DEST" \
+grep -q "the store writes only the named" "$DEST" \
   && ok "written envelope holds the stage's shape" || bad "write body" "$(cat "$DEST")"
 
 # unknown task → non-zero exit
@@ -714,18 +753,52 @@ OUT="$(wf stage check --format json)"
 # one must not pass for want of being a list
 write_stage; wf stage materialize >/dev/null
 edit_stage <<'PY'
-d['checkpoint'] = ['<X demonstrably works — observed by <how>>']
+d['checkpoint'] = [{'task': 'S7-T1', 'observable': '<X demonstrably works — observed by <how>>'},
+                   {'task': 'S7-T2', 'observable': 'the route answers'}]
 PY
 OUT="$(wf stage check --format json)"
-[ "$(has "$OUT" A6)" = "True" ] && ok "check: A6 reads a list-valued checkpoint placeholder" || bad "A6-list" "$OUT"
+[ "$(has "$OUT" A6)" = "True" ] && ok "check: A6 reads a checkpoint placeholder" || bad "A6-list" "$OUT"
+
+# A19 — every per-task header field reaches every task. The build envelope is filtered
+# by task id, so a task no allocation/flow/checkpoint entry names ships with no shape at
+# all, and an entry naming a task the stage does not carry reaches nobody.
+write_stage; wf stage materialize >/dev/null
+edit_stage <<'PY'
+d['flow'] = [f for f in d['flow'] if f['task'] != 'S7-T2']
+PY
+OUT="$(wf stage check --format json)"
+[ "$(has "$OUT" A19)" = "True" ] \
+  && ok "check: A19 catches a task no flow entry names" || bad "A19-flow" "$OUT"
 
 write_stage; wf stage materialize >/dev/null
 edit_stage <<'PY'
-d['checkpoint'] = ['PATCH /zones/{id} updates a zone — observed by the e2e run']
+d['allocation'][1]['tasks'] = ['S7-T9']
+PY
+OUT="$(wf stage check --format json)"
+[ "$(has "$OUT" A19)" = "True" ] \
+  && ok "check: A19 catches an entry naming a task the stage lacks" || bad "A19-ghost" "$OUT"
+
+write_stage; wf stage materialize >/dev/null
+edit_stage <<'PY'
+d['nfr'] = [{'envelope': 'x · y · z · w · v', 'task': 'S7-T9'}]
+PY
+OUT="$(wf stage check --format json)"
+[ "$(has "$OUT" A19)" = "True" ] \
+  && ok "check: A19 covers the obligation fields too" || bad "A19-nfr" "$OUT"
+
+write_stage; wf stage materialize >/dev/null
+edit_stage <<'PY'
+d['nfr'] = [{'deferred': 'no envelope for the HTTP surface', 'why': 'no load path yet',
+             'revisit': 'the first paged read'}]
 PY
 OUT="$(wf stage check --format json)"; RC=$?
-[ "$RC" -eq 0 ] && [ "$(has "$OUT" A6)" = "False" ] \
-  && ok "check: A6 accepts an authored list-valued checkpoint" || bad "A6-list-ok" "rc=$RC $OUT"
+[ "$RC" -eq 0 ] && [ "$(has "$OUT" A19)" = "False" ] \
+  && ok "check: A19 leaves an explicit deferral alone" || bad "A19-deferred" "rc=$RC $OUT"
+
+write_stage; wf stage materialize >/dev/null
+OUT="$(wf stage check --format json)"; RC=$?
+[ "$RC" -eq 0 ] && [ "$(has "$OUT" A6)" = "False" ] && [ "$(has "$OUT" A19)" = "False" ] \
+  && ok "check: A6/A19 accept an authored per-task shape" || bad "A6-list-ok" "rc=$RC $OUT"
 
 # --- A12: the architecture bind ---
 write_stage; wf stage materialize >/dev/null
@@ -743,8 +816,10 @@ OUT="$(wf stage check --format json)"; RC=$?
 # a `(planned)` map entry the repo has not built is a legitimate allocation
 write_stage; wf stage materialize >/dev/null
 edit_stage <<'PY'
-d['allocation'] = [{'component': 'internal/httpapi', 'does': 'mount PATCH /zones/{id}'},
-                   {'component': 'backend/internal/store', 'does': 'persist it'}]
+d['allocation'] = [{'component': 'internal/httpapi', 'does': 'mount PATCH /zones/{id}',
+                    'tasks': ['S7-T2']},
+                   {'component': 'backend/internal/store', 'does': 'persist it',
+                    'tasks': ['S7-T1']}]
 PY
 OUT="$(wf stage check --format json)"; RC=$?
 [ "$RC" -eq 0 ] && [ "$(has "$OUT" A12)" = "False" ] \

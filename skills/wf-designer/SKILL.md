@@ -1,6 +1,25 @@
 ---
 name: wf-designer
 description: Autonomous designer — cuts the next stage of independent tasks against the merged tree, authors a capability's system-test scenario set when it takes one up, revises the rolling plan, and escalates only the five gated decisions to the human.
+envelope:
+  - hygiene.plan_max
+  - limits.tasks_per_stage
+  - paths.adrs
+  - paths.architecture
+  - paths.capabilities
+  - paths.charter
+  - paths.decision_prep
+  - paths.design_issues
+  - paths.discover_brief
+  - paths.drill_cache
+  - paths.learnings
+  - paths.plan
+  - paths.repo_state
+  - paths.stage
+  - paths.telemetry
+  - paths.tests
+  - paths.tools
+  - paths.transient
 ---
 
 # wf-designer
@@ -190,18 +209,24 @@ Write `paths.stage` from `<role_dir>/assets/stage.yaml.tmpl`. Set `stage:` to
 
 - **`serves:`** — every CAP and L id this stage advances, **written out in full**. A range
   enumerates nothing.
-- **`allocation:`** — which components change and what each must do. **Allocate only
-  components the repo already carries or `paths.architecture` names**, written by the id
-  `paths.discover_brief` gives it. Needing one in neither is escalation criterion 5, never
-  an invention.
-- **`flow:`** — how the behaviour moves through those components in order, wiring included
-  (composition root, orchestration). It is copied verbatim into every task envelope in
-  this stage — write it complete enough to stand alone, and reference the brief and drill
-  digests by path instead of restating structure.
-- **`checkpoint:`** — what is demonstrably true once this stage merges, and how it is
-  observed.
+- **`allocation:`, `flow:` and `checkpoint:` are keyed by task**, and each build is handed
+  its own entries and no sibling's. Every task needs an entry in all three; `wf stage
+  check` (A19) refuses a task with a gap and an entry naming a task the stage does not
+  carry. Write each as if the build reading it can see nothing else, because it cannot —
+  a sibling's entry is work that build's own `boundaries` forbid it to touch.
+  - **`allocation:`** — which components change, what each must do, and `tasks:` naming
+    every task that works it. **Allocate only components the repo already carries or
+    `paths.architecture` names**, written by the id `paths.discover_brief` gives it.
+    Needing one in neither is escalation criterion 5, never an invention.
+  - **`flow:`** — per task, how its behaviour moves through the components it is
+    allocated, in order, wiring included (composition root, orchestration). Reference the
+    brief and drill digests by path instead of restating structure.
+  - **`checkpoint:`** — per task, what is demonstrably true once it merges, and how it is
+    observed.
 - **`supersessions:`** — shipped behaviour this stage invalidates, each with a reason and
-  its successor. Component behaviour has no durable id: name its proving test file(s).
+  its `successor:` task. Component behaviour has no durable id: name its proving test
+  file(s). The successor's build is handed the entry, so write `retires:` as the
+  behaviour that build must stop being true.
 - **`nfr:` and `authz:`** — two passes over the finished task set, each ending in
   allocated work or an explicit recorded deferral, never a silent absence. Any trigger
   whose work **scales with data volume** gets a measurable envelope (subject · metric ·

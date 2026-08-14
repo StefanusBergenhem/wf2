@@ -236,6 +236,38 @@ def _untracked(root):
     return [l for l in r.stdout.splitlines() if l]
 
 
+# A test file, across the languages the sweep covers. Deliberately name-based: the
+# directory holding tests is what needs the section, and no parse is needed to find it.
+_TEST_FILE_RE = re.compile(
+    r"(?:^|/)(?:test_[^/]+\.py"
+    r"|[^/]+_test\.(?:go|py|js|ts|tsx)"
+    r"|[^/]+\.(?:test|spec)\.(?:js|jsx|ts|tsx))$")
+_HARNESS_HEADING_RE = re.compile(r"^#{1,6}\s+test harness\b", re.I | re.M)
+
+
+def _harness_findings(files, root):
+    """A directory holding tests whose `AGENTS.md` names no test harness.
+
+    Where the fixture builders, stub types and integration bootstrap live is repo-stable
+    and task-independent, so a contract's grounding never carries it — which leaves every
+    build rediscovering it, in parallel, once per task, every stage. This is where it is
+    written down once."""
+    test_dirs = {str(Path(f).parent) for f in files if _TEST_FILE_RE.search(f)}
+    out = []
+    for rel in files:
+        if Path(rel).name != "AGENTS.md" or str(Path(rel).parent) not in test_dirs:
+            continue
+        path = root / rel
+        if not path.is_file() or _HARNESS_HEADING_RE.search(
+                path.read_text(errors="replace")):
+            continue
+        out.append({"rule": "test-harness", "severity": "warn", "file": rel, "line": 1,
+                    "msg": "this directory holds tests and its AGENTS.md names no test "
+                           "harness — add a '## Test harness' section naming the fixture "
+                           "builders, stub types and bootstrap a new test starts from"})
+    return out
+
+
 def _shown(findings, args):
     """The findings the caller asked to see — the full-sweep report is ~250KB, so
     an agent narrows it by rule, severity, or file/dir before reading. Filters are a
@@ -288,10 +320,14 @@ def _check(rest):
         files = [f for f in touched if _candidate(f, doc_caps)]
     else:
         tracked = [l for l in _git(root, "ls-files").stdout.splitlines() if l]
-        files = [f for f in dict.fromkeys(tracked + _untracked(root))
-                 if _candidate(f, doc_caps)]
+        every = list(dict.fromkeys(tracked + _untracked(root)))
+        files = [f for f in every if _candidate(f, doc_caps)]
 
     findings, regressions = [], []
+    # Full sweep only: it is a directory-level fact, and a ratchet sees one diff's files,
+    # where a directory's tests and its AGENTS.md rarely both appear.
+    if not args.diff_base:
+        findings.extend(_harness_findings(every, root))
     checked = 0
     for rel in files:
         path = root / rel

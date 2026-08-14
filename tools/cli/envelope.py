@@ -38,15 +38,33 @@ def _value(raw) -> str:
     return "" if raw is None else str(raw)
 
 
-def render(config_path: str) -> str:
-    """The block, one ``<block>.<key>: <value>`` line each, config order preserved."""
+def render(config_path: str, keys=None) -> str:
+    """The block, one ``<block>.<key>: <value>`` line each, config order preserved.
+
+    ``keys`` is the role's declared set — the keys its own text names. Every dispatch
+    renders that set and nothing else, so the block is the role's working vocabulary
+    rather than the config's whole surface. A declared key the config does not carry is
+    fatal here: rendering the rest would leave the role reading a line that is not there,
+    and it has no other way to resolve one.
+    """
     doc = common.config_doc(config_path)
-    lines = []
+    wanted = None if keys is None else list(keys)
+    lines, seen = [], set()
     for block in _BLOCKS:
         values = doc.get(block)
         if not isinstance(values, dict):
             continue
-        lines += [f"{block}.{key}: {_value(raw)}" for key, raw in values.items()]
+        for key, raw in values.items():
+            name = f"{block}.{key}"
+            if wanted is not None and name not in wanted:
+                continue
+            seen.add(name)
+            lines.append(f"{name}: {_value(raw)}")
+    if wanted is not None:
+        missing = [k for k in wanted if k not in seen]
+        if missing:
+            common.die(f"{config_path} carries none of {', '.join(missing)} — declared "
+                       f"in the role's envelope but absent from the config")
     if not lines:
         common.die(f"{config_path} carries no paths — a role dispatched against it "
                    f"would have nowhere to read or write")

@@ -221,8 +221,7 @@ def _run_task(rt, entry) -> None:
         mode = "fix" if (worktree / rt.cfg.rel("feedback")).exists() else "build"
         launched = rt.agents.launch(
             "wf-build",
-            {"task_id": task_id, "worktree": str(worktree), "mode": mode,
-             "contract": rt.cfg.rel("current_task"), "attempt": attempt},
+            {"task_id": task_id, "worktree": str(worktree), "mode": mode},
             cwd=worktree, task_id=task_id, stage=rt.state.stage, mode=mode)
         verdict = _inspect(rt, "inspect-build-return", worktree, task_id)
         kind = verdict.get("verdict")
@@ -368,8 +367,8 @@ def _review_chain(rt, worktree, task_id, build_sha) -> str:
                       "--attempt", str(_attempt(rt, task_id)), "--pass", str(index))
         launched = rt.agents.launch(
             agent,
-            {"mode": "review", "task_id": task_id, "worktree": str(worktree),
-             "sprint_branch": rt.state.sprint_branch, "pass": agent},
+            {"task_id": task_id, "worktree": str(worktree),
+             "sprint_branch": rt.state.sprint_branch},
             cwd=worktree, task_id=task_id, stage=rt.state.stage)
         verdict = _inspect(rt, "inspect-review-return", worktree, task_id, build_sha)
         kind = verdict.get("verdict")

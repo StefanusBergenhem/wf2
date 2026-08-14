@@ -298,6 +298,64 @@ OUT="$(wf telemetry roles --sink "$DRV" --config "$P/.wf/config.yaml" --format j
 [ "$(rget "$OUT" "d['unjoined_subagents']")" = "1" ] \
     && ok "roles: the second subagent has no record and is counted" || bad "sub skillrec unjoined" "$OUT"
 
+# ---------------------------------------------------------------------------
+# Parallel dispatches nest: a long build's window brackets a faster sibling's whole
+# build->review chain. Containment-first then hands the sibling's REVIEW transcript to
+# the neighbouring BUILD dispatch — and every later row shifts one dispatch along until
+# the longest-running one, the peak the report exists to surface, has no window left and
+# falls out as main_loop. A window that near-matches a dispatch is that dispatch's,
+# whether or not a wider one also contains it.
+# ---------------------------------------------------------------------------
+cat > "$DRV" <<'JSONL'
+{"kind":"driver_event","ts":"2026-07-12T11:00:00Z","event":"dispatch","role":"wf-build","task":"T1","rc":0,"started_at":"2026-07-12T11:00:00Z","ended_at":"2026-07-12T11:40:00Z"}
+{"kind":"driver_event","ts":"2026-07-12T11:00:00Z","event":"dispatch","role":"wf-build","task":"T2","rc":0,"started_at":"2026-07-12T11:00:00Z","ended_at":"2026-07-12T11:20:00Z"}
+{"kind":"driver_event","ts":"2026-07-12T11:20:01Z","event":"dispatch","role":"wf-review","task":"T2","rc":0,"started_at":"2026-07-12T11:20:01Z","ended_at":"2026-07-12T11:23:00Z"}
+{"kind":"usage","session_id":"R2","hook_event":"Stop","started_at":"2026-07-12T11:20:02Z","ended_at":"2026-07-12T11:23:00.500Z","tokens":{"input":1,"output":2,"cache_read":3,"cache_creation":4},"tool_calls":9,"requests":8,"context_max":87000}
+{"kind":"usage","session_id":"B2","hook_event":"Stop","started_at":"2026-07-12T11:00:01Z","ended_at":"2026-07-12T11:19:50Z","tokens":{"input":1,"output":2,"cache_read":3,"cache_creation":4},"tool_calls":40,"requests":30,"context_max":218000}
+{"kind":"usage","session_id":"B1","hook_event":"Stop","started_at":"2026-07-12T11:00:01Z","ended_at":"2026-07-12T11:39:50Z","tokens":{"input":1,"output":2,"cache_read":3,"cache_creation":4},"tool_calls":176,"requests":165,"context_max":409000}
+JSONL
+OUT="$(wf telemetry roles --sink "$DRV" --config "$P/.wf/config.yaml" --format json 2>&1)"
+[ "$(rget "$OUT" "next(r['context_max_max'] for r in d['roles'] if r['role']=='wf-review')")" = "87000" ] \
+    && ok "roles: a near-matching dispatch keeps its own transcript from a wider neighbour" \
+    || bad "parallel review" "$OUT"
+[ "$(rget "$OUT" "next(r['context_max_max'] for r in d['roles'] if r['role']=='wf-build')")" = "409000" ] \
+    && ok "roles: the longest parallel dispatch keeps its own peak" || bad "parallel build peak" "$OUT"
+[ "$(rget "$OUT" "next(r['runs'] for r in d['roles'] if r['role']=='wf-build')")" = "2" ] \
+    && ok "roles: both parallel builds join" || bad "parallel build runs" "$OUT"
+[ "$(rget "$OUT" "len(d['main_loop'])")" = "0" ] \
+    && ok "roles: no dispatched transcript falls through to main_loop" || bad "parallel main" "$OUT"
+[ "$(rget "$OUT" "sorted(t['context_max'] for t in d['tasks'])")" = "[218000, 409000]" ] \
+    && ok "roles: each task's peak is its own build's" || bad "parallel tasks" "$OUT"
+
+# ---------------------------------------------------------------------------
+# The exact join. The driver reads the session id out of the dispatch's own log and
+# stamps it on the dispatch row, so a usage row naming the same session belongs to that
+# role by identity — no window comparison, and no way for a neighbour to claim it. Here
+# the windows deliberately point the wrong way: the id has to win.
+# ---------------------------------------------------------------------------
+cat > "$DRV" <<'JSONL'
+{"kind":"driver_event","ts":"2026-07-12T11:00:00Z","event":"dispatch","role":"wf-build","task":"T1","rc":0,"session_id":"SID-A","started_at":"2026-07-12T11:00:00Z","ended_at":"2026-07-12T11:40:00Z"}
+{"kind":"driver_event","ts":"2026-07-12T11:00:00Z","event":"dispatch","role":"wf-review","task":"T1","rc":0,"session_id":"SID-B","started_at":"2026-07-12T11:05:00Z","ended_at":"2026-07-12T11:10:00Z"}
+{"kind":"usage","session_id":"SID-A","hook_event":"Stop","started_at":"2026-07-12T11:05:30Z","ended_at":"2026-07-12T11:09:30Z","tokens":{"input":1,"output":2,"cache_read":3,"cache_creation":4},"tool_calls":90,"requests":80,"context_max":301000}
+{"kind":"usage","session_id":"SID-B","hook_event":"Stop","started_at":"2026-07-12T11:20:00Z","ended_at":"2026-07-12T11:30:00Z","tokens":{"input":1,"output":2,"cache_read":3,"cache_creation":4},"tool_calls":3,"requests":3,"context_max":55000}
+JSONL
+OUT="$(wf telemetry roles --sink "$DRV" --config "$P/.wf/config.yaml" --format json 2>&1)"
+[ "$(rget "$OUT" "next(r['context_max_max'] for r in d['roles'] if r['role']=='wf-build')")" = "301000" ] \
+    && ok "roles: the session id joins the row to the role that ran it" || bad "sid build" "$OUT"
+[ "$(rget "$OUT" "next(r['context_max_max'] for r in d['roles'] if r['role']=='wf-review')")" = "55000" ] \
+    && ok "roles: the id wins over a window that would claim the wrong row" || bad "sid review" "$OUT"
+[ "$(rget "$OUT" "len(d['main_loop'])")" = "0" ] \
+    && ok "roles: nothing falls through when both sides carry the id" || bad "sid main" "$OUT"
+
+# A pre-upgrade row carries no id — the window join still has to cover it.
+cat > "$DRV" <<'JSONL'
+{"kind":"driver_event","ts":"2026-07-12T11:00:00Z","event":"dispatch","role":"wf-build","task":"T1","rc":0,"started_at":"2026-07-12T11:00:00Z","ended_at":"2026-07-12T11:40:00Z"}
+{"kind":"usage","session_id":"SID-Z","hook_event":"Stop","started_at":"2026-07-12T11:00:01Z","ended_at":"2026-07-12T11:39:00Z","tokens":{"input":1,"output":2,"cache_read":3,"cache_creation":4},"tool_calls":9,"requests":9,"context_max":77000}
+JSONL
+OUT="$(wf telemetry roles --sink "$DRV" --config "$P/.wf/config.yaml" --format json 2>&1)"
+[ "$(rget "$OUT" "next(r['context_max_max'] for r in d['roles'] if r['role']=='wf-build')")" = "77000" ] \
+    && ok "roles: a dispatch row with no id still joins by window" || bad "sid legacy" "$OUT"
+
 echo ""
 echo "  telemetry verbs: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

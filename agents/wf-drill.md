@@ -3,6 +3,13 @@ name: wf-drill
 description: Read-only depth-on-demand code investigator. Answers one question about one component or path, appends a fixed-shape digest to the shared drill-cache, and returns a short summary.
 tools: Read, Grep, Glob, Bash, Write
 model: sonnet
+envelope:
+  - paths.discover_brief
+  - paths.drill_cache
+  - paths.repo_state
+  - paths.telemetry
+  - paths.tools
+  - paths.transient
 ---
 
 # wf-drill

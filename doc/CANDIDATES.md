@@ -420,6 +420,19 @@ prose anywhere in wf2, and it is worth copying at every other seam where a role'
 parsed rather than read. **Both original halves remain open:** the `wf skills check` linter, and
 the wf2-side adversarial reviewer for wf2's own skill prose.
 
+**2026-08-14 — the first slice of the linter half shipped**, as
+`tools/cli/tests/envelope_parity_test.sh` rather than a `wf` verb (a verb would put the check in
+every consumer's context for a rule only the maintainer can violate; wf2 fixes before shipping and
+assumes no consumer edits skills). It decides two of the linter's listed items — every
+`paths./commands./limits./hygiene.` key a role's text names exists in the config template, and the
+role's `envelope:` frontmatter matches that set in **both** directions — and it carries a `--fix`
+that writes the declaration from the text, so the two cannot drift. It is wired into the new
+repo-wide `run_all.sh`. Writing it immediately paid: two shared skills used real key names as
+*format illustrations*, which forced those keys into every role that loads them, and wf-adequacy
+was "reading" `paths.current_task` on the strength of an example. **Still open:** `$TOKEN`
+declarations, `assets/`+`references/` existence, `description` length, cross-file step references,
+and both original halves below.
+
 **The premise "the Python is the trustworthy half" is now falsified, though.** A 2026-08-10 review
 of `tools/` found the same semantic-contradiction class *inside the TDD'd code*, three times, each
 a docstring asserting a consumer that does not exist: `drain.py:520` says the ship step folds
@@ -706,6 +719,18 @@ not a leak to plug.
 **Trigger to act:** superseded for the token goal — reopen only if a harness gains a flag
 that trims its own system prompt. The measurement half is done: **subtract ~31 k**, not
 ~33 k, when reading any `context_max`. Cf. **C48**.
+
+**2026-08-14 — the constant floor is not where the context goes.** A full walk of dems'
+heaviest build (S9-T1, 165 requests, 410 k peak) attributes it: ~32 k harness floor at
+request 0, ~100–130 k of tool results, ~24 k of tool-call inputs, ~2 k of assistant prose —
+and **125,713 tokens of the role's own reasoning**, 102 signed thinking blocks retained
+across the turn, ~31% of the peak and more than every file it read. The harness sizes it
+(claude: `--effort`), per role, through `driver.agent_cmd_overrides`, which the config
+template now says. Two other measured leaks in the same walk, both since fixed: the dispatch
+prompt carried all 48 config keys for a role that reads 9, and the contract carried the
+whole stage's `flow` (158 lines) for a task whose own track is 63. What is left to attack is
+the reasoning budget and the 52% of read bytes that went to rediscovering test fixtures
+(the `--had-to-find` → AGENTS.md loop, shipped the same day).
 
 ---
 

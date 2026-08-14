@@ -77,25 +77,54 @@ class Launched:
     params: dict = field(default_factory=dict)
 
 
+_ENVELOPE_RE = re.compile(r"^envelope:\s*$((?:\n\s+-\s+\S+)*)", re.M)
+
+
+def declared_keys(role_file: Path) -> list:
+    """The config keys a role's ``envelope:`` frontmatter list names, or None when it
+    declares none. This is the role's own statement of what it reads, kept beside the
+    text that reads it so the two cannot drift apart unnoticed."""
+    try:
+        text = Path(role_file).read_text(errors="replace")
+    except OSError:
+        return None
+    if not text.startswith("---"):
+        return None
+    end = text.find("\n---", 3)
+    found = _ENVELOPE_RE.search(text[3:end] if end > 0 else text)
+    if not found:
+        return None
+    return [line.strip().lstrip("- ").strip()
+            for line in found.group(1).splitlines() if line.strip()]
+
+
 def build_prompt(cfg, role: str, params: dict) -> str:
     """The prompt: read this role's file, follow it, and here is everything it would
-    otherwise have to go find — its own directory, the resolved config values, and this
+    otherwise have to go find — its own directory, the config values it reads, and this
     dispatch's parameters.
 
     The config block is why the role never opens ``.wf/config.yaml``: that file is
     written for the human who edits it and is ~80% comments, so reading it costs about
-    twelve times what its values do. A call-site parameter wins over the block — the
-    block is repo-wide defaults, a parameter is this dispatch's own state.
+    twelve times what its values do. It carries the keys the role declares and no others
+    — the rest are keys it would have to decide to ignore, several of them pointing at
+    the spec layer its own skill forbids it to open. A call-site parameter wins over the
+    block — the block is repo-wide defaults, a parameter is this dispatch's own state.
     """
     role_file = cfg.role_file(role)
     if role_file is None:
         raise DispatchError(
             f"{role} is not installed under paths.agents or paths.skills — "
             f"run the wf installer against this repo")
+    keys = declared_keys(role_file)
+    if keys is None:
+        raise DispatchError(
+            f"{role_file} declares no `envelope:` list in its frontmatter, so there is "
+            f"no set of config keys to hand {role} — add one naming every paths./"
+            f"commands./limits./hygiene. key its text reads")
     given = {k: v for k, v in params.items() if v is not None}
     lines = [f"Read {role_file} and follow it.",
              f"role_dir: {cfg.role_dir(role, role_file)}"]
-    lines += [line for line in envelope.render(cfg.config_path).splitlines()
+    lines += [line for line in envelope.render(cfg.config_path, keys=keys).splitlines()
               if line.split(":", 1)[0] not in given]
     lines += [f"{k}: {v}" for k, v in given.items()]
     return "\n".join(lines)
@@ -205,9 +234,15 @@ def _pi_stream_usage(lines):
     return out
 
 
-def _pi_session_id(log_path):
-    """The session uuid a pi run wrote as its first stream line, to fold that ONE
-    dispatch's session (and its children) — never a neighbour's."""
+def session_id(log_path):
+    """The session this dispatch ran in, off its own log's opening line.
+
+    Both harnesses name it there under their own key — pi as a ``session`` event, claude
+    as its ``system``/``init`` line. It is the exact key between a dispatch (which knows
+    the role) and the usage rows the harness hook writes (which know the tokens), so the
+    two never have to be matched by comparing time windows: parallel dispatches nest, and
+    a long build's window contains a faster sibling's whole build→review chain.
+    """
     try:
         text = Path(log_path).read_text(errors="replace")
     except OSError:
@@ -220,8 +255,12 @@ def _pi_session_id(log_path):
             entry = json.loads(line)
         except (ValueError, TypeError):
             continue
-        if isinstance(entry, dict) and entry.get("type") == "session" and entry.get("id"):
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("type") == "session" and entry.get("id"):
             return str(entry["id"])
+        if entry.get("type") == "system" and entry.get("session_id"):
+            return str(entry["session_id"])
     return None
 
 
@@ -398,6 +437,7 @@ class Dispatcher:
                              duration_s=done.duration_s,
                              started_at=done.started_at, ended_at=done.ended_at,
                              timed_out=done.timed_out or None,
+                             session_id=session_id(log_path),
                              log=str(log_path), **result_usage(log_path))
         self._emit_pi_usage(cmd, log_path)
         return done
@@ -410,7 +450,7 @@ class Dispatcher:
         observability, never correctness."""
         if not _is_pi_cmd(cmd):
             return
-        sid = _pi_session_id(log_path)
+        sid = session_id(log_path)
         if not sid:
             return
         hook = self.cfg.path("tools") / "telemetry" / "pi_usage_hook.py"

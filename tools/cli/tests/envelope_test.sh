@@ -102,6 +102,31 @@ echo "transport only"
 grep -q '^paths.capabilities: .wf/CAPABILITIES.yaml$' <<<"$OUT" \
   && ok "values are the configured relatives, unanchored" || bad "values unanchored" "$OUT"
 
+echo "declared subset"
+# A dispatch renders the keys the role declares and nothing else: an undeclared key is
+# one that role never resolves, and every extra line is context each of its dispatches
+# pays for. An unknown key is named as an error rather than silently skipped — the role
+# would otherwise read a line that is not there.
+OUT2="$("$PYTHON" -c '
+import sys; sys.path.insert(0, sys.argv[1])
+import envelope
+print(envelope.render(sys.argv[2], keys=["paths.current_task", "commands.preflight"]))
+' "$CLI" "$PROJ/.wf/config.yaml" 2>&1)"
+[ "$(grep -c . <<<"$OUT2")" = "2" ] \
+  && ok "renders only the declared keys" || bad "declared subset" "$OUT2"
+grep -q '^paths.current_task: .wf/transient/current-task.yaml$' <<<"$OUT2" \
+  && ok "a declared key keeps its value" || bad "declared value" "$OUT2"
+grep -q 'capabilities\|tasks_per_stage\|plan_max' <<<"$OUT2" \
+  && bad "undeclared keys are dropped" "$OUT2" || ok "undeclared keys are dropped"
+OUT4="$("$PYTHON" -c '
+import sys; sys.path.insert(0, sys.argv[1])
+import envelope
+print(envelope.render(sys.argv[2], keys=["paths.nope"]))
+' "$CLI" "$PROJ/.wf/config.yaml" 2>&1)"; RC4=$?
+[ $RC4 -ne 0 ] && grep -q 'paths.nope' <<<"$OUT4" \
+  && ok "a declared key the config lacks names itself and fails" \
+  || bad "unknown declared key" "rc=$RC4: $OUT4"
+
 echo "failure modes"
 cat > "$PROJ/.wf/bad.yaml" <<'YAML'
 version: 1

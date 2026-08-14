@@ -3,6 +3,14 @@ name: wf-adequacy
 description: Adversarial adequacy reviewer for a capability's system-test set. Judges from source whether the scenarios — proposed or shipped — prove the capability's whole promise, and returns adequate/inadequate with residual paths.
 tools: Read, Grep, Glob, Bash, Write
 model: opus
+envelope:
+  - paths.discover_brief
+  - paths.drill_cache
+  - paths.repo_state
+  - paths.telemetry
+  - paths.tests
+  - paths.tools
+  - paths.transient
 ---
 
 # wf-adequacy

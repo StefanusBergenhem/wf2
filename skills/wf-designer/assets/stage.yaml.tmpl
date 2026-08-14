@@ -15,18 +15,24 @@ grounded_in:                    # the brief and the drill digests this cut stand
   - "<paths.discover_brief>"
   - "<digest path under paths.drill_cache>"
 
+# allocation, flow and checkpoint are keyed by task: each task's envelope carries its
+# OWN entries and no sibling's. Every task needs an entry in all three.
 allocation:                     # only components the repo carries or paths.architecture names
   - component: <id as paths.discover_brief writes it>
     does: "<what it must do in this stage>"
+    tasks: [S0-T1]              # every task that works this component in this stage
 
-flow: |
-  <How the behaviour moves through those components, in order, wiring included
-   (composition root, orchestration). Rides in every task envelope in this stage —
-   write it complete enough to stand alone. Reference the brief and the drill digests
-   by path; do not restate existing structure.>
+flow:
+  - task: S0-T1
+    does: |
+      <How this task's behaviour moves through the components it is allocated, in order,
+       wiring included (composition root, orchestration). It is all the build gets of
+       the stage's shape — write it complete enough to stand alone. Reference the brief
+       and the drill digests by path; do not restate existing structure.>
 
 checkpoint:                     # what is demonstrably true once this stage merges
-  - "<X demonstrably works — observed by <how>>"
+  - task: S0-T1
+    observable: "<X demonstrably works — observed by <how>>"
 
 supersessions:                  # omit when this stage invalidates no shipped behaviour
   - retires: "<the behaviour>"

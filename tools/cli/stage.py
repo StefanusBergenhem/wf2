@@ -10,10 +10,12 @@ contract schema (story / acceptance / boundaries / grounding), and the pointers 
 make into the repo. It verifies STRUCTURE, never meaning. Exits non-zero on any
 error-severity finding.
 
-``stage task`` builds ONE task's build envelope: the stage's shape, then covers →
-story → acceptance → boundaries → grounding, plus the title, the inlined scenario
-text on an e2e task, and ``--prior-attempt`` when the driver rebased an earlier
-attempt's branch into the worktree. Nothing else travels.
+``stage task`` builds ONE task's build envelope: this task's slice of the stage shape,
+then covers → story → acceptance → boundaries → grounding, plus the title, the inlined
+scenario text on an e2e task, its own ``nfr`` and ``supersedes`` obligations, and
+``--prior-attempt`` when the driver rebased an earlier attempt's branch into the
+worktree. Nothing else travels — every header field but ``goal`` is authored keyed by
+task, and a build is handed its own key and no sibling's.
 
 ``stage materialize`` inlines the scenario text nested under each capability and
 learning: the role authors bare ids and this fills in the verbatim description the
@@ -129,18 +131,78 @@ def _grounding_items(task):
 # it can look at, and finally what an earlier attempt already left in the worktree.
 _ENVELOPE_ORDER = ["id", "title", "goal", "allocation", "flow", "checkpoint", "covers",
                    "story", "acceptance", "boundaries", "grounding", "system_tests",
-                   "prior_attempt"]
+                   "nfr", "supersedes", "prior_attempt"]
+
+
+def _names_task(entry, task_id) -> bool:
+    """Whether a header entry is keyed to this task. ``tasks:`` is a list because one
+    component is often allocated to several tasks in a stage; ``task:`` is the single
+    form the per-task fields use."""
+    if not isinstance(entry, dict):
+        return False
+    listed = entry.get("tasks")
+    if isinstance(listed, (list, tuple)):
+        return str(task_id) in [str(t) for t in listed]
+    return str(entry.get("task") or "") == str(task_id)
+
+
+def _mine(entries, task_id) -> list:
+    return [e for e in (entries or []) if _names_task(e, task_id)]
+
+
+def _shape_for(doc, task_id) -> dict:
+    """This task's slice of the stage header.
+
+    Every field here is authored keyed by task, and the build is handed its own key and
+    no one else's: a sibling's allocation, flow and checkpoint describe work this task's
+    own `boundaries` forbid it to touch. `goal` is the exception — one line, and the
+    only genuinely stage-wide framing.
+    """
+    out = {}
+    if doc.get("goal") is not None:
+        out["goal"] = doc["goal"]
+    allocation = [{k: v for k, v in a.items() if k not in ("task", "tasks")}
+                  for a in _mine(doc.get("allocation"), task_id)]
+    if allocation:
+        out["allocation"] = allocation
+    flow = [str(f.get("does") or "").rstrip() for f in _mine(doc.get("flow"), task_id)]
+    flow = [f for f in flow if f]
+    if flow:
+        out["flow"] = "\n\n".join(flow) + "\n"
+    checkpoint = [str(c.get("observable") or "")
+                  for c in _mine(doc.get("checkpoint"), task_id)]
+    checkpoint = [c for c in checkpoint if c]
+    if checkpoint:
+        out["checkpoint"] = checkpoint
+    return out
+
+
+def _obligations_for(doc, task_id) -> dict:
+    """The two per-task obligations the header carries beyond the shape: the measurable
+    envelope this task must hold, and the shipped behaviour it retires. Both are already
+    authored against a task id — an acceptance criterion citing "the stage's NFR
+    envelope" names a section the build never received without this."""
+    out = {}
+    nfr = [str(n.get("envelope") or "") for n in _mine(doc.get("nfr"), task_id)]
+    nfr = [n for n in nfr if n]
+    if nfr:
+        out["nfr"] = nfr
+    supersedes = [{k: s[k] for k in ("retires", "proven_by", "reason") if k in s}
+                  for s in (doc.get("supersessions") or [])
+                  if isinstance(s, dict) and str(s.get("successor") or "") == str(task_id)]
+    if supersedes:
+        out["supersedes"] = supersedes
+    return out
 
 
 def _envelope(doc, entry, prior_attempt=None):
-    """The build envelope for one task: the stage's shape, the driver the task serves,
-    the four contract sections, and the task's one-line title."""
+    """The build envelope for one task: this task's slice of the stage shape, the driver
+    it serves, the four contract sections, and the task's one-line title."""
     out = {"id": entry.get("id")}
     if entry.get("title") is not None:
         out["title"] = entry["title"]
-    for key in _SHAPE_FIELDS:
-        if doc.get(key) is not None:
-            out[key] = doc[key]
+    task_id = entry.get("id")
+    out.update(_shape_for(doc, task_id))
     covers = runstate.covers_of(entry)
     if covers:
         out["covers"] = covers
@@ -150,6 +212,7 @@ def _envelope(doc, entry, prior_attempt=None):
     for key in ("grounding", "system_tests"):
         if entry.get(key):
             out[key] = entry[key]
+    out.update(_obligations_for(doc, task_id))
     if prior_attempt:
         out["prior_attempt"] = prior_attempt
     return {k: out[k] for k in _ENVELOPE_ORDER if k in out}
@@ -498,10 +561,14 @@ def _overlap_findings(tasks):
 
 
 def _shape_text(value):
-    """One line of a design field's content. A checkpoint may be authored as a list of
-    observable facts, so a list reads as its joined items."""
+    """One line of a design field's content. `flow` and `checkpoint` are lists of
+    per-task entries, so each reads as its authored prose with the task key dropped —
+    the id is routing, not content, and would read as authored text to the placeholder
+    check."""
     if isinstance(value, (list, tuple)):
-        return _oneline("; ".join(str(v) for v in value))
+        parts = [" ".join(str(v) for k, v in item.items() if k not in ("task", "tasks"))
+                 if isinstance(item, dict) else str(item) for item in value]
+        return _oneline("; ".join(parts))
     return _oneline(value or "")
 
 
@@ -514,8 +581,55 @@ def _shape_findings(doc):
         if not text:
             out.append(f"stage: no '{key}' — the build envelope carries the stage's shape "
                        f"(goal, allocation, flow, checkpoint)")
-        elif _PLACEHOLDER_RE.search(text) or (text.startswith("<") and text.endswith(">")):
+        elif _PLACEHOLDER_RE.search(text) or "<" in text and ">" in text:
             out.append(f"stage: '{key}' is still a template placeholder ('{text[:60]}…')")
+    return out
+
+
+# The header fields authored per task, and what each one leaves a build without when it
+# names no task: the envelope is filtered by task id, so an unnamed task gets the key
+# omitted entirely. `nfr` and `authz` may instead carry an explicit deferral, which is a
+# statement about the whole stage and names no task by design.
+_KEYED_SHAPE = ("allocation", "flow", "checkpoint")
+_KEYED_OPTIONAL = ("nfr", "authz")
+
+
+def _entry_tasks(entry) -> list:
+    listed = entry.get("tasks")
+    if isinstance(listed, (list, tuple)):
+        return [str(t) for t in listed]
+    return [str(entry["task"])] if entry.get("task") else []
+
+
+def _keying_findings(doc, task_ids) -> list:
+    """A19: every per-task header entry names a task this stage carries, and every task
+    is named by every field that shapes it."""
+    out = []
+    for key in _KEYED_SHAPE + _KEYED_OPTIONAL:
+        entries = [e for e in (doc.get(key) or []) if isinstance(e, dict)]
+        for entry in entries:
+            named = _entry_tasks(entry)
+            if not named:
+                if key in _KEYED_OPTIONAL and ("deferred" in entry or "why" in entry):
+                    continue
+                out.append(f"stage: a '{key}' entry names no task — the build envelope is "
+                           f"filtered by task id, so this entry reaches no build")
+                continue
+            for task in named:
+                if task not in task_ids:
+                    out.append(f"stage: '{key}' names task {task}, which this stage does "
+                               f"not carry — it reaches no build")
+        if key in _KEYED_SHAPE:
+            covered = {t for e in entries for t in _entry_tasks(e)}
+            for task in sorted(task_ids - covered):
+                out.append(f"{task}: no '{key}' entry names it — its contract would ship "
+                           f"without the shape it builds into")
+    supersessions = [s for s in (doc.get("supersessions") or []) if isinstance(s, dict)]
+    for entry in supersessions:
+        successor = str(entry.get("successor") or "")
+        if successor and successor not in task_ids and "no successor" not in successor:
+            out.append(f"stage: a supersession names successor {successor}, which this "
+                       f"stage does not carry")
     return out
 
 
@@ -588,6 +702,8 @@ def _header_findings(args, doc, text, tasks):
     C20, and A4/A5 over every ADR the stage cites."""
     out = [("error", "A7", m) for m in _serves_findings(_serves(doc))]
     out += [("error", "A6", m) for m in _shape_findings(doc)]
+    out += [("error", "A19", m) for m in
+            _keying_findings(doc, {str(t.get("id")) for t in tasks if t.get("id")})]
 
     allocated = [a.get("component") if isinstance(a, dict) else a
                  for a in (doc.get("allocation") or [])]

@@ -6,9 +6,9 @@ description: TDD developer procedure — executes one task contract red→green�
 # wf-build — execute one task contract
 
 You execute the contract at `paths.current_task` under TDD. You do not plan or read the
-spec layer (ADRs, the plan, the architecture map, the capabilities file) — the contract,
-with the stage design that rides with it, is complete for what this task builds. A
-`covers:` id is a label, not a pointer: never go read what it refers to.
+spec layer (the plan, the architecture map, the capabilities file) — the contract, with
+the stage design that rides with it, is complete for what this task builds. A `covers:`
+id is a label, not a pointer: never go read what it refers to.
 
 Every path and command below is a line in your dispatch envelope. Read it there — do not
 open `.wf/config.yaml`:
@@ -21,12 +21,12 @@ open `.wf/config.yaml`:
 
 ## Step 0 — Mode
 
-Your envelope carries `mode`:
+Your dispatch envelope carries `mode`:
 
 - `mode: fix` → **Fix mode** (see below); `FEEDBACK` is present and is what you address.
 - `mode: build` → **Build mode**, from Step 1.
 
-Do not probe the filesystem to work out which — the envelope is the answer.
+Do not probe the filesystem to work out which — the dispatch envelope is the answer.
 
 ## Step 1 — Load the contract
 
@@ -42,7 +42,11 @@ Do not probe the filesystem to work out which — the envelope is the answer.
      (Step 3b), not a judgement call;
    - `grounding` — pointers into the existing source.
 
-   An e2e task also carries `system_tests`, each entry's scenario text inlined.
+   An e2e task also carries `system_tests`, each entry's scenario text inlined. Two more
+   fields appear when this task carries that obligation: `nfr` — a measurable envelope
+   (subject · metric · threshold · condition · source) your work must hold, proven by the
+   source it names; and `supersedes` — shipped behaviour this task must stop being true,
+   with the test file that proves it today.
 2. Read only the source `grounding` and `boundaries` point at. No wider exploration. Those
    pointers are a starting set, not a fence — write a file no pointer names when the task
    genuinely needs it (a consumer that won't compile otherwise, a test-file home, a
@@ -51,7 +55,7 @@ Do not probe the filesystem to work out which — the envelope is the answer.
 3. The other tasks of this stage are building in parallel from the same tip; their work is
    not in your worktree and never will be before you hand off. A shape you must build to is
    in `boundaries` — never go looking for it in the tree.
-4. **When the envelope carries `prior_attempt`**, your worktree was cut from the branch it
+4. **When `CONTRACT` carries `prior_attempt`**, your worktree was cut from the branch it
    names and rebased onto the sprint tip, so it already holds an earlier attempt at this
    same task; `prior_attempt` also says why that attempt was blocked. Read that reason and
    `git diff` the attempt's commits before writing a line. Treat everything it left as an
@@ -140,14 +144,9 @@ you never go on to review.
 ## Step 4 — Gate
 
 Run `commands.preflight` **in the foreground** — never a shell `&`, never a background
-tool mode — and **pass an explicit tool timeout of at least 600000 ms on the call**.
-Preflight routinely outruns the Bash tool's ~120 s default, and past it the tool
-backgrounds the run on its own however you invoked it. Whether you then get a usable
-completion notification is the harness's call, not yours: sessions have been lost waiting
-for one that never came. If you do end up backgrounded, do not park — poll the log file
-and carry on from what it says. Pipe to `/tmp/wf-build-<task-id>-preflight.log`; read the outcome per
-`wf-agent-preamble`, not the whole log. It must exit clean. A gate that cannot run because its environment is
-unavailable is a HALT, not a pass — do not write `review_ready`.
+tool mode — piped to `/tmp/wf-build-<task-id>-preflight.log`. It must exit clean. A gate
+that cannot run because its environment is unavailable is a HALT, not a pass — do not
+write `review_ready`.
 
 Then run the hygiene ratchet **from your worktree root** — before Step 5's commit, so
 `HEAD` is still the fork point. It lints the tree you are standing in:

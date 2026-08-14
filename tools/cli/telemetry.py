@@ -36,6 +36,7 @@ def _record_session(rest):
     p.add_argument("--friction-kind", dest="friction_kind", default="none")
     p.add_argument("--repo-observation", dest="repo_observation", default="")
     p.add_argument("--gotcha", default="")
+    p.add_argument("--had-to-find", dest="had_to_find", default="")
     p.add_argument("--sink", default=None,
                    help="explicit sink path; overrides paths.telemetry")
     args = p.parse_args(rest)
@@ -50,6 +51,7 @@ def _record_session(rest):
         "--friction-kind", args.friction_kind,
         "--repo-observation", args.repo_observation,
         "--gotcha", args.gotcha,
+        "--had-to-find", args.had_to_find,
         "--sink", sink,
     ])
 
@@ -106,6 +108,52 @@ def _exact_pick(ua, ub, cands, used, only=None):
     return min(fits)[1] if fits else None
 
 
+def _overlap_pick(ua, ub, cands, used, only=None, floor=0.0):
+    """The index of the free candidate whose window overlaps [ua, ub] most, or None when
+    none reaches ``floor``."""
+    if not (ua and ub):
+        return None
+    scored = sorted(((_iou(ua, ub, cands[i]["_a"], cands[i]["_b"]), i)
+                     for i in (only if only is not None else range(len(cands)))
+                     if i not in used), reverse=True)
+    return next((i for sc, i in scored if sc > 0 and sc >= floor), None)
+
+
+def _id_pick(session, cands, used, only=None):
+    """The candidate naming this exact session. The driver reads the id out of the
+    dispatch's own log, so when both sides carry one there is nothing to infer."""
+    if not session:
+        return None
+    return next((i for i in (only if only is not None else range(len(cands)))
+                 if i not in used and str(cands[i].get("session_id") or "") == str(session)),
+                None)
+
+
+def _join_pick(ua, ub, cands, used, only, session=None, tail_floor=None):
+    """The candidate that ran [ua, ub], by descending confidence.
+
+    The session id first: it is an identity, and every window rule below it is an
+    inference. Then a near-identical window, before containment — parallel dispatches
+    nest, so a long build brackets a faster sibling's whole build→review chain, and a
+    transcript that overruns its own dispatch by the driver's whole-second rounding is
+    also contained by the neighbour. Containment-first hands it there; every later
+    transcript then shifts one dispatch along, and the longest-running one is left with
+    no free window and drops out of the report entirely.
+
+    ``tail_floor`` adds a last pass at that floor for a window nothing contains (clock
+    skew); omit it where an unmatched window must stay unmatched.
+    """
+    pick = _id_pick(session, cands, used, only)
+    if pick is not None:
+        return pick
+    pick = _overlap_pick(ua, ub, cands, used, only, floor=_NEAR_SPAN_IOU)
+    if pick is None:
+        pick = _exact_pick(ua, ub, cands, used, only=only)
+    if pick is None and tail_floor is not None:
+        pick = _overlap_pick(ua, ub, cands, used, only, floor=tail_floor)
+    return pick
+
+
 def _stats(vals):
     return {"avg": round(sum(vals) / len(vals)), "max": max(vals)} if vals else {"avg": 0, "max": 0}
 
@@ -114,9 +162,10 @@ def _roles(rest):
     """Per-role context-footprint report, derived on demand from the telemetry rows —
     nothing is stored. Each `SubagentStop` usage row is one wf-role subagent's own
     transcript, joined to the row that names the role that ran it: a driver dispatch row
-    (`kind: driver_event`) or a session record. A dispatch brackets the run, so a
-    transcript falling inside one joins it exactly; only a window nothing contains falls
-    back to the best time-overlap match. Two load metrics, deliberately separate:
+    (`kind: driver_event`) or a session record. The join is by session id when both sides
+    carry one; failing that, a window near-identical to a dispatch's is that dispatch's,
+    and failing that the tightest window containing it wins. Two load metrics,
+    deliberately separate:
     `context_max` is the largest single-request context — the honest "how much did this
     role hold at once" peak — while `footprint = input + cache_creation` sums every
     cache write, so it inflates whenever a slow turn expires the prompt-cache TTL and
@@ -202,11 +251,8 @@ def _roles(rest):
     used, joined, unjoined_sub = set(), [], 0
     for u in sub:
         ua, ub = _parse(u.get("started_at")), _parse(u.get("ended_at"))
-        pick = _exact_pick(ua, ub, cands, used, only=nested)
-        if pick is None:
-            scored = sorted(((_iou(ua, ub, cands[i]["_a"], cands[i]["_b"]), i)
-                             for i in nested), reverse=True)
-            pick = next((i for sc, i in scored if i not in used and sc > 0), None)
+        pick = _join_pick(ua, ub, cands, used, nested,
+                          session=u.get("session_id"), tail_floor=0.0)
         if pick is None:
             # No record to name it: concurrent same-agent subagents race on one
             # start-stamp file, and the losers record a zero-width window nothing can
@@ -218,22 +264,16 @@ def _roles(rest):
         joined.append((cands[pick]["agent"], _metrics(u, ua, ub, cands[pick])))
 
     # A role the driver dispatches runs as its OWN top-level session, so its hook fires
-    # `Stop`, not `SubagentStop`. A Stop row a dispatch window brackets is that role's
-    # transcript. Only against dispatch windows, and containment first: the main loop's
-    # own Stop rows are cumulative snapshots spanning the whole session, so no dispatch
-    # contains one. The driver stamps whole seconds, so a transcript can overrun its own
-    # dispatch by a fraction of one — hence the fallback, gated on the two windows being
-    # near-identical (_NEAR_SPAN_IOU). An unbounded one would let a dispatch claim the
-    # session-spanning snapshot it merely ran inside of.
+    # `Stop`, not `SubagentStop`. Matched against dispatch windows only, and with no tail
+    # floor: the main loop's own Stop rows are cumulative snapshots spanning the whole
+    # session, so nothing contains one and every dispatch scores far under _NEAR_SPAN_IOU
+    # against it — which is what keeps it in main_loop instead of being charged to
+    # whichever dispatch it happened to run over.
     unclaimed = []
     for u in stop:
         ua, ub = _parse(u.get("started_at")), _parse(u.get("ended_at"))
-        pick = _exact_pick(ua, ub, cands, used, only=dispatched)
-        if pick is None:
-            scored = sorted(((_iou(ua, ub, cands[i]["_a"], cands[i]["_b"]), i)
-                             for i in dispatched), reverse=True)
-            pick = next((i for sc, i in scored
-                         if i not in used and sc >= _NEAR_SPAN_IOU), None)
+        pick = _join_pick(ua, ub, cands, used, dispatched,
+                          session=u.get("session_id"))
         if pick is None:
             unclaimed.append(u)
             continue

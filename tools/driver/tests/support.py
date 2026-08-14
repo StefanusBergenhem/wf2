@@ -141,16 +141,23 @@ def stage_doc(*, stage=7, serves=("CAP-001",), tasks=None,
     """One cut, in the shape ``paths.stage`` carries: the design header the build
     envelope rides on, plus that stage's task contracts. No ``increment``, no
     ``depends_on`` — a stage IS the tasks with no dependency between them."""
+    entries = list(tasks if tasks is not None
+                   else [task(f"S{stage}-T1", covers=list(serves)[:1])])
+    ids = [t["id"] for t in entries]
     return {
         "stage": stage,
         "serves": list(serves),
         "goal": goal,
-        "allocation": [{"component": "internal/zones", "does": "patch one zone"}],
-        "flow": "The handler validates, the store writes the named fields.\n",
-        "checkpoint": checkpoint,
+        # allocation, flow and checkpoint are keyed by task — each build is handed its
+        # own entries and no sibling's, so every task needs one in all three (A19).
+        "allocation": [{"component": "internal/zones", "does": "patch one zone",
+                        "tasks": ids}],
+        "flow": [{"task": i,
+                  "does": "The handler validates, the store writes the named fields.\n"}
+                 for i in ids],
+        "checkpoint": [{"task": i, "observable": checkpoint} for i in ids],
         "decisions": list(decisions or ["Assumption — a patch never creates a zone"]),
-        "tasks": list(tasks if tasks is not None
-                      else [task(f"S{stage}-T1", covers=list(serves)[:1])]),
+        "tasks": entries,
     }
 
 
@@ -178,6 +185,21 @@ def write_stage(cfg, **kw) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(yaml.safe_dump(stage_doc(**kw), sort_keys=False,
                                    allow_unicode=True))
+    return path
+
+
+# A role file the driver can dispatch: the frontmatter `envelope:` list is what
+# build_prompt renders the config block from, so a stub without one is not dispatchable.
+ROLE_STUB = ("---\nenvelope:\n  - paths.current_task\n  - paths.tools\n"
+             "  - commands.preflight\n---\nx\n")
+
+
+def write_role(root: Path, role: str, shape: str = "agent") -> Path:
+    """Install a dispatchable stub for one role, agent- or skill-shaped."""
+    path = (root / ".claude/agents" / f"{role}.md" if shape == "agent"
+            else root / ".claude/skills" / role / "SKILL.md")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(ROLE_STUB)
     return path
 
 

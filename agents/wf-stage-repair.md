@@ -3,6 +3,13 @@ name: wf-stage-repair
 description: Repairs a stage close in place on the sprint branch — resolves a conflicted merge or a red heavy check, or raises a task-less design issue when the failure is a design defect rather than a code slip.
 tools: Read, Edit, Write, Bash, Grep, Glob
 model: sonnet
+envelope:
+  - commands.stage_check
+  - paths.design_issues
+  - paths.repo_state
+  - paths.telemetry
+  - paths.tools
+  - paths.transient
 ---
 
 # wf-stage-repair

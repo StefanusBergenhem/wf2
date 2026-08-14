@@ -39,9 +39,9 @@ class LoopTest(support.TempProject):
         (self.root / ".claude/agents").mkdir(parents=True)
         for role in ("wf-discover", "wf-build", "wf-review", "wf-adequacy",
                      "wf-retrospective", "wf-stage-repair"):
-            (self.root / f".claude/agents/{role}.md").write_text("x\n")
+            (self.root / f".claude/agents/{role}.md").write_text(support.ROLE_STUB)
         (self.root / ".claude/skills/wf-designer").mkdir(parents=True)
-        (self.root / ".claude/skills/wf-designer/SKILL.md").write_text("x\n")
+        (self.root / ".claude/skills/wf-designer/SKILL.md").write_text(support.ROLE_STUB)
         self.cfg.path("transient").mkdir(parents=True, exist_ok=True)
         self.cfg.path("capabilities").write_text(CAPS)
         self.cfg.path("discover_brief").parent.mkdir(parents=True, exist_ok=True)

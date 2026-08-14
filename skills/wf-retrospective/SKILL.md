@@ -23,8 +23,8 @@ You distil a finished run into learnings, from two sources:
     - `feedback.repo_observation` → `$LEARNINGS` — a learning about **the project's code**.
     - `feedback.wf_friction` (clustered by `feedback.friction_kind`) → `$WF_LEARNINGS` — a
       learning about **the wf toolkit itself**.
-    - `feedback.gotcha` → a **proposed AGENTS.md edit** in your report (Phase 5) — never a
-      learnings entry, never a file you write.
+    - `feedback.gotcha` and `feedback.had_to_find` → an **AGENTS.md edit you make**
+      (Phase 5) — never a learnings entry.
   - **driver events** — the dispatch, routing, and stop rows the loop appends as it runs.
     They carry no feedback; they are the exact join that says which session belonged to
     which task, where each design issue routed, and why the loop stopped. Use them in
@@ -117,26 +117,34 @@ Turn each unprocessed observation and each cross-task pattern into a learning, h
   the file) + 1` — `id_counters.learning` for `$LEARNINGS`, `id_counters.wf_learning`
   for `$WF_LEARNINGS`; never renumber, never reuse a retired number.
 
-### Phase 5 — Gotchas → proposed AGENTS.md edits
+### Phase 5 — Gotchas and searches → the AGENTS.md files
 
-Walk **every** telemetry record with a non-empty `feedback.gotcha` (gotchas have no
-`sources` ledger — dedup happens against the target file, below). For each:
+You **maintain** the repo's `AGENTS.md` files: you edit them, and what you leave is what
+the next run's agents read. Walk every telemetry record with a non-empty
+`feedback.gotcha` or `feedback.had_to_find` (neither has a `sources` ledger — dedup
+happens against the target file). For each:
 
-1. **Pick the target file** — the nearest `AGENTS.md` at or above the directory the gotcha
-   concerns; the repo-root `AGENTS.md` when the gotcha is repo-wide or no nearer one exists.
-   If the target does not exist yet, the proposal names it as a new file.
-2. **Dedup against the target.** Read the target `AGENTS.md`; if it already covers the same
-   trap (any wording), drop the gotcha — propose nothing.
-3. **Draft the exact edit**: the target path, the section it goes under, and the verbatim
-   lines to add — ready to paste, not a paraphrase of the problem. Hold the AGENTS.md bar
-   on every draft: each proposed line must change what an agent does — a command, a trap,
-   a convention — never architecture narrative or spec prose. When the addition
-   would push the target past ~200 lines (root) or ~40 lines (a directory file), the
-   proposal also names what to trim.
+1. **Pick the target file** — the nearest `AGENTS.md` at or above the directory it
+   concerns; the repo-root `AGENTS.md` when it is repo-wide or no nearer one exists.
+   Create the file if it does not exist.
+2. **Pick the section.** A `gotcha` is a trap — what goes wrong and the exact fix. A
+   `had_to_find` is a **location** — it goes under a `## Test harness` heading when it
+   names test scaffolding (fixture builders, stub/fake types, the integration bootstrap,
+   a proof pattern to extend), and under the file's own conventions heading otherwise.
+3. **Dedup against the target.** Read it; if it already covers the same trap or names the
+   same location in any wording, add nothing.
+4. **Write the lines.** One self-contained line each, in the file's existing voice: a
+   command, a trap, a convention, a location. Every line must change what an agent does —
+   never architecture narrative, never spec prose, and never a requirement id (a persisted
+   id rots invisibly and is the thing these files must not carry).
+5. **Hold the cap.** `hygiene.agents_md_max` bounds every one of these files, and it is
+   the reason they stay worth loading. Over it, cut before you add: drop the line that has
+   gone stale against the code, or fold two into one. Leaving it over cap is not an option
+   — the gate reports it and the next run pays for it in every agent's context.
 
-Collect the drafts for the Phase 6 report. **Do not Edit or Write any AGENTS.md** — it is
-human-owned intent; an auto-applied edit ships unreviewed. The proposal in your report is
-the whole deliverable, and the human applies or rejects it.
+`wf hygiene check` reports a test directory whose `AGENTS.md` carries no `## Test harness`
+section; if this run gave you nothing to put there, leave it — the finding is a prompt for
+the next run, not a reason to invent content.
 
 ### Phase 6 — Write, summarize & commit
 
@@ -152,8 +160,8 @@ the whole deliverable, and the human applies or rejects it.
 2. **Write the run's digest to `$RETRO_REPORT`**, overwriting it — it holds one run. This
    file is the deliverable that reaches the maintainer; a return value alone reaches no
    one. Include: the new and reinforced entries per stream; the count dropped as
-   non-actionable; every Phase 5 proposal as a `PROPOSED AGENTS.md edit` block (target path +
-   verbatim lines, awaiting human approval); the **per-role context report** from
+   non-actionable; every `AGENTS.md` file Phase 5 edited, with the lines added and any
+   line cut to hold the cap; the **per-role context report** from
    `python3 <paths.tools>/cli/wf telemetry roles` (most-concerning role first — read
    `context_max` as what a role actually held at once; a `footprint` far above it is
    cache churn from slow turns, not over-loading, so attribute cost accordingly); the
@@ -172,7 +180,8 @@ the whole deliverable, and the human applies or rejects it.
    ```sh
    python3 <paths.tools>/cli/wf archive add $TELEMETRY --label <sprint-id> --move
    ```
-4. Commit the durable outputs — the learnings and the archived telemetry snapshot —
+4. Commit the durable outputs — the learnings, the AGENTS.md edits, and the archived
+   telemetry snapshot —
    leaving them uncommitted is one `git clean` from gone. Stage explicit paths, never
    `git add .` (include `$REPO_STATE` only when you bumped a counter). **Do not stage
    `$TELEMETRY` or its directory**: the live log is gitignored, and `git add` refuses an
@@ -181,8 +190,9 @@ the whole deliverable, and the human applies or rejects it.
    needs no staging; the snapshot is the record:
    ```sh
    git add $LEARNINGS $WF_LEARNINGS $REPO_STATE
+   git add <every AGENTS.md Phase 5 edited>
    git add -A -- <paths.archive>          # the snapshot step 3 just wrote
-   git commit -m "learnings + telemetry drain: <sprint-id or session range>"
+   git commit -m "learnings + AGENTS.md + telemetry drain: <sprint-id or session range>"
    ```
    If the commit fails (hook, identity), report the exact error and halt — never `--no-verify`.
 

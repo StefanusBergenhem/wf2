@@ -205,6 +205,22 @@ real run proves its absence hurt).
 - **All scripts are built TDD** (red → green → refactor). Tests live in the wf2
   source only — **only the script is rendered into an install target, never its
   tests.**
+- **Run `bash run_all.sh` before every commit** — the whole repo's gate (driver, CLI,
+  per-tool, installer). Committing without it is how a cross-file invariant ships
+  broken: `envelope parity` checks a role's frontmatter against the text it loads
+  against the config template, and no single suite sees all three.
+
+### Envelope parity
+
+- A dispatched role's frontmatter carries an `envelope:` list — every
+  `paths.`/`commands.`/`limits.`/`hygiene.` key its own text (plus the shared skills it
+  loads) names. The driver renders **that set and nothing else** into the dispatch
+  prompt. A role with no list is a dispatch error, not a full-config fallback.
+- Both directions are gated: a key the text reads but does not declare never reaches
+  the role, and a key declared but unread is context every dispatch of that role pays
+  for. `tools/cli/tests/envelope_parity_test.sh` is the check; it is the reason a
+  shared skill must not name a concrete key as an illustration — that alone forces the
+  key into every role that loads it.
 
 ### Dogfooding (standing guardrail)
 

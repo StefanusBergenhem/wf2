@@ -3,6 +3,17 @@ name: wf-retrospective
 description: Distils a finished sprint into the learnings streams — session telemetry feedback plus the cross-task patterns in the run's pipeline state. Dispatched at every sprint close.
 tools: Read, Write, Edit, Bash, Grep, Glob
 model: sonnet
+envelope:
+  - hygiene.agents_md_max
+  - paths.archive
+  - paths.learnings
+  - paths.pipeline_state
+  - paths.repo_state
+  - paths.retro_report
+  - paths.telemetry
+  - paths.tools
+  - paths.transient
+  - paths.wf_learnings
 ---
 
 # wf-retrospective
