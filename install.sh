@@ -120,6 +120,17 @@ for T in "${TARGETS[@]}"; do
     SKILLS_DIR="$HARNESS_DIR/skills"
     mkdir -p "$SKILLS_DIR"
     echo "[1/3] Rendering skills ($T)..."
+    # Prune first: a wf role the source no longer carries is still a LIVE role in the
+    # target — the driver resolves a role by naming its file, so a retired skill keeps
+    # answering dispatches until something removes it. Only `wf-` names are ours to
+    # delete; anything else in this dir belongs to the user.
+    for installed in "$SKILLS_DIR"/wf-*/; do
+        [ -d "$installed" ] || continue
+        name="$(basename "$installed")"
+        [ -d "$WF_DIR/skills/$name" ] && continue
+        rm -rf "$installed"
+        echo "  pruned:   $name (retired from wf2)"
+    done
     for skill_dir in "$WF_DIR"/skills/*/; do
         skill_name="$(basename "$skill_dir")"
         dest="$SKILLS_DIR/$skill_name"
@@ -140,6 +151,13 @@ for T in "${TARGETS[@]}"; do
         mkdir -p "$AGENTS_DIR"
         echo ""
         echo "[2/3] Rendering agents ($T)..."
+        for installed in "$AGENTS_DIR"/wf-*.md; do
+            [ -f "$installed" ] || continue
+            name="$(basename "$installed")"
+            [ -f "$WF_DIR/agents/$name" ] && continue
+            rm -f "$installed"
+            echo "  pruned:   ${name%.md} (retired from wf2)"
+        done
         for agent_file in "$WF_DIR"/agents/*.md; do
             [ -e "$agent_file" ] || continue
             dest="$AGENTS_DIR/$(basename "$agent_file")"

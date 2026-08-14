@@ -1,9 +1,9 @@
 # Review → build rejection (fix mode). Transient, worktree-local. Its PRESENCE is the
-# rejected verdict; the build reads it and fixes only the listed failures. The orchestrator
-# owns the attempt cap — review does not count attempts.
+# rejected verdict; the build reads it and fixes only the listed failures. Review does not
+# count attempts — the attempt cap is enforced outside the review session.
 task_id: "<id>"
 failures:
-  - type: "<scope_violation | requirement_trace_missing | acceptance_criteria_unmet | test_quality | security_violation | clean_code_violation>"
+  - type: "<scope_violation | acceptance_trace_missing | acceptance_criteria_unmet | test_quality | security_violation | clean_code_violation>"
     file: "<the file with the issue>"
     detail: "<what is wrong, with evidence cited from the diff>"
     required_action: "<exactly what the build must do to fix it>"

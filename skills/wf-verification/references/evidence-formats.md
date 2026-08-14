@@ -29,9 +29,9 @@ PREFLIGHT:
 SCOPE CHECK:
   git diff --name-only: [actual output]
   Serves covers/ACs (or mechanical consequence): YES / NO per file
-    (name the AC/requirement each file serves, or the mechanical reason —
+    (name the acceptance criterion each file serves, or the mechanical reason —
     regenerated file, updated consumer, test home)
-  out_of_scope untouched: YES / NO
+  boundaries respected: YES / NO
 ```
 
 ### 4. No suppression directives — check command
@@ -102,6 +102,6 @@ Any of the following instantly disqualifies a "done" claim:
 | Summarized evidence | "All tests pass" without showing the output |
 | Assumed evidence | "This should work because..." |
 | Suppressed failures | Adding `skip` to failing tests |
-| Scope violations | A changed file serving no `covers`/AC, or a change to something `out_of_scope` names |
+| Scope violations | A changed file serving no `covers`/acceptance criterion, or a change to something `boundaries` puts out of scope or marks read-only |
 | Lingering debug code | `console.log` left in production code |
 | Untested error paths | Every error/exception path in the implementation written for this task must have a corresponding test. If the implementation has N distinct error returns/throws, there must be at least N error-path tests. "Only happy-path tests exist" is a disqualifier. |

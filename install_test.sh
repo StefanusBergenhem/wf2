@@ -83,6 +83,19 @@ check "field absent → detected pi"   "[ -d '$P6/.pi/skills/wf-init' ]"
 echo "== rendered skills carry no tests =="
 check "no *_test.* shipped"          "! find '$P1/.claude/skills' -name '*_test.*' | grep -q ."
 
+echo "== toolkit machinery ships whole — every tool dir but the install-time render lib =="
+# Keyed on what the source tree holds, so a new tool dir (the driver) ships the moment it
+# exists, and ships the same way every other one does: code in, tests out.
+for tool_src in "$HERE"/tools/*/; do
+    tool_name="$(basename "$tool_src")"
+    [ "$tool_name" = "render" ] && continue
+    check "tools/$tool_name shipped"  "[ -d '$P1/.wf/tools/$tool_name' ]"
+done
+check "render lib NOT shipped"       "! [ -e '$P1/.wf/tools/render' ]"
+check "no tests/ dir in .wf/tools"   "! find '$P1/.wf/tools' -type d -name tests | grep -q ."
+check "no *_test.* in .wf/tools"     "! find '$P1/.wf/tools' -name '*_test.*' | grep -q ."
+check "cli entrypoint shipped"       "[ -f '$P1/.wf/tools/cli/wf' ]"
+
 echo "== claude install registers the telemetry usage hook =="
 SETTINGS="$P1/.claude/settings.json"
 check "hook script shipped into .wf/tools" "[ -f '$P1/.wf/tools/telemetry/claude_usage_hook.py' ]"
@@ -96,6 +109,23 @@ echo "== non-claude install ships no claude telemetry adapter =="
 check "no claude hook script for pi target" "! find '$P2/.wf/tools/telemetry' -name 'claude_*' | grep -q ."
 check "no settings.json for pi target"      "! [ -e '$P2/.claude/settings.json' ]"
 check "claude+pi list ships the adapter"    "[ -f '$P3/.wf/tools/telemetry/claude_usage_hook.py' ]"
+
+echo "== a re-install prunes wf roles the source no longer carries =="
+# A role file left behind is a live, dispatchable role: the driver resolves a role by
+# naming its file, so a retired skill keeps answering until something removes it.
+mkdir -p "$P1/.claude/skills/wf-retired/" "$P1/.claude/skills/my-own-skill/"
+echo "stale" > "$P1/.claude/skills/wf-retired/SKILL.md"
+echo "mine"   > "$P1/.claude/skills/my-own-skill/SKILL.md"
+echo "stale"  > "$P1/.claude/agents/wf-retired.md"
+echo "mine"   > "$P1/.claude/agents/my-own-agent.md"
+bash "$INSTALL" --target claude "$P1" > "$WORK/run1c.log" 2>&1 \
+    || fail "prune re-install exited non-zero (see $WORK/run1c.log)"
+check "retired wf skill pruned"       "! [ -e '$P1/.claude/skills/wf-retired' ]"
+check "retired wf agent pruned"       "! [ -e '$P1/.claude/agents/wf-retired.md' ]"
+check "non-wf skill left alone"       "[ -f '$P1/.claude/skills/my-own-skill/SKILL.md' ]"
+check "non-wf agent left alone"       "[ -f '$P1/.claude/agents/my-own-agent.md' ]"
+check "live wf skill still installed" "[ -f '$P1/.claude/skills/wf-designer/SKILL.md' ]"
+check "live wf agent still installed" "[ -f '$P1/.claude/agents/wf-drill.md' ]"
 
 echo ""
 if [ "$FAILS" -eq 0 ]; then echo "ALL GREEN"; exit 0; else echo "$FAILS FAILURE(S)"; exit 1; fi

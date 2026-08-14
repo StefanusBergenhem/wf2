@@ -42,7 +42,8 @@ them — the checklist below is sufficient for routine claims.
 - [ ] Every file in `git diff --name-only` serves the contract's `covers`/acceptance
       criteria, or is a mechanical consequence of serving them (a regenerated file, an
       updated consumer, a test home).
-- [ ] Nothing named in the contract's `out_of_scope` was changed.
+- [ ] Nothing the contract's `boundaries` puts out of scope, marks read-only, or fixes as
+      an interface was changed or deviated from.
 - [ ] No unrelated drive-by change; nothing was deleted that shouldn't have been.
 
 ### 4. No suppression directives

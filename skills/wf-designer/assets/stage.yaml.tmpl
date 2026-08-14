@@ -1,0 +1,106 @@
+# STAGE — one cut: its design and the tasks that build it. TRANSIENT.
+#
+# Written whole at each cut, consumed by the build pipeline, archived and deleted when
+# the stage merges. Never appended to, never amended in flight: a defect found while
+# this stage runs is an input to the NEXT cut, not an edit here.
+#
+# Author the fields below only — `wf stage materialize` inlines each system_tests
+# entry's scenario text from the work-set. See references/task-contract.md for the
+# task field rules.
+
+stage: 0                        # from id_counters.stage + 1; monotonic over the repo's lifetime
+serves: [CAP-NNN, L-NNN]        # every capability and learning this stage advances, in full
+goal: "<one line: what this stage delivers>"
+grounded_in:                    # the brief and the drill digests this cut stands on
+  - "<paths.discover_brief>"
+  - "<digest path under paths.drill_cache>"
+
+# allocation, flow and checkpoint are keyed by task: each task's envelope carries its
+# OWN entries and no sibling's. Every task needs an entry in all three.
+allocation:                     # only components the repo carries or paths.architecture names
+  - component: <id as paths.discover_brief writes it>
+    does: "<what it must do in this stage>"
+    tasks: [S0-T1]              # every task that works this component in this stage
+
+flow:
+  - task: S0-T1
+    does: |
+      <How this task's behaviour moves through the components it is allocated, in order,
+       wiring included (composition root, orchestration). It is all the build gets of
+       the stage's shape — write it complete enough to stand alone. Reference the brief
+       and the drill digests by path; do not restate existing structure.>
+
+checkpoint:                     # what is demonstrably true once this stage merges
+  - task: S0-T1
+    observable: "<X demonstrably works — observed by <how>>"
+
+supersessions:                  # omit when this stage invalidates no shipped behaviour
+  - retires: "<the behaviour>"
+    proven_by: "<test file path>"
+    reason: "<one line>"
+    successor: "<task id>"      # or "retired, no successor"
+
+nfr:                            # allocated work or an explicit deferral — never a silent absence
+  - envelope: "<subject · metric · threshold · condition · source>"
+    task: S0-T1
+  # - deferred: "<what>"
+  #   why: "<why now is wrong>"
+  #   revisit: "<the trigger>"
+  #   learning: L-NNN           # a deferral that must outlive this stage becomes a learning
+
+authz:                          # every new or changed entry point, or an explicit deferral
+  - guards: "<the entry point>"
+    task: S0-T1
+
+soundness:                      # one line per heuristic: pass + why, or conflict + resolution
+  boundary_srp: "<…>"
+  ownership: "<…>"
+  dependency_direction: "<…>"
+  interface_stability: "<…>"
+  extension_over_modification: "<…>"
+  allocation_completeness: "<…>"
+  move_discipline: "<…>"
+
+decisions:                      # every call taken below the escalation gate; rides in the PR body
+  - "Assumption — CAP-NNN read as <the reading designed to>, not <the reading rejected>."
+  - "Supersession — <shipped component behaviour retired> · <why>."
+  - "Deferral — <item> · <why> · revisit <when> · L-NNN."
+  - "Design issue DI-N — <what changed> · successor S0-T2."
+
+tasks:
+  - id: S0-T1                   # S<stage>-T<n>; no two tasks in a stage centre on the same file
+    title: "<one line: what this task delivers>"   # the build's commit subject
+    covers: [CAP-NNN]           # and/or L-NNN — the driver this task serves
+    story: |
+      <2–4 paragraphs: what this task builds and why; how the change flows through the
+       code; what is new against what already exists.>
+    acceptance:
+      - id: AC-1
+        criterion: "<trigger → observable response, one behaviour>"
+        tests:
+          - {level: unit, target: "<file>:<function>"}
+      - id: AC-2
+        criterion: "<a failure or boundary behaviour of the same change>"
+        tests:
+          - {level: integration, seam: "<the real external dep or wiring exercised>", target: "<TestName>"}
+      # - id: AC-3
+      #   criterion: "<a fact only a gate can observe — name the source fact here>"
+      #   verified_by: inspection
+    boundaries: |
+      <out of scope · read-only files · fixed interfaces. Binding on the build.>
+    grounding:
+      - "<path>:<line> — <what is there>"
+      - "ADR-NNN — <the one-clause constraint, verbatim from its constraint: line>"
+
+  # An e2e task — one per SYS-TC case whose path merged in an EARLIER stage.
+  - id: S0-T2
+    title: "System test: <the case's behaviour>"
+    covers: [CAP-NNN]
+    story: |
+      <what end-to-end behaviour this proves and which merged path it runs.>
+    acceptance: []              # the system test case IS the acceptance
+    system_tests: [SYS-TC-NNN]  # scenario text materialized; build stamps [SYS-TC:SYS-TC-NNN]
+    boundaries: |
+      Any component logic — this task only exercises the assembled path.
+    grounding:
+      - "<the e2e home + how it runs — e.g. e2e/ ; establish one if none exists>"

@@ -3,6 +3,13 @@ name: wf-drill
 description: Read-only depth-on-demand code investigator. Answers one question about one component or path, appends a fixed-shape digest to the shared drill-cache, and returns a short summary.
 tools: Read, Grep, Glob, Bash, Write
 model: sonnet
+envelope:
+  - paths.discover_brief
+  - paths.drill_cache
+  - paths.repo_state
+  - paths.telemetry
+  - paths.tools
+  - paths.transient
 ---
 
 # wf-drill
@@ -13,7 +20,10 @@ path, with the depth the system brief does not carry, and write it up as a diges
 Read `{{WF_SKILLS_DIR}}/wf-basics/SKILL.md` for the `.wf/` layout and the telemetry
 handshake, and record the session start stamp now per wf-basics §2 — your first action.
 
-Resolve these from `.wf/config.yaml`:
+Every path below is a line in the dispatch that launched you. Read it there. A
+dispatcher that carried none is normal — you are launched from several — so when a
+path is absent, run the `wf envelope show` bootstrap in `wf-basics` §1 and take it
+from that block. Never read `.wf/config.yaml` whole:
 
 - `DRILL_CACHE` = `paths.drill_cache`     (where you write your digest)
 - `BRIEF`       = `paths.discover_brief`  (the system map — your orientation)
@@ -46,6 +56,8 @@ and `<utc>` is `date -u +%Y%m%dT%H%M%SZ`:
 ```markdown
 # Drill: <the question>
 **Target:** <component/path>   **Date:** <utc>   **Confidence:** <high|medium|low — why>
+**Taken at:** <git rev-parse HEAD>
+**Targets:** <repo-relative path>, <repo-relative path>
 
 ## Summary
 <2–4 sentences directly answering the question.>
@@ -63,6 +75,11 @@ and `<utc>` is `date -u +%Y%m%dT%H%M%SZ`:
 ## Gotchas
 - <a surprise, footgun, or sharp edge a change here would hit> — or "none observed".
 ```
+
+**Taken at** is `git rev-parse HEAD`, and **Targets** lists every source file you actually
+read, repo-relative. A later run prunes this digest when any of those files changed since
+that commit, so a digest that names no targets is never trusted again, and one that names
+files it did not read is trusted after the code under it moved. List exactly what you read.
 
 Fill every section. If a section is genuinely empty, write "none observed" — do not
 drop it. Set **Confidence** honestly: `low` when you could not find defending tests

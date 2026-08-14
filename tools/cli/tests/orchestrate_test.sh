@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 #
-# Tests for the wf orchestrate helpers — the judgment-free return-inspection /
-# routing verdicts. Run: bash tools/cli/tests/orchestrate_test.sh (exit 0 = pass).
+# Tests for the wf orchestrate helpers — the judgment-free return-inspection and
+# resume-safety verdicts the driver routes on.
+# Run: bash tools/cli/tests/orchestrate_test.sh (exit 0 = pass).
 # wf2-source-only — never rendered into an install target.
 set -uo pipefail
 
@@ -18,11 +19,24 @@ bad() { fail=$((fail+1)); echo "  FAIL - $1"; echo "         $2"; }
 jget() { "$PYTHON" -c 'import sys,json; d=json.loads(sys.argv[1]); print(eval(sys.argv[2]))' "$1" "$2"; }
 wf() { "$PYTHON" "$WF" "$@"; }
 
-mkrepo() {  # → prints repo dir; a git repo with .wf/transient/
+mkrepo() {  # → prints repo dir; a git repo with .wf/transient/ and a real config
     local r; r="$(mktemp -d)"
     git -C "$r" init -q
     git -C "$r" config user.email wf@test; git -C "$r" config user.name wf
     mkdir -p "$r/.wf/transient"
+    # The inspectors resolve every artifact from here. A worktree carries the config
+    # in with it, so an absent one is a broken worktree, not a default to guess past.
+    cat > "$r/.wf/config.yaml" <<'YAML'
+version: 1
+paths:
+  transient: ".wf/transient"
+  design_issues: ".wf/transient/design-issues.yaml"
+  review_ready: ".wf/transient/review-ready.yaml"
+  feedback: ".wf/transient/feedback.yaml"
+YAML
+    # committed in a real project; excluded here so the fixture keeps its "no commit
+    # yet" and "clean tree" cases without a base commit
+    echo ".wf/config.yaml" > "$r/.git/info/exclude"
     echo "$r"
 }
 gitc() { git -C "$1" -c core.hooksPath=/dev/null commit -q --allow-empty -m "$2"; git -C "$1" rev-parse --short HEAD; }
@@ -146,94 +160,33 @@ wf orchestrate preserve-uncommitted "$R" T1 >/dev/null
 git -C "$R" -c core.hooksPath=/dev/null log --name-only -1 --pretty=format: | grep -q "junk.log" \
     && bad "pres ignored" "ignored file committed" || ok "preserve: gitignored file stays out"
 
-# ── dispatch-fix ─────────────────────────────────────────────────────────────
-# Every design issue routes to the single spec fixer, wf-spec-fix. Build/review/stage-repair
-# raise a BARE issue (no fix_kind); wf-tl tags a preparing-phase slice issue `scope: slice`.
+# a task that DELETED a file: the live dems failure. `git status` reports a staged
+# deletion as "D " — already staged, and gone from both the worktree and the index, so
+# `git add <that path>` cannot match it and exits 128. That took the whole preserve down
+# with it and NOTHING was preserved, for any file in the task.
+RD="$(mkrepo)"
+echo old > "$RD/doomed.txt"; echo keep > "$RD/kept.txt"
+git -C "$RD" add doomed.txt kept.txt; git -C "$RD" -c core.hooksPath=/dev/null commit -q -m base
+git -C "$RD" rm -q doomed.txt                       # staged deletion  → "D "
+echo more >> "$RD/kept.txt"                         # unstaged modify  → " M"
+echo new > "$RD/added.txt"                          # untracked        → "??"
+OUTD="$(wf orchestrate preserve-uncommitted "$RD" T1)"
+[ "${OUTD%% *}" = "committed" ] && ok "preserve: a staged deletion does not abort the preserve" || bad "pres deleted" "$OUTD"
+[ -z "$(git -C "$RD" status --porcelain=v1)" ] \
+    && ok "preserve: deletion + modify + untracked all land in the commit" \
+    || bad "pres deleted leftovers" "$(git -C "$RD" status --porcelain=v1)"
+git -C "$RD" -c core.hooksPath=/dev/null log --name-only -1 --pretty=format: | grep -q "doomed.txt" \
+    && ok "preserve: the deletion itself is recorded" || bad "pres deletion recorded" ""
 
-mk_di() {  # mk_di [extra-flow-fields] → project dir; DI-1 is a bare running-stage issue
-    local p; p="$(mktemp -d)"; mkdir -p "$p/.wf/transient"
-    cat > "$p/.wf/config.yaml" <<YAML
-version: 1
-paths:
-  design_issues: ".wf/transient/design-issues.yaml"
-  sprint: ".wf/transient/sprint.yaml"
-YAML
-    cat > "$p/.wf/transient/design-issues.yaml" <<YAML
-issues:
-  - {id: DI-1, task_id: T1, status: open${1:+, $1}}
-YAML
-    echo "$p"
-}
-# A bare design issue (no fix_kind) routes to wf-spec-fix autonomously.
-P="$(mk_di)"
-OUTD="$(wf orchestrate dispatch-fix DI-1 --config "$P/.wf/config.yaml")"; RC=$?
-[ "$(jget "$OUTD" "d['subagent_type']")" = "wf-spec-fix" ] && [ "$RC" -eq 0 ] \
-    && ok "dispatch-fix: bare design issue → wf-spec-fix (exit 0)" || bad "df bare" "$OUTD rc=$RC"
-[ "$(jget "$OUTD" "d['human_gate']")" = "False" ] \
-    && ok "dispatch-fix: bare issue is autonomous (no human gate)" || bad "df bare gate" "$OUTD"
-# The router ignores any fix_kind on the entry — routing no longer depends on the raiser's guess.
-P="$(mk_di "fix_kind: spec_amendment")"
-[ "$(jget "$(wf orchestrate dispatch-fix DI-1 --config "$P/.wf/config.yaml")" "d['subagent_type']")" = "wf-spec-fix" ] \
-    && ok "dispatch-fix: a leftover fix_kind does not change the route" || bad "df fixkind-ignored" ""
-
-# A slice issue wf-tl raises in `preparing` carries scope: slice — no task, no sprint.
-# Routes to wf-spec-fix autonomously, but only for a bounded number of re-cut rounds.
-
-mk_slice_di() {  # mk_slice_di <how-many-rounds> → prints project dir; the LAST is open
-    local p n; p="$(mktemp -d)"; n="$1"; mkdir -p "$p/.wf/transient"
-    cat > "$p/.wf/config.yaml" <<YAML
-version: 1
-paths:
-  design_issues: ".wf/transient/design-issues.yaml"
-  sprint: ".wf/transient/sprint.yaml"
-YAML
-    echo "issues:" > "$p/.wf/transient/design-issues.yaml"
-    for i in $(seq 1 "$n"); do
-        local st=resolved; [ "$i" -eq "$n" ] && st=open
-        echo "  - {id: DI-SLICE-$i, task_id: null, scope: slice, status: $st}" \
-            >> "$p/.wf/transient/design-issues.yaml"
-    done
-    echo "$p"
-}
-P="$(mk_slice_di 1)"
-OUTS="$(wf orchestrate dispatch-fix DI-SLICE-1 --config "$P/.wf/config.yaml")"; RCS=$?
-[ "$(jget "$OUTS" "d['subagent_type']")" = "wf-spec-fix" ] && [ "$RCS" -eq 0 ] \
-    && ok "dispatch-fix: slice issue → wf-spec-fix (exit 0)" || bad "df slice" "$OUTS rc=$RCS"
-[ "$(jget "$OUTS" "d['envelope']['task_id'] is None")" = "True" ] \
-    && ok "dispatch-fix: slice envelope carries no task_id" || bad "df slice task_id" "$OUTS"
-[ "$(jget "$OUTS" "'sprint_artifact' in d['envelope']")" = "False" ] \
-    && ok "dispatch-fix: slice envelope omits sprint_artifact (none exists in preparing)" \
-    || bad "df slice sprint_artifact" "$OUTS"
-# The envelope names the artifacts that are THERE: dispatch-fix reports what is on disk.
-P="$(mk_slice_di 1)"
-: > "$P/.wf/transient/sprint.yaml"
-OUTSP="$(wf orchestrate dispatch-fix DI-SLICE-1 --config "$P/.wf/config.yaml")"
-[ "$(jget "$OUTSP" "d['envelope'].get('sprint_artifact') or ''")" = ".wf/transient/sprint.yaml" ] \
-    && ok "dispatch-fix: slice envelope names \$SPRINT when one is on disk" \
-    || bad "df slice sprint present" "$OUTSP"
-# round 2 is still autonomous — the loop is cheap, and one bad cut deserves one re-cut
-P="$(mk_slice_di 2)"
-OUT2="$(wf orchestrate dispatch-fix DI-SLICE-2 --config "$P/.wf/config.yaml")"; RC2=$?
-[ "$(jget "$OUT2" "d['human_gate']")" = "False" ] && [ "$RC2" -eq 0 ] \
-    && ok "dispatch-fix: 2nd slice rejection still routes to wf-spec-fix" || bad "df slice round2" "$OUT2 rc=$RC2"
-# round 3 → the fixer is not converging; a human rules on the slice
-P="$(mk_slice_di 3)"
-OUT3="$(wf orchestrate dispatch-fix DI-SLICE-3 --config "$P/.wf/config.yaml" 2>/dev/null)"; RC3=$?
-[ "$(jget "$OUT3" "d['human_gate']")" = "True" ] && [ "$RC3" -eq 1 ] \
-    && ok "dispatch-fix: 3rd slice rejection → human gate (exit 1)" || bad "df slice round3" "$OUT3 rc=$RC3"
-[ -n "$(jget "$OUT3" "d.get('reason') or ''")" ] \
-    && ok "dispatch-fix: the round-bound gate says why" || bad "df slice round3 reason" "$OUT3"
-# The bound counts slice rejections ONLY: a sprint's bare running-stage issues share the
-# file, and counting them would gate a slice loop that has laps left.
-P="$(mk_slice_di 2)"
-cat >> "$P/.wf/transient/design-issues.yaml" <<'YAML'
-  - {id: DI-1, task_id: T1, status: resolved}
-  - {id: DI-2, task_id: T2, status: resolved}
-YAML
-OUTM="$(wf orchestrate dispatch-fix DI-SLICE-2 --config "$P/.wf/config.yaml" 2>/dev/null)"; RCM=$?
-[ "$(jget "$OUTM" "d['human_gate']")" = "False" ] && [ "$RCM" -eq 0 ] \
-    && ok "dispatch-fix: the round bound counts slice rejections, not the sprint's other DIs" \
-    || bad "df slice mixed-kinds" "$OUTM rc=$RCM"
+# an UNSTAGED deletion — "` D`" — is the same file gone with `rm`, never `git rm`
+RU="$(mkrepo)"
+echo old > "$RU/doomed.txt"; git -C "$RU" add doomed.txt
+git -C "$RU" -c core.hooksPath=/dev/null commit -q -m base
+rm "$RU/doomed.txt"
+OUTU="$(wf orchestrate preserve-uncommitted "$RU" T1)"
+[ "${OUTU%% *}" = "committed" ] && ok "preserve: an unstaged deletion is preserved too" || bad "pres rm" "$OUTU"
+[ -z "$(git -C "$RU" status --porcelain=v1)" ] \
+    && ok "preserve: the unstaged deletion leaves a clean tree" || bad "pres rm leftovers" ""
 
 # ── sweep-transients ─────────────────────────────────────────────────────────
 # Staleness routes on pipeline_state.task_states: the artifact names its task_id;
@@ -333,31 +286,22 @@ SW="$(wf orchestrate sweep-transients --config "$P/.wf/config.yaml")"
     && [ -f "$P/.wf/transient/design-issues.yaml" ] \
     && ok "sweep-di: open entry with task_id: null → kept" || bad "sweep-di null-task" "$SW"
 
-# A RESOLVED slice-scoped entry is the preparing loop's own history: dispatch-fix counts
-# these to bound the re-design rounds, so pruning one mid-loop under-counts the round on
-# a resume and hands the SA a third lap it should not get. Keep them while preparing runs.
-DI_ROUND1='issues:\n  - {id: DI-SLICE-1, task_id: null, scope: slice, status: resolved}\n  - {id: DI-SLICE-2, task_id: null, scope: slice, status: open}\n'
-P="$(mk_sweep_di "$DI_ROUND1" 'current_phase: preparing\n')"
-SW="$(wf orchestrate sweep-transients --config "$P/.wf/config.yaml")"
-[ "$(jget "$SW" "len(d['pruned'])")" = "0" ] \
-    && grep -q "DI-SLICE-1" "$P/.wf/transient/design-issues.yaml" \
-    && ok "sweep-di: resolved slice issue kept while preparing (it is the round count)" \
-    || bad "sweep-di slice-history" "$SW"
-# Once preparing is over, the same entry is residue.
-P="$(mk_sweep_di "$DI_ROUND1" 'current_phase: running_stage\n')"
+# A slice-scoped entry (no task) is a live handoff until the design role resolves it;
+# once resolved it is residue like any other closed entry, whatever the phase.
+DI_SLICE='issues:\n  - {id: DI-SLICE-1, task_id: null, scope: slice, status: resolved}\n  - {id: DI-SLICE-2, task_id: null, scope: slice, status: open}\n'
+P="$(mk_sweep_di "$DI_SLICE" 'current_phase: designing\n')"
 SW="$(wf orchestrate sweep-transients --config "$P/.wf/config.yaml")"
 [ "$(jget "$SW" "len(d['pruned'])")" = "1" ] && [ "$(jget "$SW" "d['pruned'][0]['id']")" = "DI-SLICE-1" ] \
     && grep -q "DI-SLICE-2" "$P/.wf/transient/design-issues.yaml" \
-    && ok "sweep-di: resolved slice issue pruned once preparing is over" \
-    || bad "sweep-di slice-residue" "$SW"
-# No pipeline-state file → the phase is UNKNOWN, which is not "not preparing": keep
-# everything, exactly as the top-level-task_id sweep does.
-P="$(mk_sweep_di "$DI_ROUND1" 'current_phase: preparing\n')"
+    && ok "sweep-di: resolved slice issue pruned, the open one kept" \
+    || bad "sweep-di slice" "$SW"
+# No pipeline-state file → keep everything, exactly as the top-level-task_id sweep does.
+P="$(mk_sweep_di "$DI_SLICE" 'current_phase: designing\n')"
 rm "$P/.wf/transient/pipeline-state.yaml"
 SW="$(wf orchestrate sweep-transients --config "$P/.wf/config.yaml")"
 [ "$(jget "$SW" "len(d['pruned'])")" = "0" ] && [ "$(jget "$SW" "len(d['deleted'])")" = "0" ] \
     && grep -q "DI-SLICE-1" "$P/.wf/transient/design-issues.yaml" \
-    && ok "sweep-di: no pipeline-state file → nothing pruned (phase unknown)" \
+    && ok "sweep-di: no pipeline-state file → nothing pruned" \
     || bad "sweep-di no-state" "$SW"
 
 # A status-less entry is the malformed-writer case: it defaults to `open` and stays. The
@@ -413,6 +357,155 @@ P="$(mk_sweep_di "$DI_MIXED" 'current_phase: idle\n')"
 SW="$(wf orchestrate sweep-transients --config "$P/.wf/config.yaml" --dry-run)"
 [ "$(jget "$SW" "len(d['pruned'])")" = "1" ] && grep -q "DI-1" "$P/.wf/transient/design-issues.yaml" \
     && ok "sweep-di: --dry-run leaves a mixed file unrewritten" || bad "sweep-di dry-run mixed" "$SW"
+
+# ── consume-marker ───────────────────────────────────────────────────────────
+# A presence marker is written by one role and read by exactly one dispatch. The
+# driver clears it at the consumption point, so a marker can never be read a second
+# time as a fresh verdict. Moved aside rather than unlinked: a rejected build's
+# feedback is the only readable account of why, and a human reads it off a blocked
+# task. Its path is resolved from the WORKTREE's own config, like the inspectors.
+
+mkrepo_cfg() {  # → repo dir with a .wf/config.yaml naming both markers
+    local r; r="$(mkrepo)"
+    cat > "$r/.wf/config.yaml" <<'YAML'
+version: 1
+paths:
+  feedback: ".wf/transient/feedback.yaml"
+  review_ready: ".wf/transient/review-ready.yaml"
+  design_issues: ".wf/transient/design-issues.yaml"
+YAML
+    echo "$r"
+}
+
+R="$(mkrepo_cfg)"
+[ "$(wf orchestrate consume-marker "$R" feedback)" = "absent" ] \
+    && ok "consume: no marker on disk → absent" || bad "consume absent" ""
+
+printf 'task_id: T1\nfailures: []\n' > "$R/.wf/transient/feedback.yaml"
+OUTC="$(wf orchestrate consume-marker "$R" feedback)"
+[ "${OUTC%% *}" = "consumed" ] && [ ! -f "$R/.wf/transient/feedback.yaml" ] \
+    && [ -f "$R/.wf/transient/feedback.yaml.consumed" ] \
+    && ok "consume: feedback → moved aside, no longer a marker" || bad "consume feedback" "$OUTC"
+grep -q "task_id: T1" "$R/.wf/transient/feedback.yaml.consumed" \
+    && ok "consume: the rejection stays readable for a human" || bad "consume content" ""
+
+: > "$R/.wf/transient/review-ready.yaml"
+wf orchestrate consume-marker "$R" review_ready >/dev/null
+[ ! -f "$R/.wf/transient/review-ready.yaml" ] \
+    && [ -f "$R/.wf/transient/review-ready.yaml.consumed" ] \
+    && ok "consume: review_ready → moved aside" || bad "consume review_ready" ""
+
+# A second rejection overwrites the first's residue rather than failing on it.
+printf 'task_id: T1\nfailures: [second]\n' > "$R/.wf/transient/feedback.yaml"
+OUTC="$(wf orchestrate consume-marker "$R" feedback)"; RCC=$?
+[ "$RCC" -eq 0 ] && grep -q second "$R/.wf/transient/feedback.yaml.consumed" \
+    && ok "consume: a later marker replaces the prior residue" || bad "consume overwrite" "$OUTC rc=$RCC"
+
+# The residue must be inert: the inspectors key on the exact configured path.
+R="$(mkrepo_cfg)"; BUILD="$(gitc "$R" "T1 build: done")"
+: > "$R/.wf/transient/review-ready.yaml"
+printf 'task_id: T1\n' > "$R/.wf/transient/feedback.yaml"
+wf orchestrate consume-marker "$R" feedback >/dev/null
+gitc "$R" "T1 review: approved" >/dev/null
+[ "$(jget "$(wf orchestrate inspect-review-return "$R" T1 "$BUILD")" "d['verdict']")" = "approved" ] \
+    && ok "consume: consumed residue is inert to inspect-review-return" || bad "consume inert" ""
+
+# THE REGRESSION (observed live in dems, task T1): the build fixes the rejection but
+# leaves feedback.yaml behind, the review then approves — and the approval commit is
+# never even looked at, because feedback presence is the first branch of the cascade.
+# Every later attempt re-rejects an approved build until the attempt cap blocks it.
+R="$(mkrepo_cfg)"; BUILD="$(gitc "$R" "T1 build: done")"
+: > "$R/.wf/transient/review-ready.yaml"
+printf 'task_id: T1\n' > "$R/.wf/transient/feedback.yaml"
+gitc "$R" "T1 review: approved" >/dev/null
+[ "$(jget "$(wf orchestrate inspect-review-return "$R" T1 "$BUILD")" "d['verdict']")" = "rejected" ] \
+    && ok "regression: an unconsumed marker re-rejects an approved build" || bad "regression stale" ""
+wf orchestrate consume-marker "$R" feedback >/dev/null
+[ "$(jget "$(wf orchestrate inspect-review-return "$R" T1 "$BUILD")" "d['verdict']")" = "approved" ] \
+    && ok "regression: consuming it lets the approval be read" || bad "regression consumed" ""
+
+# Guards. An unknown marker name is never a licence to move an arbitrary config path,
+# and an unconfigured marker is an error rather than a silently restated default.
+R="$(mkrepo_cfg)"
+wf orchestrate consume-marker "$R" current_task >/dev/null 2>&1
+[ $? -eq 2 ] && ok "consume: unknown marker name → exit 2" || bad "consume unknown" ""
+wf orchestrate consume-marker "$R/nope" feedback >/dev/null 2>&1
+[ $? -eq 2 ] && ok "consume: missing worktree → exit 2" || bad "consume no-worktree" ""
+R="$(mkrepo)"; rm "$R/.wf/config.yaml"   # no .wf/config.yaml at all
+printf 'task_id: T1\n' > "$R/.wf/transient/feedback.yaml"
+wf orchestrate consume-marker "$R" feedback >/dev/null 2>&1
+[ $? -eq 2 ] && [ -f "$R/.wf/transient/feedback.yaml" ] \
+    && ok "consume: unconfigured marker → exit 2, file untouched" || bad "consume unconfigured" ""
+
+# Worktree discipline: the path comes from the worktree's OWN config, not a default.
+R="$(mkrepo)"
+mkdir -p "$R/.wf/elsewhere"
+cat > "$R/.wf/config.yaml" <<'YAML'
+version: 1
+paths:
+  feedback: ".wf/elsewhere/rejected.yaml"
+YAML
+printf 'task_id: T1\n' > "$R/.wf/elsewhere/rejected.yaml"
+wf orchestrate consume-marker "$R" feedback >/dev/null
+[ ! -f "$R/.wf/elsewhere/rejected.yaml" ] && [ -f "$R/.wf/elsewhere/rejected.yaml.consumed" ] \
+    && ok "consume: resolves the worktree's own configured path" || bad "consume own-config" ""
+
+# ── the inspectors resolve, they never guess ─────────────────────────────────
+#
+# A verdict is a routing decision. Read off a guessed path it sends the task down the
+# wrong branch silently — strictly worse than the destructive move consume-marker
+# already refuses to guess for, and it fails without an error to notice.
+
+# the verdict follows paths.design_issues wherever it points
+RC="$(mkrepo)"
+mkdir -p "$RC/.wf/custom"
+"$PYTHON" - "$RC" <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1], ".wf/config.yaml")
+p.write_text(p.read_text().replace(".wf/transient/design-issues.yaml",
+                                   ".wf/custom/di.yaml"))
+PY
+printf 'issues:\n  - id: DI-9\n    task_id: T1\n    status: open\n' > "$RC/.wf/custom/di.yaml"
+[ "$(jget "$(wf orchestrate inspect-build-return "$RC" T1)" "d['verdict']")" = "design_issue" ] \
+    && ok "inspect-build: the verdict follows paths.design_issues, not a guess" \
+    || bad "inspect-build relocated design_issues" "$(wf orchestrate inspect-build-return "$RC" T1)"
+
+# a relocated file the guess would have found at the old place must NOT be read
+RD="$(mkrepo)"
+"$PYTHON" - "$RD" <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1], ".wf/config.yaml")
+p.write_text(p.read_text().replace(".wf/transient/review-ready.yaml",
+                                   ".wf/custom/rr.yaml"))
+PY
+: > "$RD/.wf/transient/review-ready.yaml"
+[ "$(jget "$(wf orchestrate inspect-build-return "$RD" T1)" "d['verdict']")" = "escalate_no_artifacts" ] \
+    && ok "inspect-build: a marker at the OLD guessed path is not a verdict" \
+    || bad "inspect-build stale guess" ""
+
+# a config missing the key is refused, not defaulted
+for verb in inspect-build-return inspect-review-return; do
+    RE="$(mkrepo)"
+    printf 'version: 1\npaths:\n  transient: ".wf/transient"\n' > "$RE/.wf/config.yaml"
+    gitc "$RE" "base" >/dev/null
+    if wf orchestrate "$verb" "$RE" T1 abc1234 >/dev/null 2>&1; then
+        bad "$verb: an unconfigured artifact path should refuse" "exited 0"
+    else
+        ok "$verb: an unconfigured artifact path refuses instead of guessing"
+    fi
+done
+
+# sweep-transients deletes what it resolves, so it never invents a path either — but an
+# absent key there means "nothing configured to sweep", not an unsound verdict. It skips
+# and reports, rather than refusing the whole sweep or guessing at .wf/transient/.
+RF="$(mkrepo)"
+printf 'version: 1\npaths:\n  transient: ".wf/transient"\n' > "$RF/.wf/config.yaml"
+: > "$RF/.wf/transient/feedback.yaml"
+SW="$(wf orchestrate sweep-transients --config "$RF/.wf/config.yaml")"
+[ "$(jget "$SW" "len(d['deleted'])")" = "0" ] && [ -f "$RF/.wf/transient/feedback.yaml" ] \
+    && ok "sweep-transients: an unconfigured artifact is not guessed at" || bad "sweep unconfigured" "$SW"
+[ "$(jget "$SW" "'feedback' in d['unconfigured']")" = "True" ] \
+    && ok "sweep-transients: an unconfigured artifact is reported, not silent" || bad "sweep unconfigured report" "$SW"
 
 echo ""
 echo "  orchestrate helpers: $pass passed, $fail failed"

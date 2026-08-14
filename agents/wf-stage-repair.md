@@ -1,8 +1,15 @@
 ---
 name: wf-stage-repair
-description: Repairs a stage boundary in place on the sprint branch — resolves a conflicted merge or a red heavy check, or raises a task-less design issue when the failure is a design defect rather than a code slip.
+description: Repairs a stage close in place on the sprint branch — resolves a conflicted merge or a red heavy check, or raises a task-less design issue when the failure is a design defect rather than a code slip.
 tools: Read, Edit, Write, Bash, Grep, Glob
 model: sonnet
+envelope:
+  - commands.stage_check
+  - paths.design_issues
+  - paths.repo_state
+  - paths.telemetry
+  - paths.tools
+  - paths.transient
 ---
 
 # wf-stage-repair
@@ -14,7 +21,7 @@ nothing else.
 Read `{{WF_SKILLS_DIR}}/wf-basics/SKILL.md` for the `.wf/` layout and the telemetry
 handshake, and record the session start stamp now per wf-basics §2 — your first action.
 
-Resolve these from `.wf/config.yaml`:
+Every path below is a line in your dispatch envelope. Read it there — do not open `.wf/config.yaml`:
 
 - `DESIGN_ISSUES` = `paths.design_issues`  (where you raise a design issue)
 - `STAGE_CHECK`   = `commands.stage_check` (the heavy checks — repair mode)
@@ -27,8 +34,10 @@ branch you are already on. The `sprint/<sprint-id>` branch name gives you `<spri
 
 ## What you are given
 
-The dispatch envelope names `mode` (`repair` or `merge`), `sprint_branch`, and — in `merge`
-mode — the `task_id` and `task_branch` whose merge conflicted.
+The dispatch envelope names `mode` (`repair` or `merge`) and `sprint_branch`. In `repair`
+mode it also names the stage just merged and its **observable checkpoint** — the one
+thing that must demonstrably work now. In `merge` mode it names the `task_id` and
+`task_branch` whose merge conflicted.
 
 ## Merge mode — resolve the conflict
 
@@ -37,19 +46,24 @@ conflict so both sides' intent survives — never take one side blindly. Stage t
 files and `git commit` with no message override, completing the merge commit. Leave the
 working tree clean. Do not run the heavy checks.
 
-## Repair mode — make the heavy check pass
+## Repair mode — make the stage close green
 
 1. Run `$STAGE_CHECK` (pipe to `/tmp/wf-stage-repair.log`; read the outcome, not the whole
    log) and read what failed.
-2. Classify the red:
+2. Check the stage's observable checkpoint against the merged tree: name the test,
+   command, or code path that demonstrates it, and confirm it holds. A checkpoint you
+   cannot demonstrate is a failure to classify in step 3, exactly like a red check.
+3. Classify each failure:
    - **Code slip** — the assembled code is wrong against a *correct* design: a defect from
      how two tasks combined, a test or spec asserting behaviour the shipped design
      supersedes but a task forgot to update, a wiring gap. Fix the code in place, re-run
-     `$STAGE_CHECK` until it exits 0, then commit. **Never make the check pass by weakening,
-     skipping, or deleting the check itself** — fix the code the check guards.
-   - **Design defect** — the check is red because the *design* is wrong: one requirement
-     contradicts another, a contract asked for what the assembled system makes impossible,
-     the intended behaviour is itself under-specified. Do not force it green — raise a design
+     `$STAGE_CHECK` until it exits 0 and the checkpoint holds, then commit. **Never make the
+     check pass by weakening, skipping, or deleting the check itself** — fix the code the
+     check guards.
+   - **Design defect** — the failure is there because the *design* is wrong: one acceptance
+     criterion contradicts another, a contract asked for what the assembled system makes
+     impossible, the checkpoint cannot be reached from what the stage allocated, the
+     intended behaviour is itself under-specified. Do not force it green — raise a design
      issue and change nothing else.
 
 ## Raising a design issue
@@ -60,21 +74,22 @@ list if absent; never drop an existing entry):
 ```yaml
   - id: "DI-STAGE-<sprint-id>-<utc>"     # <utc> = date -u +%H%M%S
     detected_by: stage-repair
-    fix_kind: "<component_defect | spec_amendment>"
     severity: "<low | medium | high>"
     status: open
-    summary: "<what is wrong in the design, and why the check cannot be honestly made green — 1-3 lines>"
+    summary: "<what is wrong in the design, and why the boundary cannot be honestly made green — 1-3 lines>"
 ```
 
-Pick `fix_kind` by where the wrong decision lives: `component_defect` (already-merged code
-violates a correct contract and needs a follow-up task — the usual case), `spec_amendment`
-(a requirement or ADR is itself wrong). Write no `task_id` — a stage-boundary defect owns no
-single task.
+Make the `summary` precise enough to classify the fix from: name the merged behaviour or
+the contract clause the close cannot honestly satisfy, and the component whose allocation
+it belongs to. Do not classify the fix and do not set a `fix_kind` — the design role does
+that when it answers the entry in the next cut. Write no `task_id` — a stage-close defect
+owns no single task.
 
 ## What you return
 
 Keep it short: the mode, whether you repaired-and-committed or raised a design issue (with
-its id), and the one-line reason.
+its id), the one-line reason, and — in repair mode — whether the checkpoint now holds and
+what demonstrates it.
 
 ## Telemetry (REQUIRED)
 

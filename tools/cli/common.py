@@ -10,6 +10,7 @@ them through here.
 from __future__ import annotations
 
 import argparse
+import datetime
 import json
 import re
 import subprocess
@@ -29,10 +30,32 @@ def die(msg: str, code: int = 2) -> "NoReturn":  # type: ignore[name-defined]
     sys.exit(code)
 
 
+def now() -> str:
+    """The UTC stamp every history entry and artifact timestamp carries."""
+    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+# Every subprocess this CLI starts carries an explicit bound. Git plumbing answers in
+# milliseconds; a call still running after this has hung, and an unbounded wait stalls
+# whatever the driver is holding open behind it (L-090).
+GIT_TIMEOUT_S = 60
+
+
+def git_out(args, timeout: int = GIT_TIMEOUT_S) -> "str | None":
+    """Run a git command and return its stripped stdout, or None on any failure —
+    non-zero exit, no git on PATH, or the timeout expiring."""
+    try:
+        proc = subprocess.run(args, capture_output=True, text=True, check=True,
+                              timeout=timeout)
+    except (subprocess.SubprocessError, FileNotFoundError, OSError):
+        return None
+    return proc.stdout.strip()
+
+
 # Test-file heuristic (deliberately simple + language-agnostic): a path is a
 # plausible test home when a directory segment is a conventional test dir, or the
 # filename carries test/spec as a delimited token (covers *_test.*, test_*.*,
-# *.test.*, *.spec.*, *-test.* ...). Shared by `sprint check` (C3) and `impact`.
+# *.test.*, *.spec.*, *-test.* ...). Shared by `stage check` and `impact`.
 _TEST_DIRS = {"test", "tests", "__tests__", "spec", "specs", "testdata"}
 _TEST_NAME_RE = re.compile(r"(^|[._-])(test|spec)s?([._-]|$)", re.IGNORECASE)
 
@@ -59,6 +82,21 @@ def load_yaml(path: Path, optional: bool = False) -> dict:
         return yaml.safe_load(path.read_text()) or {}
     except yaml.YAMLError as exc:
         die(f"could not parse {path}: {exc}")
+
+
+def write_yaml(path: Path, doc) -> None:
+    """Atomic YAML write: render to a sibling temp file, then os-replace it in.
+    Concurrent readers (and parallel-worktree appenders) never see a partial write.
+    A render identical to what is already on disk is not written at all — a no-op
+    rewrite churns mtimes and diffs for nothing (L-106)."""
+    rendered = yaml.safe_dump(doc, sort_keys=False, default_flow_style=False,
+                              allow_unicode=True)
+    if path.exists() and path.read_text() == rendered:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(rendered)
+    tmp.replace(path)
 
 
 def config_doc(config_path: str) -> dict:
@@ -89,15 +127,7 @@ def host_root() -> Path:
     SAME artifacts whether it is invoked from the main checkout or from a per-task
     worktree. Falls back to the current directory when not inside a git repo (e.g.
     a test harness's throwaway tmp project)."""
-    try:
-        out = subprocess.run(
-            ["git", "rev-parse", "--git-common-dir"],
-            capture_output=True,
-            text=True,
-            check=True,
-        ).stdout.strip()
-    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
-        return Path.cwd()
+    out = git_out(["git", "rev-parse", "--git-common-dir"])
     if not out:
         return Path.cwd()
     common_dir = Path(out)
@@ -112,31 +142,14 @@ def worktree_root() -> Path:
     image of ``host_root``: use this to act on the tree you are standing in (linting
     files, reading a diff), and ``host_root`` to resolve shared run state. Falls back
     to the current directory when not inside a git repo."""
-    try:
-        out = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"],
-            capture_output=True,
-            text=True,
-            check=True,
-        ).stdout.strip()
-    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
-        return Path.cwd()
+    out = git_out(["git", "rev-parse", "--show-toplevel"])
     return Path(out) if out else Path.cwd()
 
 
 def current_branch(root: Path) -> "str | None":
     """The branch checked out at ``root``, or None (detached HEAD, or not a git repo).
     Lets a resumed run recover a run-state field that was stored null."""
-    try:
-        out = subprocess.run(
-            ["git", "-C", str(root), "branch", "--show-current"],
-            capture_output=True,
-            text=True,
-            check=True,
-        ).stdout.strip()
-    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
-        return None
-    return out or None
+    return git_out(["git", "-C", str(root), "branch", "--show-current"]) or None
 
 
 def default_config() -> str:

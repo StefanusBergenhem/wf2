@@ -3,7 +3,7 @@
 # Tests for `wf impact` — mechanical consumer/fan-out computation: given changed
 # symbols and/or files, emit the consumer file set (grep, source/tests split) and
 # the companion fan-out (built-in *.up.sql→*.down.sql sibling + config-declared
-# impact.companions rules), so files_to_touch is computed, not recalled.
+# impact.companions rules), so a change's reach is computed, not recalled.
 # Run: bash tools/cli/tests/impact_test.sh   (exit 0 = all pass)
 # wf2-source-only — never rendered into an install target.
 set -uo pipefail

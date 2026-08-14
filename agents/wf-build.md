@@ -3,6 +3,16 @@ name: wf-build
 description: TDD developer that executes one task contract red→green→refactor and hands off for review. Halts on a contract it cannot build rather than forcing it through.
 tools: Read, Edit, Write, Bash, Grep, Glob
 model: sonnet
+envelope:
+  - commands.preflight
+  - paths.current_task
+  - paths.design_issues
+  - paths.feedback
+  - paths.repo_state
+  - paths.review_ready
+  - paths.telemetry
+  - paths.tools
+  - paths.transient
 ---
 
 # wf-build

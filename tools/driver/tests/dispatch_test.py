@@ -1,0 +1,750 @@
+#!/usr/bin/env python3
+"""Tests for role dispatch — prompt construction, the config-keyed launch template,
+the process contract (exit code, never stdout), and dry-run.
+Run: python3 tools/driver/tests/dispatch_test.py
+wf2-source-only — never rendered into an install target.
+"""
+from __future__ import annotations
+
+import json
+import os
+
+import unittest
+
+import support  # noqa: F401
+
+import config as driver_config
+import dispatch as driver_dispatch
+import events as driver_events
+import procs as driver_procs  # noqa: F401
+import runtime as driver_runtime
+
+
+class PromptTest(support.TempProject):
+    def setUp(self):
+        super().setUp()
+        (self.root / ".claude/skills/wf-designer").mkdir(parents=True)
+        (self.root / ".claude/skills/wf-designer/SKILL.md").write_text(support.ROLE_STUB)
+
+    def cfg(self, **kw):
+        return driver_config.load(str(support.write_config(self.root, **kw)))
+
+    def test_prompt_names_the_role_file_and_its_parameters(self):
+        cfg = self.cfg()
+        prompt = driver_dispatch.build_prompt(cfg, "wf-designer", {"Mode": "resume"})
+        self.assertIn(str(self.root / ".claude/skills/wf-designer/SKILL.md"), prompt)
+        self.assertIn("and follow it", prompt)
+        self.assertIn("Mode: resume", prompt)
+
+    def test_prompt_carries_the_resolved_config_block(self):
+        """The role reads its paths and commands here instead of opening config.yaml —
+        which costs the whole commented file (~5 k tokens) for ~400 tokens of values."""
+        cfg = self.cfg()
+        (self.root / ".claude/skills/wf-designer/SKILL.md").write_text(
+            "---\nname: wf-designer\nenvelope:\n  - paths.current_task\n"
+            "  - commands.preflight\n---\nskill\n")
+        prompt = driver_dispatch.build_prompt(cfg, "wf-designer", {})
+        self.assertIn("paths.current_task:", prompt)
+        self.assertIn("commands.preflight:", prompt)
+        # Loop knobs are not the role's business, and agent_cmd carries harness flags.
+        self.assertNotIn("agent_cmd", prompt)
+
+    def test_prompt_carries_only_the_keys_the_role_declares(self):
+        """A key the role never names is a line every one of its dispatches pays for and
+        the role has to decide to ignore — and half of them point at the spec layer its
+        own skill forbids it to open."""
+        cfg = self.cfg()
+        (self.root / ".claude/skills/wf-designer/SKILL.md").write_text(
+            "---\nname: wf-designer\nenvelope:\n  - paths.current_task\n---\nskill\n")
+        prompt = driver_dispatch.build_prompt(cfg, "wf-designer", {})
+        self.assertIn("paths.current_task:", prompt)
+        self.assertNotIn("paths.capabilities:", prompt)
+        self.assertNotIn("commands.preflight:", prompt)
+
+    def test_a_role_declaring_no_envelope_is_a_named_failure(self):
+        """Rendering the whole config instead would hand the role every key there is —
+        the state this replaced. Failing names the role that has to declare."""
+        cfg = self.cfg()
+        (self.root / ".claude/skills/wf-designer/SKILL.md").write_text("skill\n")
+        with self.assertRaises(driver_dispatch.DispatchError) as caught:
+            driver_dispatch.build_prompt(cfg, "wf-designer", {})
+        self.assertIn("wf-designer", str(caught.exception))
+        self.assertIn("envelope", str(caught.exception))
+
+    def test_prompt_carries_the_roles_own_directory(self):
+        """A role writes artifacts from templates beside its installed file. Without
+        this it hunts — 48 of 58 dems builds searched for a .tmpl, 35 of them by
+        running `find /`."""
+        cfg = self.cfg()
+        prompt = driver_dispatch.build_prompt(cfg, "wf-designer", {})
+        self.assertIn(f"role_dir: {self.root / '.claude/skills/wf-designer'}", prompt)
+
+    def test_an_agent_wrapped_role_gets_the_skill_dir_that_holds_its_assets(self):
+        """`paths.agents` is FLAT — every agent is one .md file, and the `assets/` a
+        role writes from only ever live in its skill dir. So an agent-shaped role's
+        role_file.parent is the shared agents dir, where `<role_dir>/assets/` resolves
+        to nothing. That hits exactly the three roles that write from a template
+        (wf-build, wf-review, wf-retrospective), which is to say the hunting this
+        param exists to stop."""
+        (self.root / ".claude/agents").mkdir(parents=True, exist_ok=True)
+        (self.root / ".claude/agents/wf-build.md").write_text(support.ROLE_STUB)
+        (self.root / ".claude/skills/wf-build/assets").mkdir(parents=True)
+        (self.root / ".claude/skills/wf-build/SKILL.md").write_text("skill\n")
+        prompt = driver_dispatch.build_prompt(self.cfg(), "wf-build", {})
+        # The file it reads is still the agent; only where its templates live differs.
+        self.assertIn(str(self.root / ".claude/agents/wf-build.md"), prompt)
+        self.assertIn(f"role_dir: {self.root / '.claude/skills/wf-build'}", prompt)
+
+    def test_an_agent_with_no_skill_of_its_own_falls_back_to_its_file(self):
+        """wf-drill and wf-discover are agent-only — no skill dir, no assets. The
+        param still has to name a real directory."""
+        (self.root / ".claude/agents").mkdir(parents=True, exist_ok=True)
+        (self.root / ".claude/agents/wf-drill.md").write_text(support.ROLE_STUB)
+        prompt = driver_dispatch.build_prompt(self.cfg(), "wf-drill", {})
+        self.assertIn(f"role_dir: {self.root / '.claude/agents'}", prompt)
+
+    def test_call_site_parameters_win_over_the_config_block(self):
+        """A param names this dispatch's own state (which worktree, which task). The
+        block is repo-wide defaults, so it must never overwrite one."""
+        cfg = self.cfg()
+        prompt = driver_dispatch.build_prompt(
+            cfg, "wf-designer", {"paths.current_task": "/wt/other.yaml"})
+        body = prompt[prompt.index("paths.current_task"):]
+        self.assertIn("/wt/other.yaml", body)
+        self.assertEqual(prompt.count("paths.current_task:"), 1)
+
+    def test_a_mode_that_only_repeats_the_role_is_not_printed(self):
+        """A dispatch line is read by a human watching a run. `wf-build (build)` spends
+        a word to say nothing; `wf-build (fix)` says this one is a rebuild."""
+        self.assertEqual(driver_dispatch.describe("wf-build", "build"), "wf-build")
+        self.assertEqual(driver_dispatch.describe("wf-retrospective", "wf-retrospective"),
+                         "wf-retrospective")
+        self.assertEqual(driver_dispatch.describe("wf-build", "fix", "S7-T1"),
+                         "wf-build (fix) · S7-T1")
+        self.assertEqual(driver_dispatch.describe("wf-stage-repair", "merge"),
+                         "wf-stage-repair (merge)")
+
+    def test_prompt_for_an_uninstalled_role_is_fatal(self):
+        cfg = self.cfg()
+        with self.assertRaises(driver_dispatch.DispatchError):
+            driver_dispatch.build_prompt(cfg, "wf-nowhere", {})
+
+    def test_double_quoted_template_escapes_the_prompt_for_that_quoting(self):
+        cmd = driver_dispatch.render_cmd('claude -p "{prompt}"', 'say "hi" $HOME `x`')
+        self.assertEqual(cmd, 'claude -p "say \\"hi\\" \\$HOME \\`x\\`"')
+
+    def test_single_quoted_template_escapes_for_single_quotes(self):
+        cmd = driver_dispatch.render_cmd("opencode run '{prompt}'", "it's here")
+        self.assertEqual(cmd, "opencode run 'it'\\''s here'")
+
+    def test_unquoted_template_gets_a_shell_quoted_prompt(self):
+        cmd = driver_dispatch.render_cmd("agent {prompt}", "two words")
+        self.assertEqual(cmd, "agent 'two words'")
+
+    def test_template_without_the_placeholder_is_fatal(self):
+        with self.assertRaises(driver_dispatch.DispatchError):
+            driver_dispatch.render_cmd("claude -p", "hello")
+
+
+class LaunchTest(support.TempProject):
+    def setUp(self):
+        super().setUp()
+        (self.root / ".claude/agents").mkdir(parents=True)
+        (self.root / ".claude/agents/wf-build.md").write_text(support.ROLE_STUB)
+        self.marker = self.root / "agent-ran.json"
+
+    def dispatcher(self, agent_cmd, dry_run=False):
+        cfg = driver_config.load(str(support.write_config(self.root, agent_cmd=agent_cmd)))
+        self.cfg_obj = cfg
+        return driver_dispatch.Dispatcher(
+            cfg, driver_events.Telemetry(cfg, dry_run=dry_run), dry_run=dry_run)
+
+    def test_launch_runs_the_template_and_returns_exit_code_and_duration(self):
+        script = self.root / "fake-agent.sh"
+        script.write_text('#!/usr/bin/env bash\nprintf "%s" "$1" > "$2"\nexit 0\n')
+        script.chmod(0o755)
+        d = self.dispatcher(f'{script} "{{prompt}}" {self.marker}')
+        result = d.launch("wf-build", {"task_id": "T1"}, task_id="T1")
+        self.assertEqual(result.exit_code, 0)
+        self.assertGreaterEqual(result.duration_s, 0)
+        self.assertIn("task_id: T1", self.marker.read_text())
+
+    def test_a_failing_agent_surfaces_its_exit_code(self):
+        d = self.dispatcher('bash -c "exit 7" "{prompt}"')
+        self.assertEqual(d.launch("wf-build", {}).exit_code, 7)
+
+    def test_agent_stdout_goes_to_a_log_file_and_is_not_returned(self):
+        script = self.root / "chatty-agent.sh"
+        script.write_text("#!/usr/bin/env bash\necho VERDICT-IN-PROSE\n")
+        script.chmod(0o755)
+        d = self.dispatcher(f'{script} "{{prompt}}"')
+        result = d.launch("wf-build", {}, task_id="T2")
+        self.assertFalse(hasattr(result, "stdout"))
+        self.assertIn("VERDICT-IN-PROSE", result.log_path.read_text())
+
+    def test_timeout_is_bounded_by_the_configured_agent_timeout(self):
+        script = self.root / "slow-agent.sh"
+        script.write_text("#!/usr/bin/env bash\nsleep 5\n")
+        script.chmod(0o755)
+        cfg_path = support.write_config(self.root, agent_cmd=f'{script} "{{prompt}}"')
+        cfg_path.write_text(cfg_path.read_text().replace("agent_timeout_s: 60",
+                                                         "agent_timeout_s: 1"))
+        cfg = driver_config.load(str(cfg_path))
+        d = driver_dispatch.Dispatcher(cfg, driver_events.Telemetry(cfg))
+        result = d.launch("wf-build", {})
+        self.assertTrue(result.timed_out)
+        self.assertNotEqual(result.exit_code, 0)
+
+    def test_dry_run_records_the_planned_dispatch_without_launching(self):
+        d = self.dispatcher(f'bash -c "touch {self.marker}" "{{prompt}}"', dry_run=True)
+        result = d.launch("wf-build", {"task_id": "T1"}, task_id="T1")
+        self.assertEqual(result.exit_code, 0)
+        self.assertFalse(self.marker.exists())
+        self.assertEqual([p["role"] for p in d.planned], ["wf-build"])
+
+    def test_dispatch_appends_a_telemetry_row(self):
+        cfg = driver_config.load(str(support.write_config(
+            self.root, agent_cmd='bash -c "true" "{prompt}"')))
+        tele = driver_events.Telemetry(cfg)
+        d = driver_dispatch.Dispatcher(cfg, tele)
+        d.launch("wf-build", {}, task_id="T9", stage=7, mode="fix")
+        rows = [json.loads(x) for x in cfg.path("telemetry").read_text().splitlines()]
+        self.assertEqual(rows[-1]["event"], "dispatch")
+        self.assertEqual(rows[-1]["role"], "wf-build")
+        self.assertEqual(rows[-1]["agent"], "wf-build")
+        self.assertEqual(rows[-1]["task"], "T9")
+        self.assertEqual(rows[-1]["stage"], 7)
+        self.assertEqual(rows[-1]["mode"], "fix")
+        self.assertEqual(rows[-1]["rc"], 0)
+        self.assertTrue(rows[-1]["started_at"].endswith("Z"))
+        self.assertTrue(rows[-1]["ended_at"].endswith("Z"))
+
+    def test_a_pinned_role_launches_through_its_own_template(self):
+        script = self.root / "pinned-agent.sh"
+        script.write_text('#!/usr/bin/env bash\nprintf "pinned" > "$2"\n')
+        script.chmod(0o755)
+        (self.root / ".claude/agents/wf-designer.md").write_text(support.ROLE_STUB)
+        cfg = driver_config.load(str(support.write_config(
+            self.root, agent_cmd=f'bash -c "true" "{{prompt}}"',
+            agent_cmd_overrides={"wf-designer": f'{script} "{{prompt}}" {self.marker}'})))
+        d = driver_dispatch.Dispatcher(cfg, driver_events.Telemetry(cfg))
+        d.launch("wf-designer", {})
+        self.assertEqual(self.marker.read_text(), "pinned")
+        self.assertEqual(cfg.agent_cmd_for("wf-build"), cfg.agent_cmd)
+
+    def test_a_role_with_no_override_falls_back_to_the_shared_template(self):
+        cfg = driver_config.load(str(support.write_config(
+            self.root, agent_cmd=f'bash -c "touch {self.marker}" "{{prompt}}"',
+            agent_cmd_overrides={"wf-designer": "never-run {prompt}"})))
+        d = driver_dispatch.Dispatcher(cfg, driver_events.Telemetry(cfg))
+        self.assertEqual(d.launch("wf-build", {}).exit_code, 0)
+        self.assertTrue(self.marker.exists())
+
+
+class CheckLaunchTest(support.TempProject):
+    """The blame helper: called where a role left nothing to route on, it decides whether
+    the caller may draw a conclusion about the WORK at all."""
+
+    def launched(self, rc, body=None):
+        log = self.root / "role.log"
+        if body is not None:
+            log.write_text(body)
+        return driver_dispatch.Launched("wf-designer", rc, 0, False, log, "cmd", {})
+
+    def test_a_clean_exit_lets_the_caller_draw_its_own_conclusion(self):
+        driver_dispatch.check_launch(self.launched(0, "fine"))       # no raise
+        driver_dispatch.check_launch(None)                           # nothing dispatched
+
+    def test_a_failed_launch_pauses_and_quotes_the_harness(self):
+        with self.assertRaises(driver_runtime.Pause) as caught:
+            driver_dispatch.check_launch(
+                self.launched(1, "starting\n\nYou've hit your session limit\n"))
+        self.assertEqual(caught.exception.reason, "launch_failed")
+        self.assertIn("session limit", caught.exception.detail)
+        self.assertIn("wf-designer exited 1", caught.exception.detail)
+
+    def test_a_failed_launch_with_no_log_still_pauses(self):
+        with self.assertRaises(driver_runtime.Pause):
+            driver_dispatch.check_launch(self.launched(1))           # log never created
+
+    def test_a_timeout_says_so_and_names_the_budget_to_raise(self):
+        timed_out = driver_dispatch.Launched("wf-designer", 124, 7200, True,
+                                             self.root / "role.log", "cmd", {})
+        with self.assertRaises(driver_runtime.Pause) as caught:
+            driver_dispatch.check_launch(timed_out)
+        self.assertEqual(caught.exception.reason, "launch_timeout")
+        self.assertIn("agent_timeout_s", caught.exception.detail)
+        self.assertIn("2h00m", caught.exception.detail)
+        self.assertNotIn("never ran", caught.exception.detail)
+
+    def test_the_quoted_line_is_bounded(self):
+        long_line = "x" * 5000
+        self.assertEqual(len(driver_dispatch.last_line(
+            self.write_log(long_line))), 200)
+
+    def test_last_line_of_a_missing_log_is_empty(self):
+        self.assertEqual(driver_dispatch.last_line(self.root / "nope.log"), "")
+
+    def write_log(self, body):
+        path = self.root / "role.log"
+        path.write_text(body)
+        return path
+
+
+# The two shapes a rate-limited harness leaves in the log: the event it emits the
+# moment it refuses, and the result line it exits on. Both are real, copied from the
+# dems run that stopped the sprint.
+def limit_event(resets_at) -> str:
+    return ('{"type":"rate_limit_event","rate_limit_info":{"status":"rejected",'
+            f'"resetsAt":{resets_at},"rateLimitType":"five_hour"}}}}')
+
+
+def heartbeat(resets_at) -> str:
+    """The rate_limit_event a harness that is still serving emits — same shape and
+    same fields as a refusal, `allowed`, and present in nearly every dispatch log.
+    `overageStatus` carries the word `rejected` in it on purpose: that is the real
+    payload, and it is what a status-blind match trips over."""
+    return ('{"type":"rate_limit_event","rate_limit_info":{"status":"allowed",'
+            f'"resetsAt":{resets_at},"rateLimitType":"five_hour",'
+            '"overageStatus":"rejected","isUsingOverage":false}}')
+
+
+RESULT_LINE = ('{"is_error":true,"terminal_reason":"api_error","subtype":"success",'
+               '"api_error_status":429,"result":"You\'ve hit your session limit '
+               '· resets 8:40pm","type":"result"}')
+
+
+class RateLimitReadTest(support.TempProject):
+    """Reading a refused launch's log: was it a rate limit, and when does it lift?"""
+
+    NOW = 1_786_000_000
+
+    def log(self, body):
+        path = self.root / "role.log"
+        path.write_text(body)
+        return path
+
+    def wait(self, body, *, now=None, cap_s=18000):
+        return driver_dispatch.rate_limit_wait_s(
+            self.log(body), now=self.NOW if now is None else now, cap_s=cap_s)
+
+    def test_the_wait_runs_to_the_reset_the_harness_named_plus_the_margin(self):
+        self.assertEqual(self.wait(limit_event(self.NOW + 600) + "\n" + RESULT_LINE),
+                         600 + driver_dispatch.RATE_LIMIT_MARGIN_S)
+
+    def test_the_margin_is_two_minutes_past_the_reset(self):
+        # The reset is the moment the window rolls; relaunching on it races the roll.
+        self.assertEqual(driver_dispatch.RATE_LIMIT_MARGIN_S, 120)
+
+    def test_a_launch_that_failed_for_any_other_reason_is_not_waited_out(self):
+        self.assertIsNone(self.wait('{"type":"result","is_error":true,'
+                                    '"result":"command not found"}'))
+
+    def test_an_empty_or_missing_log_is_not_a_rate_limit(self):
+        self.assertIsNone(self.wait(""))
+        self.assertIsNone(driver_dispatch.rate_limit_wait_s(
+            self.root / "nope.log", now=self.NOW, cap_s=18000))
+
+    def test_the_last_reset_in_the_log_is_the_one_that_counts(self):
+        # A long dispatch can be told about the limit more than once; the final word
+        # is the only one still true when it exits.
+        body = "\n".join([limit_event(self.NOW + 60), RESULT_LINE,
+                          limit_event(self.NOW + 900)])
+        self.assertEqual(self.wait(body), 900 + driver_dispatch.RATE_LIMIT_MARGIN_S)
+
+    def test_a_reset_already_past_waits_only_the_margin(self):
+        self.assertEqual(self.wait(limit_event(self.NOW - 5000) + "\n" + RESULT_LINE),
+                         driver_dispatch.RATE_LIMIT_MARGIN_S)
+
+    def test_a_rate_limit_naming_no_reset_falls_back_to_the_configured_cap(self):
+        self.assertEqual(self.wait(RESULT_LINE, cap_s=18000), 18000)
+
+    def test_a_reset_beyond_the_cap_is_not_waited_out_at_all(self):
+        # A weekly limit resets days out. Sleeping the cap would burn hours and still
+        # relaunch into a refusal; the human is told instead.
+        self.assertIsNone(self.wait(limit_event(self.NOW + 400000) + "\n" + RESULT_LINE,
+                                    cap_s=18000))
+
+    def test_the_routine_allowed_heartbeat_is_not_a_refusal(self):
+        # The heartbeat is in nearly every log, so matching the event's shape rather
+        # than its status reads EVERY failed dispatch as rate-limited — and a role that
+        # died for its own reasons then sleeps to the next window rollover twice over
+        # instead of surfacing.
+        self.assertIsNone(self.wait("\n".join([
+            heartbeat(self.NOW + 9000),
+            '{"type":"result","is_error":true,"terminal_reason":"aborted_streaming"}',
+        ])))
+
+    def test_a_refusal_among_heartbeats_is_read_from_the_refusal(self):
+        # The heartbeats name the window the harness was still serving from; only the
+        # refusal names the one being waited out.
+        body = "\n".join([heartbeat(self.NOW + 9000), heartbeat(self.NOW + 9000),
+                          limit_event(self.NOW + 600), RESULT_LINE])
+        self.assertEqual(self.wait(body), 600 + driver_dispatch.RATE_LIMIT_MARGIN_S)
+
+    def test_whitespace_in_the_harness_json_does_not_hide_the_limit(self):
+        self.assertEqual(
+            self.wait('{"rate_limit_info": {"status": "rejected", '
+                      f'"resetsAt": {self.NOW + 300}}}, '
+                      '"api_error_status" : 429}'),
+            300 + driver_dispatch.RATE_LIMIT_MARGIN_S)
+
+
+def result_line(**over):
+    """A harness result line, shaped as the real one is — the `type` key is NOT first,
+    so anything hunting for a `{"type":"result"` prefix misses it."""
+    row = {"ttft_ms": 1910, "num_turns": 34, "type": "result", "subtype": "success",
+           "is_error": False, "duration_ms": 185269, "total_cost_usd": 0.9588514,
+           "usage": {"input_tokens": 4199, "output_tokens": 9158,
+                     "cache_read_input_tokens": 1602358,
+                     "cache_creation_input_tokens": 54581}}
+    row.update(over)
+    return json.dumps(row)
+
+
+def pi_stream(out=None):
+    """A pi dispatch's streaming log: no closing result line, each assistant request's
+    usage on a `message_end` event. `out` lets a test override the emitted rows. Two
+    requests (r1, r2), with r2 repeated the way turn_end repeats the same message."""
+    rows = [
+        '{"type":"session","id":"S1","timestamp":"2026-08-10T12:00:00.000Z"}',
+        '{"type":"message_end","message":{"role":"assistant","usage":{"input":100,"output":20,"cacheRead":500,"cacheWrite":0,"cost":{"total":0.006}},"responseId":"r1"}}',
+        '{"type":"message_end","message":{"role":"assistant","usage":{"input":50,"output":10,"cacheRead":200,"cacheWrite":0,"cost":{"total":0.0025}},"responseId":"r2"}}',
+        '{"type":"message_end","message":{"role":"assistant","usage":{"input":50,"output":10,"cacheRead":200,"cacheWrite":0,"cost":{"total":0.0025}},"responseId":"r2"}}',
+    ]
+    return [out(o) if out else o for o in rows]
+
+
+
+
+class ResultUsageTest(support.TempProject):
+    """The harness writes what a dispatch cost on the last line of its own log, and the
+    log is transient — so the driver reads it at close or the number is gone."""
+
+    def usage(self, body):
+        path = self.root / "role.log"
+        path.write_text(body)
+        return driver_dispatch.result_usage(path)
+
+    def test_cost_turns_and_the_token_breakdown_come_off_the_result_line(self):
+        self.assertEqual(self.usage(result_line()), {
+            "cost_usd": 0.9588514, "num_turns": 34,
+            "input": 4199, "output": 9158,
+            "cache_read": 1602358, "cache_creation": 54581})
+
+    def test_the_result_line_is_found_under_the_streams_own_output(self):
+        body = "\n".join(['{"type":"assistant","message":{"content":"working"}}',
+                          '{"type":"user","message":{"content":"tool result"}}',
+                          result_line()])
+        self.assertEqual(self.usage(body)["cost_usd"], 0.9588514)
+
+    def test_a_dispatch_the_harness_refused_has_no_result_line_and_costs_nothing_known(self):
+        # Telemetry is observability, never correctness — an unreadable log reports
+        # nothing rather than guessing a zero that would read as "this run was free".
+        self.assertEqual(self.usage("You've hit your session limit\n"), {})
+        self.assertEqual(self.usage(""), {})
+        self.assertEqual(driver_dispatch.result_usage(self.root / "nope.log"), {})
+
+    def test_a_truncated_or_non_json_last_line_is_not_a_crash(self):
+        self.assertEqual(self.usage('{"type":"result","total_cost_usd":'), {})
+
+    def test_fields_the_harness_omitted_are_left_out_rather_than_zeroed(self):
+        got = self.usage(json.dumps({"type": "result", "total_cost_usd": 0.5}))
+        self.assertEqual(got, {"cost_usd": 0.5})
+
+    def test_a_claude_result_line_always_beats_any_stream_rows_beside_it(self):
+        body = "\n".join(pi_stream() + [result_line(total_cost_usd=0.9)])
+        got = self.usage(body)
+        self.assertEqual(got["cost_usd"], 0.9)
+
+    def test_a_pi_stream_reports_cost_turns_and_the_token_breakdown(self):
+        # pi has no closing result line; each request's usage rides `message_end`, and
+        # the same assistant message is repeated on turn_end — deduped by response id.
+        got = self.usage("\n".join(pi_stream()))
+        self.assertEqual(got["cost_usd"], 0.0085)
+        self.assertEqual(got["num_turns"], 2)      # r1 + r2, r2 counted once
+        self.assertEqual(got["input"], 150)
+        self.assertEqual(got["output"], 30)
+        self.assertEqual(got["cache_read"], 700)
+        self.assertEqual(got["cache_creation"], 0)
+
+    def test_a_non_pi_stream_with_no_usage_costs_nothing_known(self):
+        body = "\n".join(['{"type":"agent_settled"}',
+                          '{"type":"message_end","message":{"role":"user"}}'])
+        self.assertEqual(self.usage(body), {})
+
+
+class DispatchRowTest(support.TempProject):
+    """What the dispatch telemetry row carries — the row is written either way, so the
+    cost rides it rather than being stored anywhere new."""
+
+    def setUp(self):
+        super().setUp()
+        (self.root / ".claude/agents").mkdir(parents=True)
+        (self.root / ".claude/agents/wf-build.md").write_text(support.ROLE_STUB)
+
+    def rows(self, stream):
+        """Run a fake agent whose whole stdout is `stream`, and return the rows it left."""
+        out = self.root / "agent-stdout.txt"
+        out.write_text(stream)
+        cfg = driver_config.load(str(support.write_config(
+            self.root, agent_cmd=f'cat {out} #{{prompt}}')))
+        driver_dispatch.Dispatcher(cfg, driver_events.Telemetry(cfg)) \
+                       .launch("wf-build", {})
+        return [json.loads(x) for x in
+                cfg.path("telemetry").read_text().splitlines() if x.strip()]
+
+    def test_the_dispatch_row_carries_the_cost_and_usage_the_log_reported(self):
+        row = self.rows(result_line() + "\n")[0]
+        self.assertEqual(row["event"], "dispatch")
+        self.assertEqual(row["cost_usd"], 0.9588514)
+        self.assertEqual(row["num_turns"], 34)
+        self.assertEqual(row["output"], 9158)
+        self.assertEqual(row["cache_read"], 1602358)
+
+    def test_a_log_with_no_result_line_still_writes_the_row_it_always_wrote(self):
+        row = self.rows("You've hit your session limit\n")[0]
+        self.assertEqual(row["event"], "dispatch")
+        self.assertNotIn("cost_usd", row)
+        self.assertIn("duration_s", row)
+
+
+class RateLimitWaitTest(support.TempProject):
+    """A rate-limited dispatch waits the limit out and goes again, in the one place
+    every role's launch passes through."""
+
+    def setUp(self):
+        super().setUp()
+        (self.root / ".claude/agents").mkdir(parents=True)
+        (self.root / ".claude/agents/wf-build.md").write_text(support.ROLE_STUB)
+        self.slept = []
+
+    def dispatcher(self, agent_cmd, *, now=1_786_000_000):
+        cfg = driver_config.load(str(support.write_config(self.root,
+                                                          agent_cmd=agent_cmd)))
+        self.cfg_obj = cfg
+        d = driver_dispatch.Dispatcher(cfg, driver_events.Telemetry(cfg))
+        d.clock = lambda: now
+        d.sleep = self.slept.append
+        return d
+
+    def refusing_agent(self, *, resets_in=600, fail_times=1):
+        """An agent that writes a rate-limited log and exits 1 the first ``fail_times``
+        launches, then succeeds — what waiting the limit out is supposed to reach."""
+        counter = self.root / "runs"
+        script = self.root / "limited-agent.sh"
+        script.write_text(
+            f"""#!/usr/bin/env bash
+n=$(cat {counter} 2>/dev/null || echo 0); n=$((n+1)); echo $n > {counter}
+if [ "$n" -le {fail_times} ]; then
+cat <<'WF_EOF'
+{limit_event(1_786_000_000 + resets_in)}
+{RESULT_LINE}
+WF_EOF
+  exit 1
+fi
+echo done
+""")
+        script.chmod(0o755)
+        self.runs = counter
+        return f'{script} "{{prompt}}"'
+
+    def test_a_rate_limited_dispatch_sleeps_to_the_reset_and_launches_again(self):
+        d = self.dispatcher(self.refusing_agent(resets_in=600))
+        result = d.launch("wf-build", {}, task_id="T1")
+        self.assertEqual(result.exit_code, 0)
+        self.assertEqual(self.runs.read_text().strip(), "2")
+        self.assertEqual(sum(self.slept), 600 + driver_dispatch.RATE_LIMIT_MARGIN_S)
+
+    def test_the_returned_launch_points_at_the_log_of_the_attempt_that_ran(self):
+        d = self.dispatcher(self.refusing_agent())
+        result = d.launch("wf-build", {}, task_id="T1")
+        self.assertIn("done", result.log_path.read_text())
+        self.assertNotIn("api_error_status", result.log_path.read_text())
+
+    def test_waiting_is_bounded_and_the_refusal_is_handed_back_to_the_caller(self):
+        d = self.dispatcher(self.refusing_agent(fail_times=99))
+        result = d.launch("wf-build", {}, task_id="T1")
+        self.assertNotEqual(result.exit_code, 0)
+        self.assertEqual(int(self.runs.read_text().strip()),
+                         driver_dispatch.RATE_LIMIT_WAITS + 1)
+        with self.assertRaises(driver_runtime.Pause):
+            driver_dispatch.check_launch(result)
+
+    def test_a_stop_asked_for_during_the_wait_ends_it_immediately(self):
+        d = self.dispatcher(self.refusing_agent(fail_times=99))
+        stop_file = self.cfg_obj.stop_file
+        stop_file.parent.mkdir(parents=True, exist_ok=True)
+        d.sleep = lambda s: (self.slept.append(s), stop_file.touch())[0]
+        result = d.launch("wf-build", {}, task_id="T1")
+        self.assertNotEqual(result.exit_code, 0)
+        self.assertEqual(int(self.runs.read_text().strip()), 1)  # never relaunched
+
+    def test_the_wait_is_polled_in_slices_so_a_stop_is_seen_within_one(self):
+        d = self.dispatcher(self.refusing_agent(resets_in=600, fail_times=99))
+        d.launch("wf-build", {}, task_id="T1")
+        self.assertTrue(all(s <= driver_dispatch.RATE_LIMIT_POLL_S for s in self.slept))
+
+    def test_a_clean_launch_never_waits(self):
+        d = self.dispatcher('bash -c "true" "{prompt}"')
+        self.assertEqual(d.launch("wf-build", {}).exit_code, 0)
+        self.assertEqual(self.slept, [])
+
+    def test_a_failure_that_is_not_a_rate_limit_never_waits(self):
+        d = self.dispatcher('bash -c "echo boom; exit 7" "{prompt}"')
+        self.assertEqual(d.launch("wf-build", {}).exit_code, 7)
+        self.assertEqual(self.slept, [])
+
+    def test_a_timed_out_dispatch_is_never_mistaken_for_a_rate_limit(self):
+        # The bound killed it; the log may still carry an earlier limit event.
+        d = self.dispatcher(self.refusing_agent())
+        timed_out = driver_dispatch.Launched("wf-build", 124, 60, True,
+                                             self.root / "role.log", "cmd", {})
+        with self.assertRaises(driver_runtime.Pause) as caught:
+            driver_dispatch.check_launch(timed_out)
+        self.assertEqual(caught.exception.reason, "launch_timeout")
+
+    def test_the_wait_is_recorded_in_telemetry(self):
+        d = self.dispatcher(self.refusing_agent(resets_in=600))
+        d.launch("wf-build", {}, task_id="T1")
+        rows = [json.loads(x) for x in
+                self.cfg_obj.path("telemetry").read_text().splitlines()]
+        waits = [r for r in rows if r["event"] == "rate_limit_wait"]
+        self.assertEqual(len(waits), 1)
+        self.assertEqual(waits[0]["role"], "wf-build")
+        self.assertEqual(waits[0]["wait_s"], 600 + driver_dispatch.RATE_LIMIT_MARGIN_S)
+
+    def test_dry_run_never_waits(self):
+        d = self.dispatcher(self.refusing_agent())
+        d.dry_run = True
+        self.assertEqual(d.launch("wf-build", {}).exit_code, 0)
+        self.assertEqual(self.slept, [])
+
+
+class PiDispatchUsageTest(support.TempProject):
+    """pi has no end-of-session hook, so the driver folds a pi dispatch's session into
+    the same `kind: usage` rows the claude Stop hook writes — best-effort, gated on
+    the launch actually naming pi, and keyed to that ONE dispatch's session id."""
+
+    def setUp(self):
+        super().setUp()
+        (self.root / ".claude/agents").mkdir(parents=True)
+        (self.root / ".claude/agents/wf-build.md").write_text(support.ROLE_STUB)
+
+    def make_pi(self, session_id="pi-sid-001", usage=True):
+        """A stub `pi` that prints its session line and writes a real pi session file
+        (with usage) into --session-dir, the way a headless pi -p would."""
+        body = f'''#!/usr/bin/env bash
+DIR=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --session-dir) DIR="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+mkdir -p "$DIR"
+echo '{{"type":"session","id":"{session_id}","timestamp":"2026-08-10T12:00:00.000Z","cwd":"/x"}}'
+cat > "$DIR/run.jsonl" <<'WF_EOF'
+{{"type":"session","version":3,"id":"{session_id}","timestamp":"2026-08-10T12:00:00.000Z","cwd":"/x"}}
+{{"type":"message","id":"m1","timestamp":"2026-08-10T12:00:01.000Z","message":{{"role":"assistant","content":[{{"type":"text","text":"ok"}}],"usage":{{"input":50,"output":10,"cacheRead":100,"cacheWrite":0,"cost":{{"total":0.001}}}},"responseId":"r1"}}}}
+WF_EOF
+'''
+        if not usage:
+            body = body.replace(
+                '"usage":{"input":50,"output":10,"cacheRead":100,"cacheWrite":0,'
+                '"cost":{"total":0.001}}', '')
+        stub = self.stub_bin("pi", body)
+        # procs._ENV froze PATH at import, so prepend the stub dir into the frozen env
+        # too — otherwise the subprocess resolves the real `pi` on the harness's PATH.
+        if str(self._tmp) + "/bin" not in (driver_procs._ENV.get("PATH") or ""):
+            driver_procs._ENV["PATH"] = (
+                str(self._tmp) + "/bin" + os.pathsep + driver_procs._ENV.get("PATH", ""))
+        return stub
+
+    def dispatch(self):
+        cfg = driver_config.load(str(support.write_config(
+            self.root,
+            agent_cmd=('pi -p --mode json --session-dir '
+                       f'{self.root}/.wf/transient/pi-sessions '
+                       '--exclude-tools "Monitor,ScheduleWakeup,CronCreate" "{prompt}"'))))
+        driver_dispatch.Dispatcher(cfg, driver_events.Telemetry(cfg)) \
+                           .launch("wf-build", {})
+        return cfg
+
+    def usage_rows(self):
+        self.dispatch()
+        return [json.loads(x) for x in
+                self.root.joinpath(".wf/telemetry/sessions.jsonl").read_text()
+                     .splitlines() if x.strip()
+                and json.loads(x).get("kind") == "usage"]
+
+    def test_a_pi_dispatch_appends_a_stop_usage_row_like_the_claude_hook(self):
+        self.make_pi()
+        rows = self.usage_rows()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["hook_event"], "Stop")
+        self.assertEqual(rows[0]["session_id"], "pi-sid-001")
+        self.assertEqual(rows[0]["tokens"], {"input": 50, "output": 10,
+                                             "cache_read": 100, "cache_creation": 0})
+        self.assertEqual(rows[0]["requests"], 1)
+
+    def test_a_pi_dispatch_with_no_usage_writes_no_usage_row_but_still_dispatches(self):
+        self.make_pi(usage=False)
+        rows = self.usage_rows()
+        self.assertEqual(rows, [])
+
+    def test_a_non_pi_launch_never_folds_usage(self):
+        # Even when a pi session happens to sit in the dir, a claude launch must not
+        # claim it — the fold is gated on the launch command itself naming pi.
+        self.stub_bin("pi", "")
+        out = self.root / "log.txt"
+        out.write_text('{"type":"session","id":"pi-sid-001"}\n')
+        cfg = driver_config.load(str(support.write_config(
+            self.root, agent_cmd=f'cat {out} #{{prompt}}')))
+        driver_dispatch.Dispatcher(cfg, driver_events.Telemetry(cfg)) \
+                           .launch("wf-build", {})
+        rows = [json.loads(x) for x in self.root.joinpath(".wf/telemetry/sessions.jsonl")
+                .read_text().splitlines() if x.strip()
+                and json.loads(x).get("kind") == "usage"]
+        self.assertEqual(rows, [])
+
+    def test_pi_usage_detection_helpers(self):
+        self.assertTrue(driver_dispatch._is_pi_cmd('pi -p --model x "{prompt}"'))
+        self.assertFalse(driver_dispatch._is_pi_cmd('cat log # {prompt}'))
+        f = self.root / "log.jsonl"
+        f.write_text('{"not":"session"}\n{"type":"session","id":"abc"}\n')
+        self.assertEqual(driver_dispatch.session_id(f), "abc")
+
+    def test_session_id_reads_either_harnesss_opening_line(self):
+        """Both harnesses name the session they are about to run in their first stream
+        line, under their own key."""
+        f = self.root / "claude.jsonl"
+        f.write_text('{"type":"system","subtype":"init","session_id":"c-123",'
+                     '"cwd":"/x"}\n{"type":"assistant"}\n')
+        self.assertEqual(driver_dispatch.session_id(f), "c-123")
+        f.write_text('{"type":"assistant"}\n')
+        self.assertIsNone(driver_dispatch.session_id(f))
+
+    def test_the_dispatch_row_names_the_session_it_launched(self):
+        """The usage rows the harness hook writes are keyed by session id, and the
+        dispatch row is the only place the role that ran it is recorded. Without the id
+        on both, the two are matched by comparing time windows — and parallel dispatches
+        nest, so a long build's window contains a faster sibling's whole chain."""
+        stub = self.root / "claude-stub.sh"
+        stub.write_text('#!/usr/bin/env bash\n'
+                        'echo \'{"type":"system","subtype":"init",'
+                        '"session_id":"c-789"}\'\n')
+        stub.chmod(0o755)
+        cfg = driver_config.load(str(support.write_config(
+            self.root, agent_cmd=f'{stub} "{{prompt}}"')))
+        driver_dispatch.Dispatcher(cfg, driver_events.Telemetry(cfg)) \
+                       .launch("wf-build", {}, task_id="T1")
+        rows = [json.loads(x) for x in
+                self.root.joinpath(".wf/telemetry/sessions.jsonl").read_text().splitlines()
+                if x.strip()]
+        dispatch_rows = [r for r in rows if r.get("event") == "dispatch"]
+        self.assertEqual([r.get("session_id") for r in dispatch_rows], ["c-789"])
+
+
+if __name__ == "__main__":
+    unittest.main()

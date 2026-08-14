@@ -31,6 +31,7 @@ if python3 "$REC" --agent wf-discover --started-at 2026-01-01T00:00:00Z \
         --wf-friction "step 3 verb ambiguous" --friction-kind skill_gap \
         --repo-observation "" \
         --gotcha "docker compose collides on :5432 unless COMPOSE_PROJECT_NAME is pinned" \
+        --had-to-find "the stub-DB type for a repository unit test is mockDB in internal/repository/testdb.go" \
         --sink "$SINK" > "$WORK/o1" 2>&1; then
     pass "exit zero"
 else
@@ -38,8 +39,8 @@ else
 fi
 [ -f "$SINK" ] && pass "sink + parent dir created" || fail "sink not created"
 [ "$(wc -l < "$SINK")" -eq 1 ] && pass "one line written" || fail "expected 1 line"
-if python3 -c "import json;d=json.loads(open('$SINK').readline());assert d['agent']=='wf-discover';assert d['outcome']=='completed';assert d['duration_seconds']==5;assert d['feedback']['wf_friction']=='step 3 verb ambiguous';assert d['feedback']['friction_kind']=='skill_gap';assert d['feedback']['repo_observation']=='';assert d['feedback']['gotcha'].startswith('docker compose');assert 'notes' not in d" 2>/dev/null; then
-    pass "json fields + duration + structured feedback (friction_kind + gotcha)"
+if python3 -c "import json;d=json.loads(open('$SINK').readline());assert d['agent']=='wf-discover';assert d['outcome']=='completed';assert d['duration_seconds']==5;assert d['feedback']['wf_friction']=='step 3 verb ambiguous';assert d['feedback']['friction_kind']=='skill_gap';assert d['feedback']['repo_observation']=='';assert d['feedback']['gotcha'].startswith('docker compose');assert d['feedback']['had_to_find'].startswith('the stub-DB type');assert 'notes' not in d" 2>/dev/null; then
+    pass "json fields + duration + structured feedback (friction_kind + gotcha + had_to_find)"
 else
     fail "json fields / duration / feedback"
 fi
@@ -48,8 +49,8 @@ echo "== append + feedback defaults empty when omitted =="
 python3 "$REC" --agent wf-review --started-at 2026-01-01T00:00:00Z \
     --ended-at 2026-01-01T00:00:01Z --outcome halted --sink "$SINK" > /dev/null 2>&1
 [ "$(wc -l < "$SINK")" -eq 2 ] && pass "appended (2 lines)" || fail "append failed"
-if python3 -c "import json;d=json.loads(open('$SINK').readlines()[1]);assert d['feedback']['wf_friction']=='';assert d['feedback']['friction_kind']=='none';assert d['feedback']['repo_observation']=='';assert d['feedback']['gotcha']==''" 2>/dev/null; then
-    pass "feedback defaults: prose empty, friction_kind 'none', gotcha empty"
+if python3 -c "import json;d=json.loads(open('$SINK').readlines()[1]);assert d['feedback']['wf_friction']=='';assert d['feedback']['friction_kind']=='none';assert d['feedback']['repo_observation']=='';assert d['feedback']['gotcha']=='';assert d['feedback']['had_to_find']==''" 2>/dev/null; then
+    pass "feedback defaults: prose empty, friction_kind 'none', gotcha + had_to_find empty"
 else
     fail "feedback default"
 fi

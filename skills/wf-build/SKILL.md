@@ -6,52 +6,75 @@ description: TDD developer procedure — executes one task contract red→green�
 # wf-build — execute one task contract
 
 You execute the contract at `paths.current_task` under TDD. You do not plan or read the
-spec layer (ADRs, design slice) — the contract is complete for what this task builds.
-Resolve every path and command from `.wf/config.yaml`:
+spec layer (the plan, the architecture map, the capabilities file) — the contract, with
+the stage design that rides with it, is complete for what this task builds. A `covers:`
+id is a label, not a pointer: never go read what it refers to.
+
+Every path and command below is a line in your dispatch envelope. Read it there — do not
+open `.wf/config.yaml`:
 
 - `CONTRACT` = `paths.current_task` — what to build (the single source)
-- `FEEDBACK` = `paths.feedback` — a prior review's rejection; present → Fix mode
+- `FEEDBACK` = `paths.feedback` — a prior review's rejection, when `mode` is `fix`
 - `commands.preflight` — the mechanical gate to pass before handoff
+- `role_dir` — where your own `assets/` templates live
 - result artifacts you may write: `paths.review_ready`, `paths.design_issues`
 
 ## Step 0 — Mode
 
-- `FEEDBACK` exists → **Fix mode** (see below).
-- otherwise → **Build mode**, from Step 1.
+Your dispatch envelope carries `mode`:
+
+- `mode: fix` → **Fix mode** (see below); `FEEDBACK` is present and is what you address.
+- `mode: build` → **Build mode**, from Step 1.
+
+Do not probe the filesystem to work out which — the dispatch envelope is the answer.
 
 ## Step 1 — Load the contract
 
-1. Read `CONTRACT`. It carries `acceptance_criteria` (each with the `tests` that prove
-   it, or a `verified_by` gate), `covers`, `requirements` (each covered id's full
-   statement), `files_to_touch`, `out_of_scope`, and `implementation_notes` — plus, on
-   an e2e task, `system_tests`, and when the task introduces a component or widens a
-   shared seam, `interface_contract`: the exact signature/struct/endpoint shape to
-   implement. Deviating from it is a contract problem (Step 3b), not a judgement call.
-   `files_to_touch` is the **expected write set** — your starting pointers, not a fence.
-   Write beyond it when the task genuinely needs it (a consumer that won't compile
-   otherwise, a test-file home, a regenerated file); what bounds your work is `covers`,
-   the acceptance criteria, and `out_of_scope`, which is binding.
-2. Read only the source the contract points at — the files in `files_to_touch` and any
-   path named in `implementation_notes`. No wider exploration.
-3. A completed `depends_on` task is already merged into the branch your worktree was cut
-   from, so its work is present — do not re-verify it.
-4. When an implementation note tells you to follow a dependency task's pattern, recover
-   it from that task's merge diff — the contract's `dependency_commits` maps each merged
-   `depends_on` task to its commit hash. `git show <sha> --stat` lists what it changed;
-   `git show <sha> -- <file>` shows the pattern itself. Read those diffs, never the whole
-   files they touch, and do not go hunting for the pattern elsewhere in the tree.
+1. Read `CONTRACT`, opening with the **stage design** that rides with it — `goal`,
+   `allocation`, `flow`, `checkpoint`: the shape this task is built into. Read it first, it
+   is the frame the task sits in. The task itself carries its `title` (the commit subject
+   you use at handoff), `covers`, and four sections, in this order:
+   - `story` — what this task builds, why, and how the change flows through the code;
+   - `acceptance` — each criterion with the `tests` that prove it, or `verified_by`;
+   - `boundaries` — out of scope, read-only files, and any fixed interface. It is
+     **binding**, and no other field may contradict it. A signature, struct, or endpoint
+     shape fixed here is implemented exactly as written; deviating is a contract problem
+     (Step 3b), not a judgement call;
+   - `grounding` — pointers into the existing source.
+
+   An e2e task also carries `system_tests`, each entry's scenario text inlined. Two more
+   fields appear when this task carries that obligation: `nfr` — a measurable envelope
+   (subject · metric · threshold · condition · source) your work must hold, proven by the
+   source it names; and `supersedes` — shipped behaviour this task must stop being true,
+   with the test file that proves it today.
+2. Read only the source `grounding` and `boundaries` point at. No wider exploration. Those
+   pointers are a starting set, not a fence — write a file no pointer names when the task
+   genuinely needs it (a consumer that won't compile otherwise, a test-file home, a
+   regenerated file); what bounds your work is `covers`, the acceptance criteria, and
+   `boundaries`.
+3. The other tasks of this stage are building in parallel from the same tip; their work is
+   not in your worktree and never will be before you hand off. A shape you must build to is
+   in `boundaries` — never go looking for it in the tree.
+4. **When `CONTRACT` carries `prior_attempt`**, your worktree was cut from the branch it
+   names and rebased onto the sprint tip, so it already holds an earlier attempt at this
+   same task; `prior_attempt` also says why that attempt was blocked. Read that reason and
+   `git diff` the attempt's commits before writing a line. Treat everything it left as an
+   unverified draft to be judged against this contract — never as working behaviour to
+   build on — and keep only what this contract still calls for.
 
 ## Step 2 — Derive the test oracles
 
 From the contract alone — never re-derive from prose elsewhere:
 
-- Each `acceptance_criteria[].check` is a behaviour you must prove; its `check` names the
+- Each entry in `acceptance` is a behaviour you must prove; its `criterion` names the
   inputs and expected output a failing test is written from.
 - Each criterion's `tests[]` entry says where that proof lives: `level: unit` against its
   `target`, or `level: integration` across the real `seam` it names — exercise the seam
   for real, never a mock. Write one test per entry, deriving the assertions from the
-  `check`. An AC carrying `verified_by` instead of `tests` is proven by that gate running
-  green in Step 4, not by a test you write.
+  `criterion`. An AC carrying `verified_by: inspection` instead of `tests` states a fact no
+  test can observe (a lint, CI, or config gate). Discharge it by making that fact true and
+  confirming it directly — the gate running green in Step 4, or reading the file it names —
+  never by writing a test around it.
 
 An AC you cannot turn into a test from the contract (it contradicts the source code) is a
 contract problem → Step 3b.
@@ -69,7 +92,7 @@ Announce each phase.
    `system_tests[].id`, the description taken verbatim from that entry: the test proving
    `SYS-TC-1` carries `[SYS-TC:SYS-TC-1] <its system_tests[].description>`. That tag
    line is the durable proof record the reviewer verifies. A component task's tests
-   carry **no** tag of any kind — requirement ids live only in the contract.
+   carry **no** tag of any kind — AC ids live only in the contract.
 3. Check each test against the `wf-testing-anti-patterns` table. A match means restructure
    it before continuing.
 4. Run the project's test command for what you changed and **confirm the tests FAIL** for
@@ -81,13 +104,14 @@ Announce each phase.
    need a vacuity check: temporarily break the assertion, confirm it fails, then restore it.
 
 A test that passes before any implementation exists is testing the wrong thing —
-investigate, do not proceed. **Exception — the behaviour is already built:** when the code
-the test exercises exists before this task writes a line (an e2e task over merged
-`depends_on` work, a coverage task over a shipped helper), a correct new test passes on
-first run. Do not treat that pass as a Red failure — instead prove each such test is not
-vacuous: temporarily break the behaviour it asserts (or mutate the expected value),
-confirm it fails, then restore and confirm it passes. Do this once per AC, not once for
-the task. A test you cannot make fail this way is vacuous — restructure it.
+investigate, do not proceed. **Exception — the code is already there:** when the code the
+test exercises exists before this task writes a line (an e2e task over work the previous
+stage merged, a coverage task over a shipped helper, or anything a `prior_attempt`
+worktree left behind), a correct new test passes on first run. Do not treat that pass as a
+Red failure — instead prove each such test is not vacuous: temporarily break the behaviour
+it asserts (or mutate the expected value), confirm it fails, then restore and confirm it
+passes. Do this once per AC, not once for the task. A test you cannot make fail this way
+is vacuous — restructure it.
 
 ### Green
 
@@ -100,31 +124,29 @@ the task. A test you cannot make fail this way is vacuous — restructure it.
 
 With tests green: no dead code, no debug output, no `TODO`/`HACK`/`FIXME`, no
 commented-out code, no suppression directive, no narrative comment blocks — a comment
-states a constraint the code cannot. Never paraphrase a requirement's statement or id
+states a constraint the code cannot. Never paraphrase an acceptance criterion or its id
 into a comment — tests carry no spec prose; the only spec reference in any test is an
 e2e task's `[SYS-TC:]` tag line.
 
 ### Step 3b — Design issue (contract or merged code)
 
-If the blocker is **not your own code** — an AC contradicts the source code, a requirement
-is self-inconsistent, the contract asks for something the source code makes impossible, or an AC
-fails because **already-merged code** (a dependency task's work, not this task's diff) is
-defective — do not retry or work around it. Write `paths.design_issues` from
-`assets/design_issues.yaml.tmpl`: one open entry, `task_id` your task, and a `summary` of what
-is unbuildable and why — when the defect is in already-merged code, name which merged behaviour
-violates which requirement.
+If the blocker is **not your own code** — an AC contradicts the source code, two ACs
+contradict each other, an AC contradicts `boundaries`, the contract asks for something the
+source code makes impossible, or an AC fails because **already-merged code** (work that
+landed before this stage, not this task's diff) is defective — do not retry or work around
+it. Write `paths.design_issues` from `<role_dir>/assets/design_issues.yaml.tmpl`: one open entry,
+`task_id` your task, and a `summary` of what is unbuildable and why — when the defect is in
+already-merged code, name which merged behaviour violates which acceptance criterion.
 
-Remove any stale `paths.review_ready`, then HALT and report. The return inspector reads
-the open entry and parks the task — you never go on to review.
+Then HALT and report. The return inspector reads the open entry and parks the task —
+you never go on to review.
 
 ## Step 4 — Gate
 
 Run `commands.preflight` **in the foreground** — never a shell `&`, never a background
-tool mode: a backgrounded gate completes with no turn watching, so you park waiting on a
-notification that never arrives and the whole cycle is spent again. Pipe to
-`/tmp/wf-build-<task-id>-preflight.log`; read the outcome per `wf-agent-preamble`, not the
-whole log. It must exit clean. A gate that cannot run because its environment is
-unavailable is a HALT, not a pass — do not write `review_ready`.
+tool mode — piped to `/tmp/wf-build-<task-id>-preflight.log`. It must exit clean. A gate
+that cannot run because its environment is unavailable is a HALT, not a pass — do not
+write `review_ready`.
 
 Then run the hygiene ratchet **from your worktree root** — before Step 5's commit, so
 `HEAD` is still the fork point. It lints the tree you are standing in:
@@ -148,19 +170,19 @@ you cannot fix without restructuring beyond the contract is a design issue (Step
    ```
    git add -A && git commit -m "<task-id> <title>"
    ```
-   Do not push — the orchestrator merges at the stage boundary.
-3. Write `paths.review_ready` from `assets/review_ready.yaml.tmpl` — a presence marker. Its
+   Do not push.
+3. Write `paths.review_ready` from `<role_dir>/assets/review_ready.yaml.tmpl` — a presence marker. Its
    presence is the ready-for-review signal; the reviewer judges the committed diff
    against the contract, never a build self-report, so the file carries nothing but the
    task id.
 
-## Fix mode (`paths.feedback` present)
+## Fix mode (`mode: fix`)
 
 1. Read `FEEDBACK` — address only its listed failures, each with the minimal change. Do
    not rewrite, and do not touch anything it does not name.
 2. If a fix reveals a contract problem (Step 3b criteria), write the design issue and HALT.
-3. Re-run the gate (Step 4) and the verification checklist, re-commit, delete
-   `FEEDBACK`, then write `paths.review_ready` — in that order.
+3. Re-run the gate (Step 4) and the verification checklist, re-commit, then write
+   `paths.review_ready` — in that order.
 
 ## Halt conditions
 

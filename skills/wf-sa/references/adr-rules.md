@@ -82,7 +82,7 @@ Body (all sections required):
 `constraint:` is the ADR's binding residue: **one imperative clause stating the rule
 the decision imposes on the code** — what a change must or must not do. Downstream
 roles read *only this line* (the Tech Lead lifts it verbatim into a contract's
-`implementation_notes`; the next design round greps it for conflicts); the body is
+`grounding`; the next design round greps it for conflicts); the body is
 the reasoning record behind it. Write it so it works alone:
 
 - Imperative and testable-in-principle: *"the repository layer must not import
@@ -112,10 +112,9 @@ constraints no script can decide (a semantic boundary, a modelling rule).
   names this one; this one's `superseded_by` is filled.
 - `accepted → deprecated` — no longer applicable, not replaced (feature removed).
 
-An accepted ADR is **immutable once its decision has shipped** — supersede it, never edit it.
-Its decision has shipped once the backlog design binding it has drained from
-`paths.design_backlog`. An ADR whose binding design is still an **unbuilt block** in
-`paths.design_backlog` is **amended in place**, as that block is.
+An accepted ADR is **immutable once its decision has shipped** — supersede it, never edit
+it. A `proposed` ADR, or one whose decision has not yet reached a merged sprint, is
+**amended in place**.
 
 ## governs_components
 

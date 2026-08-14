@@ -119,6 +119,243 @@ rget() { "$PYTHON" -c 'import sys,json; d=json.loads(sys.argv[1]); print(eval(sy
     && ok "roles: main_loop carries context_max" || bad "roles main ctx" "$OUT"
 [ "$(rget "$OUT" "d['matched']")" = "2" ] && ok "roles: reports matched count" || bad "roles matched" "$OUT"
 
+# ---------------------------------------------------------------------------
+# driver rows (kind: driver_event) — the driver brackets every dispatch, so its
+# window joins the dispatched session's usage row exactly instead of by overlap.
+# ---------------------------------------------------------------------------
+DRV="$P/driver.jsonl"
+cat > "$DRV" <<'JSONL'
+{"kind":"driver_event","ts":"2026-07-12T11:00:00Z","event":"sprint_start","sprint":"sprint-1"}
+{"kind":"driver_event","ts":"2026-07-12T11:00:00Z","event":"dispatch","agent":"wf-build","role":"wf-build","mode":"build","sprint":"sprint-1","increment":1,"task":"T1","rc":0,"duration_s":3600,"started_at":"2026-07-12T11:00:00Z","ended_at":"2026-07-12T12:00:00Z"}
+{"kind":"driver_event","ts":"2026-07-12T11:20:00Z","event":"dispatch","agent":"wf-review","role":"wf-review","mode":"review","sprint":"sprint-1","increment":1,"task":"T1","rc":0,"duration_s":600,"started_at":"2026-07-12T11:10:00Z","ended_at":"2026-07-12T11:20:00Z"}
+{"kind":"driver_event","ts":"2026-07-12T12:00:00Z","event":"stop","reason":"work_exhausted","sprint":"sprint-1"}
+{"kind":"usage","session_id":"S2","hook_event":"Stop","started_at":"2026-07-12T11:05:00Z","ended_at":"2026-07-12T11:15:00Z","tokens":{"input":700,"output":300,"cache_read":40000,"cache_creation":300},"tool_calls":4,"requests":6,"context_max":42000}
+JSONL
+OUT="$(wf telemetry roles --sink "$DRV" --config "$P/.wf/config.yaml" --format json 2>&1)"; RC=$?
+[ "$RC" -eq 0 ] && ok "roles: a driver-event sink exits zero" || bad "driver exit" "rc=$RC $OUT"
+[ "$(rget "$OUT" "d['matched']")" = "1" ] \
+    && ok "roles: a driver dispatch row is a join candidate" || bad "driver matched" "$OUT"
+# the usage window sits INSIDE wf-build's dispatch and merely overlaps wf-review's —
+# window-overlap scoring picks wf-review, containment picks the role that ran it
+[ "$(rget "$OUT" "next(r['context_max_max'] for r in d['roles'] if r['role']=='wf-build')")" = "42000" ] \
+    && ok "roles: the containing dispatch wins the join, not the best overlap" || bad "driver exact" "$OUT"
+[ "$(rget "$OUT" "any(r['role']=='wf-review' for r in d['roles'])")" = "False" ] \
+    && ok "roles: the overlapping dispatch takes no run it did not run" || bad "driver overlap" "$OUT"
+# a phase event (sprint_start, stop) names no role and must not become one
+[ "$(rget "$OUT" "len(d['roles'])")" = "1" ] \
+    && ok "roles: a driver phase event is not a role" || bad "driver phase" "$OUT"
+
+# cost rides the dispatch row the driver already writes (the harness reports it once,
+# on the last line of a log that is transient) — so the report totals it per role
+# instead of the number being reconstructible only from list price times tokens.
+cat > "$DRV" <<'JSONL'
+{"kind":"driver_event","ts":"2026-07-12T11:00:00Z","event":"dispatch","role":"wf-build","task":"T1","rc":0,"duration_s":3600,"cost_usd":10.5,"num_turns":34,"started_at":"2026-07-12T11:00:00Z","ended_at":"2026-07-12T12:00:00Z"}
+{"kind":"driver_event","ts":"2026-07-12T12:00:00Z","event":"dispatch","role":"wf-build","task":"T2","rc":0,"duration_s":600,"cost_usd":1.5,"started_at":"2026-07-12T12:10:00Z","ended_at":"2026-07-12T12:20:00Z"}
+{"kind":"driver_event","ts":"2026-07-12T13:00:00Z","event":"dispatch","role":"wf-review","task":"T1","rc":1,"duration_s":60,"started_at":"2026-07-12T13:00:00Z","ended_at":"2026-07-12T13:01:00Z"}
+{"kind":"usage","session_id":"S4","hook_event":"Stop","started_at":"2026-07-12T11:01:00Z","ended_at":"2026-07-12T11:59:00Z","tokens":{"input":100,"output":200,"cache_read":300,"cache_creation":400},"tool_calls":2,"requests":3,"context_max":50000}
+{"kind":"usage","session_id":"S5","hook_event":"Stop","started_at":"2026-07-12T12:11:00Z","ended_at":"2026-07-12T12:19:00Z","tokens":{"input":100,"output":200,"cache_read":300,"cache_creation":400},"tool_calls":2,"requests":3,"context_max":20000}
+{"kind":"usage","session_id":"S6","hook_event":"Stop","started_at":"2026-07-12T13:00:10Z","ended_at":"2026-07-12T13:00:50Z","tokens":{"input":100,"output":200,"cache_read":300,"cache_creation":400},"tool_calls":2,"requests":3,"context_max":10000}
+JSONL
+OUT="$(wf telemetry roles --sink "$DRV" --config "$P/.wf/config.yaml" --format json 2>&1)"
+[ "$(rget "$OUT" "next(r['cost_usd'] for r in d['roles'] if r['role']=='wf-build')")" = "12.0" ] \
+    && ok "roles: cost totals across a role's dispatches" || bad "roles cost total" "$OUT"
+[ "$(rget "$OUT" "next(r['cost_usd_max'] for r in d['roles'] if r['role']=='wf-build')")" = "10.5" ] \
+    && ok "roles: the costliest single dispatch is reported" || bad "roles cost max" "$OUT"
+# a refused dispatch wrote no result line, so it has no cost — that must read as
+# unknown, never as a run that was free
+[ "$(rget "$OUT" "next(r['cost_usd'] for r in d['roles'] if r['role']=='wf-review')")" = "0" ] \
+    && ok "roles: a dispatch with no cost contributes nothing" || bad "roles cost none" "$OUT"
+[ "$(rget "$OUT" "next(r['costed_runs'] for r in d['roles'] if r['role']=='wf-build')")" = "2" ] \
+    && ok "roles: reports how many runs the cost covers" || bad "roles costed runs" "$OUT"
+[ "$(rget "$OUT" "next(r['costed_runs'] for r in d['roles'] if r['role']=='wf-review')")" = "0" ] \
+    && ok "roles: an uncosted role says so rather than reading as free" || bad "roles uncosted" "$OUT"
+[ "$(rget "$OUT" "d['cost_usd']")" = "12.0" ] \
+    && ok "roles: the run total is reported alongside the per-role split" || bad "roles cost run" "$OUT"
+# per-task, so stage width can be judged on what a task actually cost to build rather
+# than on its task count: a task's dispatches are its attempts, and the peak is the one
+# that came closest to running out of window
+[ "$(rget "$OUT" "d['tasks'][0]['task']")" = "T1" ] \
+    && ok "tasks: the hottest task leads" || bad "tasks sort" "$OUT"
+[ "$(rget "$OUT" "d['tasks'][0]['context_max']")" = "50000" ] \
+    && ok "tasks: carries the peak context any one attempt held" || bad "tasks ctx" "$OUT"
+[ "$(rget "$OUT" "d['tasks'][0]['cost_usd']")" = "10.5" ] \
+    && ok "tasks: totals cost across the task's attempts" || bad "tasks cost" "$OUT"
+[ "$(rget "$OUT" "d['tasks'][0]['dispatches']")" = "2" ] \
+    && ok "tasks: counts every dispatch the task took, costed or not" || bad "tasks disp" "$OUT"
+[ "$(rget "$OUT" "sorted(r['task'] for r in d['tasks'])")" = "['T1', 'T2']" ] \
+    && ok "tasks: one row per task, across roles" || bad "tasks rows" "$OUT"
+
+# a driver row that names its role only under `role` still joins
+cat > "$DRV" <<'JSONL'
+{"kind":"driver_event","ts":"2026-07-12T11:00:00Z","event":"dispatch","role":"wf-tl","mode":"increment","sprint":"sprint-1","increment":1,"rc":0,"duration_s":900,"started_at":"2026-07-12T11:00:00Z","ended_at":"2026-07-12T11:15:00Z"}
+{"kind":"usage","session_id":"S3","hook_event":"Stop","started_at":"2026-07-12T11:01:00Z","ended_at":"2026-07-12T11:14:00Z","tokens":{"input":100,"output":200,"cache_read":300,"cache_creation":400},"tool_calls":2,"requests":3,"context_max":31000}
+JSONL
+OUT="$(wf telemetry roles --sink "$DRV" --config "$P/.wf/config.yaml" --format json 2>&1)"
+[ "$(rget "$OUT" "[r['role'] for r in d['roles']]")" = "['wf-tl']" ] \
+    && ok "roles: a driver row naming only 'role' still joins" || bad "driver role key" "$OUT"
+
+# the driver stamps whole seconds, so a transcript can overrun the dispatch span that
+# bracketed it: containment fails and the overlap fallback must still land the right role
+cat > "$DRV" <<'JSONL'
+{"kind":"driver_event","ts":"2026-07-12T11:00:00Z","event":"dispatch","agent":"wf-build","role":"wf-build","mode":"build","sprint":"sprint-1","increment":1,"task":"T1","rc":0,"duration_s":3600,"started_at":"2026-07-12T11:00:00Z","ended_at":"2026-07-12T12:00:00Z"}
+{"kind":"driver_event","ts":"2026-07-12T11:20:00Z","event":"dispatch","agent":"wf-review","role":"wf-review","mode":"review","sprint":"sprint-1","increment":1,"task":"T1","rc":0,"duration_s":600,"started_at":"2026-07-12T11:10:00Z","ended_at":"2026-07-12T11:20:00Z"}
+{"kind":"usage","session_id":"S5","hook_event":"Stop","started_at":"2026-07-12T10:59:59.400Z","ended_at":"2026-07-12T12:00:00.700Z","tokens":{"input":1,"output":2,"cache_read":3,"cache_creation":4},"tool_calls":1,"requests":1,"context_max":51000}
+JSONL
+OUT="$(wf telemetry roles --sink "$DRV" --config "$P/.wf/config.yaml" --format json 2>&1)"
+[ "$(rget "$OUT" "[r['role'] for r in d['roles']]")" = "['wf-build']" ] \
+    && ok "roles: a transcript overrunning its dispatch span still joins that role" || bad "driver trunc" "$OUT"
+
+# no candidate contains the usage window (clock skew) → the overlap join still matches
+cat > "$DRV" <<'JSONL'
+{"kind":"driver_event","ts":"2026-07-12T11:00:00Z","event":"dispatch","agent":"wf-build","role":"wf-build","mode":"build","sprint":"sprint-1","increment":1,"task":"T1","rc":0,"duration_s":300,"started_at":"2026-07-12T11:00:00Z","ended_at":"2026-07-12T11:05:00Z"}
+{"kind":"usage","session_id":"S4","hook_event":"Stop","started_at":"2026-07-12T10:59:58Z","ended_at":"2026-07-12T11:05:03Z","tokens":{"input":10,"output":20,"cache_read":30,"cache_creation":40},"tool_calls":1,"requests":1,"context_max":7000}
+JSONL
+OUT="$(wf telemetry roles --sink "$DRV" --config "$P/.wf/config.yaml" --format json 2>&1)"
+[ "$(rget "$OUT" "next(r['context_max_max'] for r in d['roles'] if r['role']=='wf-build')")" = "7000" ] \
+    && ok "roles: falls back to the overlap join when nothing contains the window" || bad "driver fuzzy" "$OUT"
+
+# ---------------------------------------------------------------------------
+# A driver-dispatched role runs as its OWN top-level session, so its hook fires
+# `Stop`, not `SubagentStop`. Reading only SubagentStop rows made the report blind
+# to build/review/tl/stage-repair — the roles the driver runs, and the ones doing
+# nearly all the work — while the main loop's own snapshots stay unattributed.
+# ---------------------------------------------------------------------------
+cat > "$DRV" <<'JSONL'
+{"kind":"driver_event","ts":"2026-07-12T11:00:00Z","event":"dispatch","agent":"wf-build","role":"wf-build","mode":"build","sprint":"sprint-1","increment":1,"task":"T1","rc":0,"duration_s":3600,"started_at":"2026-07-12T11:00:00Z","ended_at":"2026-07-12T12:00:00Z"}
+{"kind":"driver_event","ts":"2026-07-12T12:20:00Z","event":"dispatch","agent":"wf-review","role":"wf-review","mode":"review","sprint":"sprint-1","increment":1,"task":"T1","rc":0,"duration_s":600,"started_at":"2026-07-12T12:10:00Z","ended_at":"2026-07-12T12:20:00Z"}
+{"kind":"usage","session_id":"S6","hook_event":"Stop","started_at":"2026-07-12T11:00:05Z","ended_at":"2026-07-12T11:58:00Z","tokens":{"input":10,"output":20,"cache_read":30,"cache_creation":90},"tool_calls":180,"requests":90,"context_max":418000}
+{"kind":"usage","session_id":"S7","hook_event":"Stop","started_at":"2026-07-12T12:11:00Z","ended_at":"2026-07-12T12:19:00Z","tokens":{"input":1,"output":2,"cache_read":3,"cache_creation":9},"tool_calls":12,"requests":10,"context_max":92000}
+{"kind":"usage","session_id":"S8","hook_event":"Stop","started_at":"2026-07-12T09:00:00Z","ended_at":"2026-07-12T21:00:00Z","tokens":{"input":5,"output":6,"cache_read":7,"cache_creation":8},"tool_calls":40,"requests":30,"context_max":110000}
+JSONL
+OUT="$(wf telemetry roles --sink "$DRV" --config "$P/.wf/config.yaml" --format json 2>&1)"
+[ "$(rget "$OUT" "next(r['context_max_max'] for r in d['roles'] if r['role']=='wf-build')")" = "418000" ] \
+    && ok "roles: a Stop row a dispatch brackets is that dispatched role" || bad "stop build" "$OUT"
+[ "$(rget "$OUT" "next(r['context_max_max'] for r in d['roles'] if r['role']=='wf-review')")" = "92000" ] \
+    && ok "roles: each dispatch claims its own Stop row" || bad "stop review" "$OUT"
+# the session-spanning snapshot is contained by NO dispatch — it stays the main loop
+[ "$(rget "$OUT" "len(d['main_loop'])")" = "1" ] \
+    && ok "roles: a Stop row no dispatch brackets stays main_loop" || bad "stop main" "$OUT"
+[ "$(rget "$OUT" "d['main_loop'][0]['context_max']")" = "110000" ] \
+    && ok "roles: main_loop keeps the session-spanning snapshot" || bad "stop main ctx" "$OUT"
+[ "$(rget "$OUT" "d['matched']")" = "2" ] \
+    && ok "roles: attributed Stop rows count as matched" || bad "stop matched" "$OUT"
+
+# ---------------------------------------------------------------------------
+# A dispatched role's own Stop row must survive the subagents it ran. The lanes
+# are disjoint by construction: a driver dispatch is a top-level session (Stop),
+# so a SubagentStop row is never one, and letting it claim a dispatch evicts the
+# dispatched role's own transcript — the role then reports its subagent's numbers
+# instead of its own. A subagent whose session record carries a zero-width window
+# (concurrent siblings race on one start-stamp file) joins nothing and is counted,
+# never silently dropped and never charged to the role that ran it.
+# ---------------------------------------------------------------------------
+cat > "$DRV" <<'JSONL'
+{"kind":"driver_event","ts":"2026-08-10T10:22:58Z","event":"dispatch","agent":"wf-designer","role":"wf-designer","mode":"design","rc":0,"duration_s":1749,"started_at":"2026-08-10T09:53:49Z","ended_at":"2026-08-10T10:22:58Z"}
+{"agent":"wf-drill","started_at":"2026-08-10T10:02:34Z","ended_at":"2026-08-10T10:02:34Z","outcome":"completed"}
+{"kind":"usage","session_id":"S9","hook_event":"SubagentStop","started_at":"2026-08-10T09:57:38Z","ended_at":"2026-08-10T10:02:34Z","tokens":{"input":10,"output":9073,"cache_read":30,"cache_creation":90},"tool_calls":48,"requests":20,"context_max":142741}
+{"kind":"usage","session_id":"S9","hook_event":"Stop","started_at":"2026-08-10T09:53:53Z","ended_at":"2026-08-10T10:22:40Z","tokens":{"input":10,"output":89499,"cache_read":30,"cache_creation":90},"tool_calls":129,"requests":60,"context_max":277784}
+JSONL
+OUT="$(wf telemetry roles --sink "$DRV" --config "$P/.wf/config.yaml" --format json 2>&1)"
+[ "$(rget "$OUT" "next(r['context_max_max'] for r in d['roles'] if r['role']=='wf-designer')")" = "277784" ] \
+    && ok "roles: a subagent does not evict its dispatcher's own Stop row" || bad "sub evict" "$OUT"
+[ "$(rget "$OUT" "next(r['runs'] for r in d['roles'] if r['role']=='wf-designer')")" = "1" ] \
+    && ok "roles: the dispatch counts one run, not one per subagent" || bad "sub runs" "$OUT"
+[ "$(rget "$OUT" "d['unjoined_subagents']")" = "1" ] \
+    && ok "roles: an unattributable subagent row is counted, not dropped" || bad "sub unjoined" "$OUT"
+
+# a subagent whose own session record brackets it still joins that record
+cat > "$DRV" <<'JSONL'
+{"kind":"driver_event","ts":"2026-08-10T10:22:58Z","event":"dispatch","agent":"wf-designer","role":"wf-designer","mode":"design","rc":0,"duration_s":1749,"started_at":"2026-08-10T09:53:49Z","ended_at":"2026-08-10T10:22:58Z"}
+{"agent":"wf-drill","started_at":"2026-08-10T09:57:30Z","ended_at":"2026-08-10T10:02:40Z","outcome":"completed"}
+{"kind":"usage","session_id":"S9","hook_event":"SubagentStop","started_at":"2026-08-10T09:57:38Z","ended_at":"2026-08-10T10:02:34Z","tokens":{"input":10,"output":9073,"cache_read":30,"cache_creation":90},"tool_calls":48,"requests":20,"context_max":142741}
+{"kind":"usage","session_id":"S9","hook_event":"Stop","started_at":"2026-08-10T09:53:53Z","ended_at":"2026-08-10T10:22:40Z","tokens":{"input":10,"output":89499,"cache_read":30,"cache_creation":90},"tool_calls":129,"requests":60,"context_max":277784}
+JSONL
+OUT="$(wf telemetry roles --sink "$DRV" --config "$P/.wf/config.yaml" --format json 2>&1)"
+[ "$(rget "$OUT" "next(r['context_max_max'] for r in d['roles'] if r['role']=='wf-drill')")" = "142741" ] \
+    && ok "roles: a subagent joins its own session record" || bad "sub own" "$OUT"
+[ "$(rget "$OUT" "next(r['context_max_max'] for r in d['roles'] if r['role']=='wf-designer')")" = "277784" ] \
+    && ok "roles: and its dispatcher still reports its own peak" || bad "sub own dispatcher" "$OUT"
+[ "$(rget "$OUT" "d['unjoined_subagents']")" = "0" ] \
+    && ok "roles: nothing unjoined when every subagent has its record" || bad "sub none" "$OUT"
+
+# the dispatched role writes a session record too, and it near-spans its own dispatch —
+# a subagent must not claim THAT either, or the role reports one run per subagent it ran
+cat > "$DRV" <<'JSONL'
+{"kind":"driver_event","ts":"2026-08-10T10:22:58Z","event":"dispatch","agent":"wf-designer","role":"wf-designer","mode":"design","rc":0,"duration_s":1749,"started_at":"2026-08-10T09:53:49Z","ended_at":"2026-08-10T10:22:58Z"}
+{"agent":"wf-designer","started_at":"2026-08-10T09:54:08Z","ended_at":"2026-08-10T10:22:40Z","outcome":"completed"}
+{"agent":"wf-drill","started_at":"2026-08-10T09:58:13Z","ended_at":"2026-08-10T10:02:22Z","outcome":"completed"}
+{"kind":"usage","session_id":"S9","hook_event":"SubagentStop","started_at":"2026-08-10T09:57:45Z","ended_at":"2026-08-10T10:02:35Z","tokens":{"input":10,"output":9661,"cache_read":30,"cache_creation":90},"tool_calls":54,"requests":20,"context_max":112340}
+{"kind":"usage","session_id":"S9","hook_event":"SubagentStop","started_at":"2026-08-10T09:57:38Z","ended_at":"2026-08-10T10:02:34Z","tokens":{"input":10,"output":9073,"cache_read":30,"cache_creation":90},"tool_calls":48,"requests":20,"context_max":142741}
+{"kind":"usage","session_id":"S9","hook_event":"Stop","started_at":"2026-08-10T09:53:53Z","ended_at":"2026-08-10T10:22:40Z","tokens":{"input":10,"output":89499,"cache_read":30,"cache_creation":90},"tool_calls":129,"requests":60,"context_max":277784}
+JSONL
+OUT="$(wf telemetry roles --sink "$DRV" --config "$P/.wf/config.yaml" --format json 2>&1)"
+[ "$(rget "$OUT" "next(r['runs'] for r in d['roles'] if r['role']=='wf-designer')")" = "1" ] \
+    && ok "roles: a subagent does not claim its dispatcher's session record" || bad "sub skillrec" "$OUT"
+[ "$(rget "$OUT" "next(r['context_max_max'] for r in d['roles'] if r['role']=='wf-designer')")" = "277784" ] \
+    && ok "roles: the dispatcher's peak survives two concurrent subagents" || bad "sub skillrec ctx" "$OUT"
+[ "$(rget "$OUT" "next(r['runs'] for r in d['roles'] if r['role']=='wf-drill')")" = "1" ] \
+    && ok "roles: one subagent record claims one subagent transcript" || bad "sub skillrec drill" "$OUT"
+[ "$(rget "$OUT" "d['unjoined_subagents']")" = "1" ] \
+    && ok "roles: the second subagent has no record and is counted" || bad "sub skillrec unjoined" "$OUT"
+
+# ---------------------------------------------------------------------------
+# Parallel dispatches nest: a long build's window brackets a faster sibling's whole
+# build->review chain. Containment-first then hands the sibling's REVIEW transcript to
+# the neighbouring BUILD dispatch — and every later row shifts one dispatch along until
+# the longest-running one, the peak the report exists to surface, has no window left and
+# falls out as main_loop. A window that near-matches a dispatch is that dispatch's,
+# whether or not a wider one also contains it.
+# ---------------------------------------------------------------------------
+cat > "$DRV" <<'JSONL'
+{"kind":"driver_event","ts":"2026-07-12T11:00:00Z","event":"dispatch","role":"wf-build","task":"T1","rc":0,"started_at":"2026-07-12T11:00:00Z","ended_at":"2026-07-12T11:40:00Z"}
+{"kind":"driver_event","ts":"2026-07-12T11:00:00Z","event":"dispatch","role":"wf-build","task":"T2","rc":0,"started_at":"2026-07-12T11:00:00Z","ended_at":"2026-07-12T11:20:00Z"}
+{"kind":"driver_event","ts":"2026-07-12T11:20:01Z","event":"dispatch","role":"wf-review","task":"T2","rc":0,"started_at":"2026-07-12T11:20:01Z","ended_at":"2026-07-12T11:23:00Z"}
+{"kind":"usage","session_id":"R2","hook_event":"Stop","started_at":"2026-07-12T11:20:02Z","ended_at":"2026-07-12T11:23:00.500Z","tokens":{"input":1,"output":2,"cache_read":3,"cache_creation":4},"tool_calls":9,"requests":8,"context_max":87000}
+{"kind":"usage","session_id":"B2","hook_event":"Stop","started_at":"2026-07-12T11:00:01Z","ended_at":"2026-07-12T11:19:50Z","tokens":{"input":1,"output":2,"cache_read":3,"cache_creation":4},"tool_calls":40,"requests":30,"context_max":218000}
+{"kind":"usage","session_id":"B1","hook_event":"Stop","started_at":"2026-07-12T11:00:01Z","ended_at":"2026-07-12T11:39:50Z","tokens":{"input":1,"output":2,"cache_read":3,"cache_creation":4},"tool_calls":176,"requests":165,"context_max":409000}
+JSONL
+OUT="$(wf telemetry roles --sink "$DRV" --config "$P/.wf/config.yaml" --format json 2>&1)"
+[ "$(rget "$OUT" "next(r['context_max_max'] for r in d['roles'] if r['role']=='wf-review')")" = "87000" ] \
+    && ok "roles: a near-matching dispatch keeps its own transcript from a wider neighbour" \
+    || bad "parallel review" "$OUT"
+[ "$(rget "$OUT" "next(r['context_max_max'] for r in d['roles'] if r['role']=='wf-build')")" = "409000" ] \
+    && ok "roles: the longest parallel dispatch keeps its own peak" || bad "parallel build peak" "$OUT"
+[ "$(rget "$OUT" "next(r['runs'] for r in d['roles'] if r['role']=='wf-build')")" = "2" ] \
+    && ok "roles: both parallel builds join" || bad "parallel build runs" "$OUT"
+[ "$(rget "$OUT" "len(d['main_loop'])")" = "0" ] \
+    && ok "roles: no dispatched transcript falls through to main_loop" || bad "parallel main" "$OUT"
+[ "$(rget "$OUT" "sorted(t['context_max'] for t in d['tasks'])")" = "[218000, 409000]" ] \
+    && ok "roles: each task's peak is its own build's" || bad "parallel tasks" "$OUT"
+
+# ---------------------------------------------------------------------------
+# The exact join. The driver reads the session id out of the dispatch's own log and
+# stamps it on the dispatch row, so a usage row naming the same session belongs to that
+# role by identity — no window comparison, and no way for a neighbour to claim it. Here
+# the windows deliberately point the wrong way: the id has to win.
+# ---------------------------------------------------------------------------
+cat > "$DRV" <<'JSONL'
+{"kind":"driver_event","ts":"2026-07-12T11:00:00Z","event":"dispatch","role":"wf-build","task":"T1","rc":0,"session_id":"SID-A","started_at":"2026-07-12T11:00:00Z","ended_at":"2026-07-12T11:40:00Z"}
+{"kind":"driver_event","ts":"2026-07-12T11:00:00Z","event":"dispatch","role":"wf-review","task":"T1","rc":0,"session_id":"SID-B","started_at":"2026-07-12T11:05:00Z","ended_at":"2026-07-12T11:10:00Z"}
+{"kind":"usage","session_id":"SID-A","hook_event":"Stop","started_at":"2026-07-12T11:05:30Z","ended_at":"2026-07-12T11:09:30Z","tokens":{"input":1,"output":2,"cache_read":3,"cache_creation":4},"tool_calls":90,"requests":80,"context_max":301000}
+{"kind":"usage","session_id":"SID-B","hook_event":"Stop","started_at":"2026-07-12T11:20:00Z","ended_at":"2026-07-12T11:30:00Z","tokens":{"input":1,"output":2,"cache_read":3,"cache_creation":4},"tool_calls":3,"requests":3,"context_max":55000}
+JSONL
+OUT="$(wf telemetry roles --sink "$DRV" --config "$P/.wf/config.yaml" --format json 2>&1)"
+[ "$(rget "$OUT" "next(r['context_max_max'] for r in d['roles'] if r['role']=='wf-build')")" = "301000" ] \
+    && ok "roles: the session id joins the row to the role that ran it" || bad "sid build" "$OUT"
+[ "$(rget "$OUT" "next(r['context_max_max'] for r in d['roles'] if r['role']=='wf-review')")" = "55000" ] \
+    && ok "roles: the id wins over a window that would claim the wrong row" || bad "sid review" "$OUT"
+[ "$(rget "$OUT" "len(d['main_loop'])")" = "0" ] \
+    && ok "roles: nothing falls through when both sides carry the id" || bad "sid main" "$OUT"
+
+# A pre-upgrade row carries no id — the window join still has to cover it.
+cat > "$DRV" <<'JSONL'
+{"kind":"driver_event","ts":"2026-07-12T11:00:00Z","event":"dispatch","role":"wf-build","task":"T1","rc":0,"started_at":"2026-07-12T11:00:00Z","ended_at":"2026-07-12T11:40:00Z"}
+{"kind":"usage","session_id":"SID-Z","hook_event":"Stop","started_at":"2026-07-12T11:00:01Z","ended_at":"2026-07-12T11:39:00Z","tokens":{"input":1,"output":2,"cache_read":3,"cache_creation":4},"tool_calls":9,"requests":9,"context_max":77000}
+JSONL
+OUT="$(wf telemetry roles --sink "$DRV" --config "$P/.wf/config.yaml" --format json 2>&1)"
+[ "$(rget "$OUT" "next(r['context_max_max'] for r in d['roles'] if r['role']=='wf-build')")" = "77000" ] \
+    && ok "roles: a dispatch row with no id still joins by window" || bad "sid legacy" "$OUT"
+
 echo ""
 echo "  telemetry verbs: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

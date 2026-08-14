@@ -33,26 +33,44 @@ over time.
 Most documents are transient handovers between roles. The durable set is small:
 
 - **Capabilities** — the *why*, kept as an **open work-set** of *un-proven* demand:
-  user-voice needs the PO has raised whose solution is not yet proven built. The SA drains
-  a capability only through a two-gate proof: its covering **system tests** shipped
-  (mechanical — the `[SYS-TC]` tags in the test tree), and a dispatched **wf-adequacy**
-  review finds the scenario set covers the capability's whole promise (judgment —
-  adversarial, grounded in source, never in the design's own decomposition). The drain is
-  keyed on *proof*, never on the SA's "I designed it" and never on requirement
-  coverage alone — dems proved four times that a design's proofs can all be present while
-  the capability is false (each design faithfully proved its own decomposition, which had
-  missed sibling code paths; only source-grounded adversarial review caught the misses).
-  A failed adequacy review re-scopes the capability's notes with the residual paths and
-  feeds the next design. So a rejected slice, a re-cut, or a false-complete build all
-  leave the *why* intact for the re-design to reason from.
-- **Design backlog** — the SA's *committed but draining* record of designed-but-unbuilt
-  work. Each design block carries its **narrative** (the change's story — shape,
-  end-to-end flow with wiring, each component's role; the prose that survives the
-  SA → TL → build handovers) plus its requirements and scenarios. The SA appends;
-  `wf pipeline complete-sprint` trims each id at sprint close once its covering task
-  merged (the merge record), and it empties
-  to nothing, so it is working state, not a durable spec (its load-bearing decisions live
-  in the ADRs).
+  user-voice needs the PO has raised whose solution is not yet proven built. One taken up
+  for work also carries, nested beside its promise, the **SYS-TC scenario set that would
+  prove it** — authored when the work starts, seeded from what already shipped, amendable
+  while it builds. It drains only through a two-gate proof, checked at **every stage
+  close**: its covering **system tests** shipped (mechanical — `[SYS-TC]` tags in the test
+  tree, set-differenced against that set), and a **wf-adequacy** dispatch finding they
+  cover the whole promise (judgment — adversarial, grounded in source, never in the
+  design's own decomposition). The drain is keyed on *proof*, never on "I designed it" —
+  dems proved four times that a design's proofs can all be present while the capability is
+  false, each having faithfully proved a decomposition that missed sibling code paths.
+  An inadequate verdict appends the residual paths to the capability's notes; three
+  consecutive ones park it for a PO session. So a rejected design, a re-cut, or a
+  false-complete build all leave the *why* intact for the re-design to reason from.
+- **Charter** — the written-down *direction* the autonomous designer converges toward, in
+  place of a human sitting in every design session: the target shape at fat-marker
+  altitude, the ranked forces, the domain language, the sequencing rationale, and the
+  no-go zones. Governor-clean because it describes the **future** — the one thing code
+  cannot report. One file, authored only in an SA session (the designer reads it, never
+  writes it), held under `hygiene.charter_max`, and drained element by element as the repo
+  reaches what it describes.
+- **Architecture map** — the component-level structure the human ratifies in SA sessions:
+  each component/subsystem as one entry (id, a **1–2 sentence intent**, depends-on edges,
+  `(planned)` when not yet built). This is the deliberate middle line drawn from the dems
+  evidence: detailed requirement wording authored upfront was the defect source and left
+  the session, but component/dependency thinking was not — so structure authority stays
+  human. The map is a **delta**, never an inventory (the governor: existing structure
+  derives from discover). The designer is **hard-bound** to it mechanically (`wf stage
+  check` rejects an allocation naming a component in neither the repo nor the map);
+  needing new structure is an escalation, never an invention. Same drain and cap
+  discipline as the charter (`hygiene.architecture_max`).
+- **Rolling plan** — the one durable file the autonomous designer writes: the next few
+  milestones and why they come next, at **milestone altitude only** — no requirements, no
+  component detail — under `hygiene.plan_max`. Read at every cut and re-validated against
+  fresh repo state (a hypothesis, never a commitment executed blindly), rewritten only when
+  a milestone shipped or the evidence contradicts one, and it rides in every sprint PR as
+  the reviewer's direction-drift surface. There is **no design backlog and no forecast
+  beyond the next stage**: design is cut one stage at a time against the merged tree and
+  built by that stage, so the drain anchor is its `serves:` plus the merge record.
 - **ADRs** — deliberate architecture decisions: the choice made, the
   alternatives rejected, and why. The durable record of *how* the system is
   shaped, separate from the *why* (capabilities) and the local *how-to*
@@ -63,31 +81,32 @@ Most documents are transient handovers between roles. The durable set is small:
 - **Proving tags in system tests — the only spec tag in code.** A system test carries
   `[SYS-TC:id]` **plus its scenario description** — a test's description describes the
   test, so it cannot rot apart from it, and the shipped scenario set is the durable
-  proof-of-capability record. Component requirements are **never tagged in code**: the
-  id and its EARS statement live exclusively in the transient chain (backlog → slice →
-  contract) and drain from the **merge record** at sprint close — persisted requirement
-  prose in code claims spec authority, rots invisibly, and makes agents work *around*
-  old requirements instead of replacing them (dems: ~90% of tagged statements were
+  proof-of-capability record. Component requirements are **never tagged in code, and carry
+  no ids at all**: the acceptance criterion *is* the requirement, it lives exclusively in
+  the transient chain (the stage's design → its task contracts), and it drains from the
+  **merge record** — persisted requirement prose in code claims spec authority, rots
+  invisibly, and makes agents work *around* old requirements instead of replacing them
+  (dems: ~90% of tagged statements were
   orphans, one id carried two contradictory statements, and the prose was the top
   hygiene-debt source), while even a bare id-tag is weaker evidence than the merge it
   duplicates (a tag proves a test *mentions* an id; a merged task proves its tests *ran
-  green* through the gate). A requirement no test can observe (a lint/CI gate fact) is
-  marked `proof: inspection` in the backlog, its acceptance criteria are gate-verified,
-  and it drains on the same merge record.
+  green* through the gate). A criterion no test can observe (a lint/CI gate fact) carries
+  `verified_by: inspection` on the criterion itself, naming the source fact the gate
+  checks, and drains on the same merge record.
 - **Tooling** — config + scripts/CLI. Machinery, kept separate from intent.
 
 Everything else (the repo map, component descriptions, plans, contracts) is
 derived on demand or discarded after the step that produced it.
 
 **The maintainer archive is outside all of this.** As each transient drains from the
-working set (capabilities and learnings as the SA drains them; slice, sprint,
-and backlog snapshot at sprint close), a copy is written to `paths.archive` — a
-**write-only** sink for the wf2 maintainer to study run quality offline. It is *not* part of the durable working set and
-**no wf role is ever instructed to read it**. The governor forbids storing what code can
-re-derive because a role would consume it as truth and it would rot; the archive is exempt
-because nothing consumes it — it is research exhaust, peer to the telemetry log, never a
-source of truth. Do not wire any role to read it, and do not "governor-police" it as a
-stored-what-code-reports violation.
+working set (a capability when its adequacy verdict drains it; the stage when it merges;
+learnings at sprint close), a copy is written to `paths.archive` — a **write-only** sink
+for the wf2 maintainer to study run quality offline. It is *not* part of the durable
+working set and **no wf role is ever instructed to read it**. The governor forbids storing
+what code can re-derive because a role would consume it as truth and it would rot; the
+archive is exempt because nothing consumes it — research exhaust, peer to the telemetry
+log, never a source of truth. Do not wire any role to read it, and do not
+"governor-police" it as a stored-what-code-reports violation.
 
 ## Ground rules (for building wf2)
 
@@ -109,12 +128,12 @@ real run proves its absence hurt).
     wf-infrastructure start here). It reads `wf-basics`, resolves repo-specifics
     from `.wf/config.yaml`, does its job in the main window, and gates on human
     approval before any durable write.
-  - **Dispatched subagent** — the orchestrator spawns it in a fresh scoped context
-    inside the build loop (wf-tl, wf-build, wf-review, wf-spec-fix).
+  - **Dispatched subagent** — the Python driver launches it in a fresh scoped context
+    inside the loop (wf-designer, wf-build, wf-review).
   This is a first-class, established pattern — the main-context mode is **not** a
   lesser or "ad-hoc" category. Each role is single-context: when a concern needs
-  the other context, it becomes its own named skill — the fix concern split out of
-  wf-sa into the dispatched wf-spec-fix rather than living as a second mode.
+  the other context, it becomes its own named skill — the design concern split out of
+  wf-sa into the dispatched wf-designer rather than living as a second mode.
 - **Description = passive knowledge injection, kept tiny.** We still write a
   description, because it is how wf knowledge leaks into any LLM working in a
   wf-equipped repo. Keep it to **1–2 sentences, max** — context is the budget.
@@ -186,6 +205,22 @@ real run proves its absence hurt).
 - **All scripts are built TDD** (red → green → refactor). Tests live in the wf2
   source only — **only the script is rendered into an install target, never its
   tests.**
+- **Run `bash run_all.sh` before every commit** — the whole repo's gate (driver, CLI,
+  per-tool, installer). Committing without it is how a cross-file invariant ships
+  broken: `envelope parity` checks a role's frontmatter against the text it loads
+  against the config template, and no single suite sees all three.
+
+### Envelope parity
+
+- A dispatched role's frontmatter carries an `envelope:` list — every
+  `paths.`/`commands.`/`limits.`/`hygiene.` key its own text (plus the shared skills it
+  loads) names. The driver renders **that set and nothing else** into the dispatch
+  prompt. A role with no list is a dispatch error, not a full-config fallback.
+- Both directions are gated: a key the text reads but does not declare never reaches
+  the role, and a key declared but unread is context every dispatch of that role pays
+  for. `tools/cli/tests/envelope_parity_test.sh` is the check; it is the reason a
+  shared skill must not name a concrete key as an illustration — that alone forces the
+  key into every role that loads it.
 
 ### Dogfooding (standing guardrail)
 

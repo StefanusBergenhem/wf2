@@ -7,11 +7,10 @@ sync with the code. Its importers: `register.py` (the derived scenario register)
 `retired.py` (the superseded sweep), `design_view/render_design.py` (shipped context),
 and `wf pipeline complete-sprint` (the close-time superseded sweep).
 
-**Component requirements have no tag.** REQ ids are planning-time working state whose
-statements live in the transient chain (backlog → slice → contract) and die with it;
-"built" is derived from the **merge record** — `wf pipeline complete-sprint` trims each
-id from the design backlog when its covering task merged through the gate. A legacy
-`[REQ:...]` token in an older tree is inert; the harvester ignores it.
+**Component-level spec has no tag.** Acceptance criteria are planning-time working
+state that live in the transient chain (slice → task contract) and die with it;
+"built" is derived from the **merge record** at sprint close. A legacy `[REQ:...]`
+token in an older tree is inert; the harvester ignores it.
 
 ## The tag contract — what the build writer must satisfy
 
@@ -23,13 +22,16 @@ An e2e test proving a system test case stamps the id **plus its scenario descrip
 
 - A plain comment token — **any language, any comment style** (`//`, `#`, `/* */`,
   `<!-- -->`). The harvester greps text, so it is language-agnostic.
+- **The description may wrap.** It continues onto the comment lines directly under the
+  tag and is harvested whole; it ends at the first line that is no longer that comment —
+  code, a blank line, a blank comment line, the block's closer, or another tag.
 - **The description rides the tag.** A test's description describes the test, so it
   cannot rot apart from it; the shipped scenario set is the durable
   proof-of-capability record. When two occurrences of one id carry **different
   non-empty texts**, the register flags the row divergent — visibility, never an error.
 - **No hash.** Completion is set-membership, not content-equality.
 - `<id>` is **repo-unique** (`SYS-TC-<n>`, monotonic — the high-water mark is
-  `id_counters.sys_tc` in `.wf/config.yaml`, never reused).
+  `id_counters.sys_tc` in `paths.repo_state`, never reused).
 - After a scenario retires, a lingering tag is an inert breadcrumb — unless it was
   **superseded**, in which case `retired.py` reports it as a survivor (below).
 
