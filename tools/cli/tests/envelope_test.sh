@@ -22,6 +22,7 @@ version: 1
 
 project:
   name: "demo"
+  target: "claude"
   base_branch: "main"
 
 paths:
@@ -83,9 +84,15 @@ grep -q '^limits.tasks_per_stage: 10$' <<<"$OUT" \
 grep -q '^hygiene.plan_max: 60$' <<<"$OUT" \
   && ok "carries the hygiene ceilings a role is held to" || bad "carries hygiene" "$OUT"
 
+# The repo's own name is: a role that titles a human-facing artifact has no other
+# source for it, and `project` is not a block a role may read whole.
+grep -q '^project.name: demo$' <<<"$OUT" \
+  && ok "carries the project name" || bad "carries the project name" "$OUT"
+
 # Loop knobs are not: no role acts on them, and agent_cmd is the launch template of the
-# very dispatch reading this.
-grep -qi 'agent_cmd\|review.passes\|base_branch' <<<"$OUT" \
+# very dispatch reading this. `project.target` and `project.base_branch` sit in the same
+# block as the name and stay out with them.
+grep -qi 'agent_cmd\|review.passes\|base_branch\|project.target' <<<"$OUT" \
   && bad "carries no loop knobs" "leaked a loop knob: $OUT" \
   || ok "carries no loop knobs"
 
@@ -118,6 +125,13 @@ grep -q '^paths.current_task: .wf/transient/current-task.yaml$' <<<"$OUT2" \
   && ok "a declared key keeps its value" || bad "declared value" "$OUT2"
 grep -q 'capabilities\|tasks_per_stage\|plan_max' <<<"$OUT2" \
   && bad "undeclared keys are dropped" "$OUT2" || ok "undeclared keys are dropped"
+OUT5="$("$PYTHON" -c '
+import sys; sys.path.insert(0, sys.argv[1])
+import envelope
+print(envelope.render(sys.argv[2], keys=["project.name"]))
+' "$CLI" "$PROJ/.wf/config.yaml" 2>&1)"; RC5=$?
+[ $RC5 -eq 0 ] && [ "$OUT5" = "project.name: demo" ] \
+  && ok "project.name renders when declared" || bad "project.name declared" "rc=$RC5: $OUT5"
 OUT4="$("$PYTHON" -c '
 import sys; sys.path.insert(0, sys.argv[1])
 import envelope

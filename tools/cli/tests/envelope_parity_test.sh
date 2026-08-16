@@ -21,9 +21,13 @@ from pathlib import Path
 
 root = Path(sys.argv[1])
 template = root / "skills/wf-init/assets/config.yaml.tmpl"
-# The blocks the dispatch prompt can carry — envelope.py's own _BLOCKS.
+# The blocks the dispatch prompt can carry, and the single keys outside them —
+# envelope.py's own _BLOCKS and _KEYS. Both are counted, or a role naming a key from
+# outside the blocks declares nothing and the prompt renders nothing.
 BLOCKS = ("paths", "commands", "limits", "hygiene")
-KEY_RE = re.compile(r"\b(?:" + "|".join(BLOCKS) + r")\.[a-z_]+\b")
+KEYS = ("project.name",)
+KEY_RE = re.compile(r"\b(?:(?:" + "|".join(BLOCKS) + r")\.[a-z_]+|"
+                    + "|".join(re.escape(k) for k in KEYS) + r")\b")
 
 pass_n = fail_n = 0
 
@@ -65,10 +69,13 @@ def template_keys():
     for line in template.read_text(encoding="utf-8").splitlines():
         if re.match(r"^[a-z_]+:", line):
             block = line.split(":", 1)[0]
-        elif block in BLOCKS:
-            found = re.match(r"^  ([a-z_]+):", line)
-            if found:
-                keys.add(f"{block}.{found.group(1)}")
+            continue
+        found = re.match(r"^  ([a-z_]+):", line)
+        if not found:
+            continue
+        name = f"{block}.{found.group(1)}"
+        if block in BLOCKS or name in KEYS:
+            keys.add(name)
     return keys
 
 

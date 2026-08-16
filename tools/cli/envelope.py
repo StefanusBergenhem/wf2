@@ -5,10 +5,9 @@ and nothing else. Opening ``.wf/config.yaml`` to get them costs the whole file �
 comments included, and the file is mostly comments, because it is written for the
 human who edits it.
 
-So the driver renders this block into the dispatch prompt instead. It carries every
-``paths.*`` and ``commands.*`` key verbatim: no per-role subset, because a subset is a
-second place that has to know what each role reads, and it drifts the first time a
-skill needs one more key.
+So the driver renders this block into the dispatch prompt instead. It carries the keys
+the role's own ``envelope:`` list declares, verbatim — the declaration sits beside the
+text that reads them, so the two cannot drift apart unnoticed.
 
 Transport only. A value here is the string the config carries, not an absolute path —
 which tree a path roots on is the preamble's rule (a worktree-local artifact roots on
@@ -27,6 +26,12 @@ import common
 # and `orchestrate`: the loop acts on them, no role does.
 _BLOCKS = ("paths", "commands", "limits", "hygiene")
 
+# Single keys renderable from outside those blocks. `project` is not a block a role may
+# read whole — `target` and `base_branch` configure the launch and the branch it stacks
+# on — but the repo's own name is a value a role that titles a human-facing artifact has
+# no other source for.
+_KEYS = ("project.name",)
+
 
 def _value(raw) -> str:
     """One config value as the block renders it. A list (several test-tree roots in a
@@ -36,6 +41,22 @@ def _value(raw) -> str:
     if isinstance(raw, (list, tuple)):
         return ", ".join(str(item) for item in raw)
     return "" if raw is None else str(raw)
+
+
+def _renderable(doc):
+    """Every ``<block>.<key>`` the config carries that a role may be handed, paired with
+    its raw value: the named singles first, then each block's keys in config order."""
+    for name in _KEYS:
+        block, _, key = name.partition(".")
+        values = doc.get(block)
+        if isinstance(values, dict) and key in values:
+            yield name, values[key]
+    for block in _BLOCKS:
+        values = doc.get(block)
+        if not isinstance(values, dict):
+            continue
+        for key, raw in values.items():
+            yield f"{block}.{key}", raw
 
 
 def render(config_path: str, keys=None) -> str:
@@ -50,16 +71,11 @@ def render(config_path: str, keys=None) -> str:
     doc = common.config_doc(config_path)
     wanted = None if keys is None else list(keys)
     lines, seen = [], set()
-    for block in _BLOCKS:
-        values = doc.get(block)
-        if not isinstance(values, dict):
+    for name, raw in _renderable(doc):
+        if wanted is not None and name not in wanted:
             continue
-        for key, raw in values.items():
-            name = f"{block}.{key}"
-            if wanted is not None and name not in wanted:
-                continue
-            seen.add(name)
-            lines.append(f"{name}: {_value(raw)}")
+        seen.add(name)
+        lines.append(f"{name}: {_value(raw)}")
     if wanted is not None:
         missing = [k for k in wanted if k not in seen]
         if missing:

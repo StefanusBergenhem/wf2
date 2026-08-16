@@ -60,9 +60,15 @@ You only ever **create and reinforce** entries — never remove one.
 
 ### Phase 2 — Select what's new
 
-- **Telemetry:** walk the session records. For each channel (`repo_observation` →
-  `$LEARNINGS`, `wf_friction` → `$WF_LEARNINGS`): skip the record if its `ended_at` is
-  already in that channel's `sources` set, or if that feedback field is empty.
+- **Telemetry:** walk the session records. Skip the record if its `ended_at` already
+  appears in **either** file's `sources` set, and skip a feedback field that is empty.
+- **Route each field by its SUBJECT, not by the field it arrived in.** The field names
+  which one an agent reached for; what the entry is *about* decides which file it lands
+  in. An observation about the wf toolkit — a role's skill text, a `wf` CLI verb, the
+  driver, **this skill and this run's own process included** — is a `$WF_LEARNINGS`
+  entry however it arrived; friction that is really about the project's own code is a
+  `$LEARNINGS` entry. An observation about the wf toolkit that names no wf file, step,
+  or verb to change is dropped as non-actionable, not filed to the nearer stream.
 - **Run patterns:** if `$PIPELINE_STATE` or any driver event is present and
   `sprint:<sprint_id>` is not yet in either channel's `sources`, this run's patterns are
   unprocessed.
@@ -106,7 +112,14 @@ group routinely carries two unrelated causes, and collapsing them loses one. Rea
 prose of every record in the group and ask whether one fix would resolve all of them; if
 not, the group is more than one learning.
 
-Turn each unprocessed observation and each cross-task pattern into a learning, holding the bar:
+**Then verify every observation against the merged tree before distilling it.** A session
+writes its feedback before the run is over, so a later task in the same run — or a later
+stage — routinely closes what an earlier session flagged, and the telemetry text can
+never show it. For each, read what it names in the code as it stands now (`git log`
+the run's merge commits when the observation points at a defect rather than a file);
+if it is already closed, drop it — no entry, counted with the non-actionable drops.
+
+Turn each surviving observation and each cross-task pattern into a learning, holding the bar:
 
 - **Actionable and concrete.** Names a real artifact, field, or step and implies an action.
   Drop the vague — "could be cleaner" is noise, not a learning, and produces no entry.

@@ -137,10 +137,13 @@ names the branch its work is on; ground the successor task on it when the block 
 harness failure, and start clean when review rejected the build.
 
 **Amend a scenario set the tree has outgrown.** When the merged source shows a path an
-entry's promise covers and its `system_tests` set does not, add the scenario now, in the
-same shape and minted from the same counter — an unshipped scenario is yours to add,
-re-word, or remove. A scenario already **shipped** is escalation criterion 3. Re-run
-`python3 <paths.tools>/cli/wf workset check` after any amendment.
+entry's promise covers and its `system_tests` set does not, add the scenario now — an
+unshipped scenario is yours to add, re-word, or remove. A scenario already **shipped** is
+escalation criterion 3. **Load `references/system-testcase-syntax.md` before writing it,
+and mint its id by Phase 3 step 2's rule**: an amendment is authoring, and one written
+from memory ships the seam-level wording and the colliding id that reference and that
+rule exist to stop. Re-run `python3 <paths.tools>/cli/wf workset check` after any
+amendment, and bump `id_counters.sys_tc` in Phase 7 as for any id you mint.
 
 **When nothing open and unparked is in scope:** delete `paths.stage` if it survived a
 previous cut, write no stage, and report work exhaustion. A clean outcome.

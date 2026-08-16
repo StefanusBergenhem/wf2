@@ -11,6 +11,7 @@ envelope:
   - paths.discover_subsystems
   - paths.discover_view
   - paths.repo_state
+  - project.name
   - paths.telemetry
   - paths.tools
   - paths.transient

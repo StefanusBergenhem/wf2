@@ -120,7 +120,8 @@ def build_prompt(cfg, role: str, params: dict) -> str:
         raise DispatchError(
             f"{role_file} declares no `envelope:` list in its frontmatter, so there is "
             f"no set of config keys to hand {role} — add one naming every paths./"
-            f"commands./limits./hygiene. key its text reads")
+            f"commands./limits./hygiene. key its text reads, plus project.name when it "
+            f"names that")
     given = {k: v for k, v in params.items() if v is not None}
     lines = [f"Read {role_file} and follow it.",
              f"role_dir: {cfg.role_dir(role, role_file)}"]
