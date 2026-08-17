@@ -15,6 +15,10 @@ from __future__ import annotations
 import re
 
 PARK_THRESHOLD = 3
+# How many countable full-promise rounds a capability gets before the remainder is
+# re-homed as work rather than re-reviewed. Each round is a full adversarial source
+# review at a stage close; dems spent eight on one capability and drained nothing.
+ROUND_CAP = 3
 FULL_PROMISE = "full-promise"
 
 _HEAD_RE = re.compile(r"^#\s*Adequacy:\s*(CAP-\d+)\s*[—\-–:]+\s*(\w+)", re.MULTILINE)
@@ -22,6 +26,7 @@ _LIST_ITEM_RE = re.compile(r"^(\s*)-\s")
 _ENTRY_ID_RE = re.compile(r"^\s*(?:-\s+)?id:\s*[\"']?([\w.-]+)")
 _STATUS_RE = re.compile(r"^(\s*status:\s*)([^\s#]+)(.*)$")
 _RESIDUALS_RE = re.compile(r"^\*\*Residuals:\*\*\s*(\S+)", re.MULTILINE)
+_BREAKS_RE = re.compile(r"^\*\*Breaks:\*\*\s*(\S+)", re.MULTILINE)
 
 
 def digests(cfg, capability: str, question: str = FULL_PROMISE) -> list:
@@ -59,14 +64,8 @@ def consecutive_inadequate(cfg, capability: str) -> int:
     return count
 
 
-def residuals_of(path):
-    """How many falsifying paths the digest found, off its ``**Residuals:**`` header.
-    None when the digest carries no countable header — which is NOT zero: it means this
-    review said nothing a program can compare against the last one. ``wf adequacy
-    check`` is the gate that keeps that case rare."""
-    if path is None or not path.is_file():
-        return None
-    hit = _RESIDUALS_RE.search(path.read_text(errors="replace"))
+def _count(text, pattern):
+    hit = pattern.search(text)
     if not hit:
         return None
     try:
@@ -75,15 +74,39 @@ def residuals_of(path):
         return None
 
 
+def residuals_of(path):
+    """How many falsifying paths the digest found, off its ``**Residuals:**`` header —
+    both classes together. None when the digest carries no countable header, which is NOT
+    zero: it means this review said nothing a program can compare against the last one."""
+    if path is None or not path.is_file():
+        return None
+    return _count(path.read_text(errors="replace"), _RESIDUALS_RE)
+
+
+def blocking_of(path):
+    """How many **breaks** residuals the digest found — paths where a user gets a wrong
+    answer today. This is the only count a convergence rule may read.
+
+    The total cannot serve: it includes the unproven class, which is bounded by code size
+    and grows every time a residual is closed, so a trend over it never falls. A digest
+    predating the split carries no ``**Breaks:**`` line; its residuals were unclassified
+    and every one of them blocked, so the total is the honest reading for those."""
+    if path is None or not path.is_file():
+        return None
+    text = path.read_text(errors="replace")
+    breaks = _count(text, _BREAKS_RE)
+    return breaks if breaks is not None else _count(text, _RESIDUALS_RE)
+
+
 def residual_trend(cfg, capability: str) -> list:
-    """The residual count of every full-promise digest, oldest first — the shape of the
+    """The blocking count of every full-promise digest, oldest first — the shape of the
     capability's convergence. An uncountable digest holds its place as None rather than
     dropping out, so a gap in the record cannot read as progress."""
-    return [residuals_of(p) for p in digests(cfg, capability)]
+    return [blocking_of(p) for p in digests(cfg, capability)]
 
 
 def is_converging(cfg, capability: str) -> bool:
-    """True when the residual set is smaller than it was. Round count alone cannot tell
+    """True when the blocking set is smaller than it was. Round count alone cannot tell
     a capability being narrowed down from one that is not designable: eleven residuals
     falling to three is the first, five holding at five is the second. Fewer than two
     countable digests cannot show a trend, so it does not claim one — this answers
@@ -94,7 +117,32 @@ def is_converging(cfg, capability: str) -> bool:
     return counts[-1] < counts[0]
 
 
+def should_drain_with_residue(cfg, capability: str) -> bool:
+    """True when another adequacy round cannot be justified, so the capability leaves
+    through its residue instead.
+
+    Two ways to get here. The set **stopped shrinking** — the review is no longer
+    narrowing anything down, and each round's fix adds code that becomes the next round's
+    residual, so the loop has no fixed point. Or the set is shrinking but has taken
+    ``ROUND_CAP`` rounds, each a full adversarial source review at every stage close;
+    past that the remainder is cheaper as ranked work than as a gate.
+
+    Only a countable trend triggers it. Draining is irreversible, and a run of digests
+    nobody can compare is exactly the case where a human should look — that is what
+    ``should_park`` is for."""
+    if verdict_of(newest_digest(cfg, capability)) == "adequate":
+        return False
+    counts = [c for c in residual_trend(cfg, capability) if c is not None]
+    if len(counts) < 2:
+        return False
+    return len(counts) >= ROUND_CAP or not is_converging(cfg, capability)
+
+
 def should_park(cfg, capability: str) -> bool:
+    """The human escalation, now the fallback rather than the first exit. It is reached
+    only when ``should_drain_with_residue`` did not fire — i.e. the residual trend is
+    unreadable — because a promise a human re-words comes back the same way otherwise:
+    dems re-worded CAP-015 twice and the count returned higher each time."""
     return consecutive_inadequate(cfg, capability) >= PARK_THRESHOLD
 
 

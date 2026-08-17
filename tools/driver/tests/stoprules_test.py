@@ -53,6 +53,23 @@ class WorkTest(support.TempProject):
         self.assertEqual(work["capabilities"], ["CAP-001"])
         self.assertEqual(work["learnings"], ["L-001"])
 
+    def test_open_work_skips_proposed_entries(self):
+        """A `proposed` capability was minted by the residue exit from a defect residual;
+        its words are the reviewer's, not a product owner's. The loop cannot design
+        against it until a PO session owns the wording."""
+        self.write_work(caps=CAPS + '  - id: "CAP-003"\n'
+                                    '    statement: "minted from a residual"\n'
+                                    '    status: proposed\n')
+        self.assertEqual(stoprules.open_work(self.cfg)["capabilities"], ["CAP-001"])
+
+    def test_only_proposed_left_is_work_exhaustion(self):
+        """The right stop, not a spin: it says the loop is out of work a human has agreed
+        to, which is exactly what a PO session is for."""
+        self.write_work(caps=CAPS.replace("status: planned", "status: proposed"),
+                        learnings="version: 1\nlearnings: []\n")
+        stop = stoprules.pre_sprint(self.cfg, self.git)
+        self.assertEqual(stop.reason, "work_exhaustion")
+
     def test_all_parked_and_no_learnings_is_work_exhaustion(self):
         self.write_work(caps=CAPS.replace("status: planned", "status: parked"),
                         learnings="version: 1\nlearnings: []\n")

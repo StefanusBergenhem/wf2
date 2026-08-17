@@ -143,6 +143,65 @@ class ResidualTrendTest(support.TempProject):
         self.assertFalse(adequacy.is_converging(self.cfg, "CAP-001"))
 
 
+class DrainWithResidueTest(support.TempProject):
+    """When another round cannot be justified, the capability leaves through its residue
+    rather than through a human re-wording its promise. dems proved the re-wording lever
+    buys exactly one round: two sessions re-worded CAP-015 and the residual count came
+    back higher both times, because the count tracks the source tree, not the promise."""
+
+    def setUp(self):
+        super().setUp()
+        self.cfg = driver_config.load(str(support.write_config(self.root)))
+        self.cache = self.cfg.path("drill_cache")
+        self.cache.mkdir(parents=True, exist_ok=True)
+
+    def digest(self, stamp, verdict, residuals, cap="CAP-001"):
+        path = self.cache / f"adequacy-{cap}-full-promise-{stamp}.md"
+        path.write_text(f"# Adequacy: {cap} — {verdict}\n**Question:** full-promise\n"
+                        f"**Residuals:** {residuals}\n")
+        return path
+
+    def test_a_shrinking_set_keeps_its_next_round(self):
+        self.digest("20260101T000000Z", "inadequate", 11)
+        self.digest("20260102T000000Z", "inadequate", 4)
+        self.assertFalse(adequacy.should_drain_with_residue(self.cfg, "CAP-001"))
+
+    def test_a_set_that_stopped_shrinking_exits_through_its_residue(self):
+        self.digest("20260101T000000Z", "inadequate", 3)
+        self.digest("20260102T000000Z", "inadequate", 6)
+        self.assertTrue(adequacy.should_drain_with_residue(self.cfg, "CAP-001"))
+
+    def test_a_flat_set_exits_through_its_residue(self):
+        self.digest("20260101T000000Z", "inadequate", 5)
+        self.digest("20260102T000000Z", "inadequate", 5)
+        self.assertTrue(adequacy.should_drain_with_residue(self.cfg, "CAP-001"))
+
+    def test_one_round_is_never_enough_to_exit(self):
+        self.digest("20260101T000000Z", "inadequate", 9)
+        self.assertFalse(adequacy.should_drain_with_residue(self.cfg, "CAP-001"))
+
+    def test_the_round_cap_exits_even_while_the_set_still_shrinks(self):
+        """A set shrinking one residual a round still costs a full adversarial review per
+        stage. The cap bounds what the loop will spend before re-homing the remainder."""
+        for i, n in enumerate((9, 8, 7)):
+            self.digest(f"2026010{i + 1}T000000Z", "inadequate", n)
+        self.assertTrue(adequacy.should_drain_with_residue(self.cfg, "CAP-001"))
+
+    def test_an_adequate_verdict_never_routes_through_residue(self):
+        self.digest("20260101T000000Z", "inadequate", 4)
+        self.digest("20260102T000000Z", "inadequate", 4)
+        self.digest("20260103T000000Z", "adequate", 0)
+        self.assertFalse(adequacy.should_drain_with_residue(self.cfg, "CAP-001"))
+
+    def test_an_unreadable_trend_does_not_trigger_the_exit(self):
+        """Draining a capability is irreversible. With nothing countable to read, the
+        park path — a human — is the right escalation, not an automatic drain."""
+        for stamp in ("20260101T000000Z", "20260102T000000Z", "20260103T000000Z"):
+            (self.cache / f"adequacy-CAP-001-full-promise-{stamp}.md").write_text(
+                "# Adequacy: CAP-001 — inadequate\n**Question:** full-promise\n")
+        self.assertFalse(adequacy.should_drain_with_residue(self.cfg, "CAP-001"))
+
+
 class ParkTest(support.TempProject):
     def setUp(self):
         super().setUp()
@@ -178,5 +237,59 @@ class ParkTest(support.TempProject):
         self.assertEqual(self.caps.read_text(), CAPS)
 
 
+
+class BlockingCountTest(support.TempProject):
+    """The convergence rule reads the BREAKS count, never the total. The total carries the
+    unproven class, which is bounded by code size and grows every time a residual is
+    closed — a trend over it can never fall, which is how dems ran 22 rounds."""
+
+    def setUp(self):
+        super().setUp()
+        self.cfg = driver_config.load(str(support.write_config(self.root)))
+        self.cache = self.cfg.path("drill_cache")
+        self.cache.mkdir(parents=True, exist_ok=True)
+
+    def digest(self, stamp, verdict, residuals, breaks=None, cap="CAP-001"):
+        path = self.cache / f"adequacy-{cap}-full-promise-{stamp}.md"
+        body = (f"# Adequacy: {cap} — {verdict}\n**Question:** full-promise\n"
+                f"**Residuals:** {residuals}\n")
+        if breaks is not None:
+            body += f"**Breaks:** {breaks}\n"
+        path.write_text(body)
+        return path
+
+    def test_the_trend_reads_breaks_not_the_total(self):
+        self.digest("20260101T000000Z", "inadequate", 9, breaks=4)
+        self.digest("20260102T000000Z", "inadequate", 12, breaks=2)
+        self.assertEqual(adequacy.residual_trend(self.cfg, "CAP-001"), [4, 2])
+
+    def test_growing_test_debt_does_not_read_as_divergence(self):
+        """The exact dems shape: total climbs while the real defects fall. Read off the
+        total this is 'not converging' and the capability is force-drained; read off
+        breaks it is converging and gets its next round."""
+        self.digest("20260101T000000Z", "inadequate", 4, breaks=3)
+        self.digest("20260102T000000Z", "inadequate", 9, breaks=1)
+        self.assertTrue(adequacy.is_converging(self.cfg, "CAP-001"))
+        self.assertFalse(adequacy.should_drain_with_residue(self.cfg, "CAP-001"))
+
+    def test_flat_breaks_under_falling_total_still_exits(self):
+        self.digest("20260101T000000Z", "inadequate", 9, breaks=2)
+        self.digest("20260102T000000Z", "inadequate", 3, breaks=2)
+        self.assertTrue(adequacy.should_drain_with_residue(self.cfg, "CAP-001"))
+
+    def test_a_digest_predating_the_split_counts_every_residual_as_blocking(self):
+        """No `**Breaks:**` line means nothing was classified, so nothing can be assumed
+        harmless. Reading those as zero would drain a capability on absent evidence."""
+        self.digest("20260101T000000Z", "inadequate", 6)
+        self.assertEqual(adequacy.blocking_of(
+            self.cache / "adequacy-CAP-001-full-promise-20260101T000000Z.md"), 6)
+
+    def test_residuals_of_still_reports_the_total(self):
+        path = self.digest("20260101T000000Z", "inadequate", 9, breaks=4)
+        self.assertEqual(adequacy.residuals_of(path), 9)
+
+
+
 if __name__ == "__main__":
     unittest.main()
+

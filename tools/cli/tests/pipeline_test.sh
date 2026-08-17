@@ -533,6 +533,11 @@ capabilities:
   - {id: SYS-TC-2, title: bad X rejected in bulk}
 - id: CAP-5
   statement: "Not taken up yet — no scenario set."
+- id: CAP-6
+  statement: "Parked — a PO session owes it a re-worded promise."
+  status: parked
+  system_tests:
+  - {id: SYS-TC-2, title: bad X rejected in bulk}
 YAML
 cat > "$PROJ_CC/.wf/LEARNINGS.yaml" <<'YAML'
 version: 1
@@ -559,6 +564,13 @@ CC="$("$PYTHON" "$WF" pipeline capability-complete --config "$PROJ_CC/.wf/config
     && ok "capability-complete: an entry carrying no set is not a candidate" || bad "cap-complete no set" "$CC"
 [ "$(jget "$CC" "d['shipped']")" = "['SYS-TC-2']" ] \
     && ok "capability-complete: shipped derives from the tags, never from stored state" || bad "cap-complete shipped" "$CC"
+# A parked entry is waiting on a PO session, and the design role is told to skip it — so
+# its shipped set must not trigger the gate. Left in, every stage close re-reviews a
+# promise nobody may act on and appends residuals to notes nobody may read.
+[ "$(jget "$CC" "any(e['id']=='CAP-6' for e in d['complete']+d['pending'])")" = "False" ] \
+    && ok "capability-complete: a parked entry is not a candidate" || bad "cap-complete parked" "$CC"
+[ "$(jget "$CC" "d['parked']")" = "['CAP-6']" ] \
+    && ok "capability-complete: the parked entries it skipped are named, not silently dropped" || bad "cap-complete parked named" "$CC"
 
 # a cross-cutting scenario is duplicated under both entries with the SAME id — shipping
 # it once completes both
@@ -792,6 +804,114 @@ DC="$("$PYTHON" "$WF" pipeline drain-capability CAP-3 --config "$P/.wf/config.ya
     && ok "drain-capability: an inadequate digest exits 1" || bad "drain-cap inadequate" "rc=$RCD $DC"
 [ "$(yget "$P/.wf/CAPABILITIES.yaml" "[e['id'] for e in d['capabilities']]")" = "['CAP-3', 'CAP-4']" ] \
     && ok "drain-capability: an inadequate verdict mutates nothing" || bad "drain-cap inadequate mutation" "$(cat "$P/.wf/CAPABILITIES.yaml")"
+
+# ── drain-capability --with-residue: where a surviving residual goes ──────────
+# The residue exit re-homes each surviving residual BY ITS CLASS. A `breaks` residual —
+# a user gets a wrong answer today — is an unmet promise, so it becomes its own NARROW
+# capability rather than reopening the wide one it came from. An `unproven` one is test
+# debt and goes to the observations buffer, where the second-sighting gate bounds it;
+# minted as learnings they would rebuild the very backlog that gate exists to prevent.
+
+mk_residue_proj() {  # → project with CAP-3 open, an observations buffer and id counters
+    local p; p="$(mk_cap_proj)"
+    cat >> "$p/.wf/config.yaml" <<'YAML'
+  learnings: ".wf/LEARNINGS.yaml"
+  observations: ".wf/observations.yaml"
+  repo_state: ".wf/wf-repo-state.yaml"
+hygiene:
+  observations_max: 50
+YAML
+    cat > "$p/.wf/LEARNINGS.yaml" <<'YAML'
+# LEARNINGS — this comment must survive too.
+version: 1
+learnings:
+- id: L-7
+  statement: "an existing learning"
+YAML
+    printf 'version: 1\nobservations: []\n' > "$p/.wf/observations.yaml"
+    cat > "$p/.wf/wf-repo-state.yaml" <<'YAML'
+version: 1
+id_counters:
+  cap: 4
+  learning: 7
+YAML
+    echo "$p"
+}
+
+P="$(mk_residue_proj)"
+cat > "$P/.wf/transient/drill-cache/adequacy-CAP-3-full-promise-20260731T090000Z.md" <<'MD'
+# Adequacy: CAP-3 — inadequate
+**Question:** full-promise
+**Residuals:** 3
+**Breaks:** 1
+**Date:** 20260731T090000Z
+
+## Falsifying paths → coverage
+- `engine/fold.go:151` → RESIDUAL(unproven): the held-open arm is pinned by no scenario · sketch
+- `api/reject.go:22` → RESIDUAL(breaks): a rejected write never names the field · sketch
+- `main.go:970` → RESIDUAL(unproven): the zone-kind binding is proved by nothing · sketch
+MD
+DR="$("$PYTHON" "$WF" pipeline drain-capability CAP-3 --with-residue --config "$P/.wf/config.yaml" --format json)"; RCD=$?
+[ "$RCD" -eq 0 ] && [ "$(jget "$DR" "d['drained']")" = "True" ] \
+    && ok "with-residue: an inadequate verdict still drains" || bad "residue drained" "rc=$RCD $DR"
+[ "$(yget "$P/.wf/CAPABILITIES.yaml" "'CAP-3' in [e['id'] for e in d['capabilities']]")" = "False" ] \
+    && ok "with-residue: the capability leaves the work-set" || bad "residue removal" "$(cat "$P/.wf/CAPABILITIES.yaml")"
+
+# a breaks residual becomes a NARROW capability — never a reopening of the wide one
+[ "$(yget "$P/.wf/CAPABILITIES.yaml" "[e['id'] for e in d['capabilities']]")" = "['CAP-4', 'CAP-5']" ] \
+    && ok "with-residue: a breaks residual is re-homed as its own capability" || bad "residue cap" "$(cat "$P/.wf/CAPABILITIES.yaml")"
+[ "$(yget "$P/.wf/CAPABILITIES.yaml" "d['capabilities'][1]['status']")" = "proposed" ] \
+    && ok "with-residue: a minted capability is 'proposed', never open work" || bad "residue cap status" "$(cat "$P/.wf/CAPABILITIES.yaml")"
+[ "$(yget "$P/.wf/CAPABILITIES.yaml" "'names the field' in d['capabilities'][1]['statement']")" = "True" ] \
+    && ok "with-residue: the capability carries the residual's own words" || bad "residue cap text" "$(cat "$P/.wf/CAPABILITIES.yaml")"
+
+# unproven residuals go to the buffer, NOT to learnings
+[ "$(yget "$P/.wf/observations.yaml" "len(d['observations'])")" = "2" ] \
+    && ok "with-residue: unproven residuals land in the observations buffer" || bad "residue obs" "$(cat "$P/.wf/observations.yaml")"
+[ "$(yget "$P/.wf/observations.yaml" "any('held-open' in o['statement'] for o in d['observations'])")" = "True" ] \
+    && ok "with-residue: a buffered observation carries the residual's words" || bad "residue obs text" "$(cat "$P/.wf/observations.yaml")"
+[ "$(yget "$P/.wf/observations.yaml" "d['observations'][0]['sources'][0]")" = "adequacy:CAP-3" ] \
+    && ok "with-residue: a buffered observation names where it came from" || bad "residue obs src" "$(cat "$P/.wf/observations.yaml")"
+[ "$(yget "$P/.wf/LEARNINGS.yaml" "[e['id'] for e in d['learnings']]")" = "['L-7']" ] \
+    && ok "with-residue: test debt never enters the learnings file directly" || bad "residue no learning" "$(cat "$P/.wf/LEARNINGS.yaml")"
+
+# only the capability lane moves a counter — a buffered observation carries no id
+[ "$(yget "$P/.wf/wf-repo-state.yaml" "(d['id_counters']['cap'], d['id_counters']['learning'])")" = "(5, 7)" ] \
+    && ok "with-residue: the cap high-water mark moves and the learning one does not" || bad "residue counters" "$(cat "$P/.wf/wf-repo-state.yaml")"
+grep -q "This comment must survive" "$P/.wf/CAPABILITIES.yaml" \
+    && ok "with-residue: the capabilities file's comments survive" || bad "residue comments" "$(cat "$P/.wf/CAPABILITIES.yaml")"
+[ "$(jget "$DR" "(len(d['residue']['capabilities']), d['residue']['observations'])")" = "(1, 2)" ] \
+    && ok "with-residue: the routed residue is reported by lane" || bad "residue report" "$DR"
+
+# an adequate verdict listing only unproven residuals is the NORMAL shape: it drains, and
+# its test debt is still routed rather than lost
+P="$(mk_residue_proj)"
+cat > "$P/.wf/transient/drill-cache/adequacy-CAP-3-full-promise-20260731T090000Z.md" <<'MD'
+# Adequacy: CAP-3 — adequate
+**Question:** full-promise
+**Residuals:** 1
+**Breaks:** 0
+**Date:** 20260731T090000Z
+
+## Falsifying paths → coverage
+- `engine/fold.go:151` → RESIDUAL(unproven): nothing pins the held-open arm · sketch
+MD
+# ...and it does so WITHOUT the flag: routing rides on the drain, not on the flag. The
+# flag decides whether an INADEQUATE verdict may drain; it does not decide where findings
+# go. Miss this and every ordinary drain silently discards its test debt.
+DR="$("$PYTHON" "$WF" pipeline drain-capability CAP-3 --config "$P/.wf/config.yaml" --format json)"; RCD=$?
+[ "$RCD" -eq 0 ] && [ "$(jget "$DR" "d['drained']")" = "True" ] \
+    && ok "with-residue: adequate-with-test-debt drains" || bad "residue adequate" "rc=$RCD $DR"
+[ "$(jget "$DR" "(len(d['residue']['capabilities']), d['residue']['observations'])")" = "(0, 1)" ] \
+    && ok "with-residue: an adequate drain buffers its test debt with no flag" || bad "residue adequate obs" "$DR"
+
+# without the flag, an inadequate verdict behaves exactly as before
+P="$(mk_residue_proj)"
+printf '# Adequacy: CAP-3 — inadequate\n**Residuals:** 1\n**Breaks:** 1\n- x → RESIDUAL(breaks): y · z\n' \
+    > "$P/.wf/transient/drill-cache/adequacy-CAP-3-full-promise-20260731T090000Z.md"
+DR="$("$PYTHON" "$WF" pipeline drain-capability CAP-3 --config "$P/.wf/config.yaml" --format json)"; RCD=$?
+[ "$RCD" -eq 1 ] && [ "$(yget "$P/.wf/observations.yaml" "len(d['observations'])")" = "0" ] \
+    && ok "with-residue: the flag is opt-in — without it nothing is re-homed" || bad "residue opt-in" "rc=$RCD $(cat "$P/.wf/observations.yaml")"
 
 # the newest digest wins — a stale inadequate one does not veto a later adequate one
 P="$(mk_cap_proj)"

@@ -724,6 +724,47 @@ PY
 OUT="$(wf stage check --format json)"
 [ "$(has "$OUT" A7)" = "True" ] && ok "check: A7 flags a serves entry that is not a CAP/L id" || bad "A7-bare" "$OUT"
 
+# --- A20: capability work outranks learnings ---
+# A stage of learnings alone, cut while an unparked capability is open, is the shape that
+# lets the loop refactor forever without advancing a promise. It is allowed, but only
+# when the cut says why in the header.
+write_stage; wf stage materialize >/dev/null
+edit_stage <<'PY'
+d['serves'] = ['L-88']
+PY
+OUT="$(wf stage check --format json)"; RC=$?
+[ "$RC" -eq 1 ] && [ "$(has "$OUT" A20)" = "True" ] \
+  && ok "check: A20 flags a learnings-only stage while a capability is open" || bad "A20" "rc=$RC $OUT"
+[ "$(jget "$OUT" "any('CAP-24' in f['msg'] for f in d['errors'] if f['code']=='A20')")" = "True" ] \
+  && ok "check: A20 names the capabilities that were available" || bad "A20 names" "$OUT"
+
+# the escape hatch: say why, and the cut stands
+edit_stage <<'PY'
+d['no_capability_reason'] = 'every open capability is blocked on the fact seam L-88 closes'
+PY
+OUT="$(wf stage check --format json)"
+[ "$(has "$OUT" A20)" = "False" ] \
+  && ok "check: A20 accepts a learnings-only stage that states why" || bad "A20 reason" "$OUT"
+
+# a stage that serves a capability never needs the reason
+write_stage; wf stage materialize >/dev/null
+OUT="$(wf stage check --format json)"
+[ "$(has "$OUT" A20)" = "False" ] \
+  && ok "check: A20 is silent when the stage serves a capability" || bad "A20 with cap" "$OUT"
+
+# ...and a learnings-only stage is fine when every capability is parked
+write_stage; wf stage materialize >/dev/null
+edit_stage <<'PY'
+d['serves'] = ['L-88']
+PY
+edit_caps <<'PY'
+d['capabilities'][0]['status'] = 'parked'
+PY
+OUT="$(wf stage check --format json)"
+[ "$(has "$OUT" A20)" = "False" ] \
+  && ok "check: A20 is silent when every open capability is parked" || bad "A20 parked" "$OUT"
+write_capabilities
+
 # --- A6: the design fields the build envelope carries ---
 write_stage; wf stage materialize >/dev/null
 edit_stage <<'PY'
@@ -986,3 +1027,24 @@ fi
 echo ""
 echo "  stage: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
+
+# --- A20 and a machine-minted `proposed` capability ---
+# The residue exit mints a capability from a defect residual and marks it `proposed`,
+# because a machine may not author a product promise. Until a PO session words it, it is
+# not work a cut could have taken — so it must not make a learnings-only stage illegal.
+write_stage; wf stage materialize >/dev/null
+edit_stage <<'PY'
+d['serves'] = ['L-88']
+PY
+edit_caps <<'PY'
+d['capabilities'][0]['status'] = 'parked'
+d['capabilities'].append({'id': 'CAP-99', 'statement': 'minted from a residual',
+                          'status': 'proposed'})
+PY
+OUT="$(wf stage check --format json)"
+[ "$(has "$OUT" A20)" = "False" ] \
+  && ok "check: A20 is silent when the only open capability is 'proposed'" || bad "A20 proposed" "$OUT"
+write_capabilities
+
+echo ""
+echo "  stage(A20-proposed): checked"

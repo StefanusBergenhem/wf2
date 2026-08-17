@@ -89,6 +89,29 @@ def counter(config, key):
         common.die(f"id_counters.{key} in {state} is not a number: {counters[key]!r}")
 
 
+def bump_counter(config, key, value):
+    """Raise ``id_counters.<key>`` to ``value`` in ``paths.repo_state``. Only ever
+    raises: the mark is monotonic over the repo's lifetime, so a lower value is a no-op
+    rather than a rewind that would re-mint an id already in the tree.
+
+    A verb that mints ids owns this — leave the file behind and the next mint collides
+    with what this one just wrote."""
+    state = common.resolve_path(config, "repo_state")
+    if not state.is_file():
+        common.die(f"paths.repo_state does not exist: {state}")
+    doc = common.load_yaml(state)
+    counters = doc.setdefault("id_counters", {})
+    try:
+        current = int(counters.get(key, 0))
+    except (TypeError, ValueError):
+        current = 0
+    if int(value) <= current:
+        return current
+    counters[key] = int(value)
+    common.write_yaml(state, doc)
+    return int(value)
+
+
 def _blank(value):
     """True when a scenario field holds nothing a reader could act on: empty, a ``<…>``
     template placeholder, or a TODO/FIXME/TBD stub."""

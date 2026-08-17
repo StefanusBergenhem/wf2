@@ -7,6 +7,7 @@ envelope:
   - hygiene.agents_md_max
   - paths.archive
   - paths.learnings
+  - paths.observations
   - paths.pipeline_state
   - paths.repo_state
   - paths.retro_report

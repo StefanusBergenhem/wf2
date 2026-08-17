@@ -643,6 +643,46 @@ def _serves_findings(served):
             f"(CAP-n / L-n)" for s in served if not _DRIVER_ID_RE.fullmatch(s)]
 
 
+# Statuses that take a capability off the table for a design cut. `parked` is waiting on a
+# PO session to re-word a promise nobody could prove; `proposed` was minted by the residue
+# exit from a defect residual and carries machine-written words, so it waits on a PO
+# session too. Designing against either is designing against something no human has agreed.
+NOT_CUTTABLE = ("parked", "proposed")
+
+
+def _open_capabilities(config) -> list:
+    """The capability ids a cut could actually have taken."""
+    paths = common.config_doc(config).get("paths") or {}
+    rel = paths.get("capabilities")
+    if not rel:
+        return []
+    path = (common.project_root(config) / rel).resolve()
+    if not path.exists():
+        return []
+    return [str(e["id"]) for e in (common.load_yaml(path, optional=True)
+                                   .get("capabilities") or [])
+            if isinstance(e, dict) and e.get("id")
+            and str(e.get("status") or "").strip() not in NOT_CUTTABLE]
+
+
+def _capability_rank_findings(config, doc, served):
+    """A20: capability work outranks learnings. A stage serving only learnings while an
+    unparked capability is open advances no promise, and nothing else in the gate can
+    see that — every such stage is individually well-formed. `no_capability_reason:`
+    is the deliberate escape: state why and the cut stands."""
+    if any(str(s).upper().startswith("CAP-") for s in served):
+        return []
+    if str(doc.get("no_capability_reason") or "").strip():
+        return []
+    open_caps = _open_capabilities(config)
+    if not open_caps:
+        return []
+    return [f"stage: serves no capability while {len(open_caps)} is/are open and "
+            f"unparked ({', '.join(open_caps[:5])}"
+            f"{', …' if len(open_caps) > 5 else ''}) — cut capability work, or say why "
+            f"this stage cannot in `no_capability_reason:`"]
+
+
 def _design_issue_findings(config, task_ids):
     """C18: the design role drains an issue by naming the successor task that answers
     it, so a resolution pointing at a task this stage does not carry resolved nothing.
@@ -701,6 +741,8 @@ def _header_findings(args, doc, text, tasks):
     """(findings, adr_sets, citations) for the stage header: A7, A6, A12, C14, C18,
     C20, and A4/A5 over every ADR the stage cites."""
     out = [("error", "A7", m) for m in _serves_findings(_serves(doc))]
+    out += [("error", "A20", m) for m in
+            _capability_rank_findings(args.config, doc, _serves(doc))]
     out += [("error", "A6", m) for m in _shape_findings(doc)]
     out += [("error", "A19", m) for m in
             _keying_findings(doc, {str(t.get("id")) for t in tasks if t.get("id")})]

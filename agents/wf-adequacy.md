@@ -99,17 +99,47 @@ Do not read those as evidence of coverage; read code.
    the capability's promise or duplicates another claimed scenario's path — name it
    prune-worthy. The scenario set must shrink when the promise does.
 
+## Classify every residual — this decides the verdict
+
+A residual is a path inside the promise that no scenario reaches. Every one of them
+carries a class, and you decide it by asking **one question about the code as it stands**:
+
+> **Does a user get a wrong answer today — or is the code right and merely unpinned?**
+
+- **`RESIDUAL(breaks)`** — a user gets a wrong answer, a bad write is accepted, a screen
+  shows something untrue. The promise is not kept. **Also use this when you cannot show
+  the current code is correct** — an unresolved path is a defect until someone reads it.
+- **`RESIDUAL(unproven)`** — you read the code and it does the right thing; nothing in
+  the scenario set pins that it keeps doing it. Deleting a branch, unbinding a
+  collaborator or dropping a field would go unnoticed. This is test debt.
+
+The two are not degrees of the same finding. Judge the code, not the severity: an
+`unproven` residual over load-bearing logic is still `unproven`, and it is still worth
+writing down.
+
+Do the mutation reasoning you would do anyway — *"delete this and every test stays
+green"* — then ask the extra question: **and is it currently correct?** Yes → `unproven`.
+No, or you cannot tell → `breaks`.
+
 ## Verdict
 
-- **adequate** — every enumerated falsifying path maps to a scenario that genuinely
-  exercises it. State this only with the enumeration written out; "the scenarios look
-  thorough" is not a verdict.
-- **inadequate** — one or more residuals: a path inside the promise that no scenario
-  reaches. Each residual names the path (`file:line`), the promise clause it can falsify,
-  and a one-line sketch of the scenario that would cover it.
+**The verdict tracks `breaks` alone.**
+
+- **adequate** — no `breaks` residual. State this only with the enumeration written out;
+  "the scenarios look thorough" is not a verdict. **An adequate digest that lists
+  `unproven` residuals is the normal, correct shape** — say so plainly rather than
+  reaching for `inadequate` because the list is not empty.
+- **inadequate** — one or more `breaks` residuals. Each names the path (`file:line`), the
+  promise clause it falsifies, and a one-line sketch of the scenario that would cover it.
+
+Never withhold `adequate` because unproven residuals remain. That set is bounded by how
+much code exists, so it grows every time a residual is closed — a verdict waiting on it
+empty never arrives, and the capability is held open forever against work that keeps
+producing more of it.
 
 When you cannot ground a path judgment in source you actually read, say so and mark
-the verdict's confidence `low` — never fill the gap with a plausible guess.
+the verdict's confidence `low` — never fill the gap with a plausible guess. A path you
+could not resolve is a `breaks` residual, not an omission.
 
 ## What you produce
 
@@ -119,13 +149,14 @@ token **verbatim**, `full-promise` or `proposed-set`, hyphenated and lowercase (
 drain and park machinery globs on that exact filename segment, so a spaced or reworded
 one is a digest nobody reads); `<utc>` comes from `date -u +%Y%m%dT%H%M%SZ`.
 
-Copy this shape. The four header lines and the `→ RESIDUAL:` lines are parsed by
+Copy this shape. The five header lines and the `→ RESIDUAL(<class>):` lines are parsed by
 another program; everything else in the file is yours to write as prose.
 
 ```markdown
 # Adequacy: <CAP-id> — <verdict: adequate|inadequate>
 **Question:** <full-promise | proposed-set>
-**Residuals:** <n>
+**Residuals:** <n — every residual, both classes>
+**Breaks:** <n — the breaks residuals alone; omit only when there are none>
 **Date:** <utc>   **Confidence:** <high|medium|low — why>
 
 ## Promise, quantified
@@ -133,24 +164,31 @@ another program; everything else in the file is yours to write as prose.
 
 ## Falsifying paths → coverage
 - <path, file:line> → <SYS-TC-id> — covered
-- <path, file:line> → RESIDUAL: <promise clause it falsifies> · <one-line scenario sketch>
+- <path, file:line> → RESIDUAL(breaks): <promise clause it falsifies> · <scenario sketch>
+- <path, file:line> → RESIDUAL(unproven): <clause nothing pins> · <scenario sketch>
 
 ## Prune-worthy scenarios
 - <SYS-TC-id> — <why> — or "none".
 ```
 
-**`**Residuals:**` is a plain integer — how many `→ RESIDUAL:` lines the file carries.**
-Write it even when it is `0`. It is the one line that answers "is this capability
-converging across reviews", which prose cannot: five residuals dropping to two is a set
-closing in, five holding at five is a set that is not.
+Every residual line carries a class. A bare `→ RESIDUAL:` is rejected by the gate below —
+the verdict and the re-homing both key on it, so an unclassified line leaves both
+undecided.
 
-Count by that line form, not by a section heading — a residual is counted wherever it
+Both counts are plain integers. Write `**Residuals:** 0` even when it is zero; write
+`**Breaks:**` whenever a breaks residual exists. **`**Breaks:**` is the one the drain and
+the convergence rule read**, so it is the count that must be right: four breaks dropping
+to one is a capability closing in, two holding at two is one that is not. The total cannot
+answer that — it carries the unproven class, which grows with the codebase, so a trend
+over it can climb while the real defects fall.
+
+Count by the line form, not by a section heading — a residual is counted wherever it
 sits. A covered path uses the other form (`→ <SYS-TC-id> — covered`) and is not counted.
 
-**The verdict and the count must agree:** `inadequate` means at least one residual,
-`adequate` means zero. A gap you cannot express as a `file:line` path is a
-low-confidence `adequate`, not an uncountable `inadequate` — say so on the
-`**Confidence:**` line.
+**The verdict and the breaks count must agree:** `inadequate` means at least one
+`breaks` residual, `adequate` means none — however many `unproven` ones you listed. A gap
+you cannot express as a `file:line` path is a low-confidence verdict, not an uncountable
+one; say so on the `**Confidence:**` line.
 
 ## Gate your own digest before you finish
 

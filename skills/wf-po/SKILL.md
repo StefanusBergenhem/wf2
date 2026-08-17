@@ -71,6 +71,15 @@ wording; nothing from it is written durably beyond the capability itself.
    That is a wording problem: the promise is too broad, too vague, or not observable.
    Nothing downstream picks a parked entry up again until this session re-words it —
    so every parked entry goes on the agenda for Phase 2.
+   An entry with `status: proposed` is different and is **not** a wording failure. It was
+   minted automatically when a capability drained still carrying a defect a review found:
+   a path where a user gets a wrong answer today. Its statement is the reviewer's words —
+   a `file:line` finding, not a user-voice promise — and nothing downstream will design
+   against it while it says `proposed`. For each one, decide with the user: re-word it as
+   a promise a user would recognise and set `status: planned`, or drop it if the defect
+   does not matter to anyone. Keep it narrow — it exists precisely so a late finding does
+   not reopen the wide capability it came from. Every proposed entry goes on the Phase 2
+   agenda too.
 3. If `$BRIEF` exists, read it — use it during intake to separate a genuinely new need
    from one the product already serves. If
    the brief does not exist, **HALT**: ask the user to run `wf-discover` first, or to
@@ -172,7 +181,8 @@ durable, and leaving it uncommitted is one `git clean` from gone:
 **ID allocation — you add, proof drains.** `CAP-NNN` ids increase monotonically over the
 file's lifetime; never renumber, never reuse a retired number. Give a capability the user
 isn't ready to pursue `status: deferred` (it stays in the array). A re-worded parked entry
-keeps its id and goes back to `status: planned` — that un-parks it. You **add**
+keeps its id and goes back to `status: planned` — that un-parks it, and a `proposed` entry
+you and the user agree on goes to `status: planned` the same way. You **add**
 capabilities (and may revise an un-built one with the user's assent, per *Preserve
 existing intent*), but you never **remove** one for being built: a capability leaves this
 file once it is *proven* — its system tests shipped and an adequacy review found they

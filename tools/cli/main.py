@@ -14,6 +14,7 @@ import drain
 import envelope
 import hygiene
 import impact
+import observations
 import orchestrate
 import pipeline
 import stage
@@ -22,7 +23,7 @@ import workset
 
 REGISTRY: dict = {}
 for _mod in (pipeline, drain, orchestrate, stage, workset, telemetry, archive, impact,
-             hygiene, digest, envelope):
+             hygiene, digest, envelope, observations):
     REGISTRY.update(getattr(_mod, "COMMANDS", {}))
 
 

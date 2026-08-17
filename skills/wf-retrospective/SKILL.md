@@ -12,6 +12,7 @@ your dispatch envelope — read it there, do not open `.wf/config.yaml`:
 - `TELEMETRY`      = `paths.telemetry`       (append-only session log — read)
 - `REPO_STATE`     = `paths.repo_state`      (the id high-water marks — read + write)
 - `PIPELINE_STATE` = `paths.pipeline_state`  (the finished run's state — read if present)
+- `OBSERVATIONS`   = `paths.observations`    (the admission buffer — read + write)
 - `LEARNINGS`      = `paths.learnings`       (project-code learnings — read + append)
 - `WF_LEARNINGS`   = `paths.wf_learnings`    (wf-toolkit learnings — read + append)
 - `RETRO_REPORT`   = `paths.retro_report`    (the human-facing digest of this run — write)
@@ -35,7 +36,7 @@ You distil a finished run into learnings, from two sources:
 
 ## The entry
 
-Both files hold the same shape:
+Both learnings files hold the same shape:
 
 ```yaml
 - id: L-001
@@ -45,7 +46,35 @@ Both files hold the same shape:
 
 Entries live under the file's `learnings:` key.
 
-You only ever **create and reinforce** entries — never remove one.
+`$OBSERVATIONS` holds the same shape **without an id**, under an `observations:` key:
+
+```yaml
+- statement: "<the same one actionable sentence>"
+  sources: ["<session ended_at, or sprint:<sprint_id>>"]
+```
+
+It carries no id because it is not a learning yet — minting one for something that may
+never be seen twice moves `id_counters.learning` for nothing.
+
+You only ever **create, reinforce and promote** entries — never remove one.
+
+## Admission — the rule that decides which file an observation lands in
+
+**A first sighting goes to `$OBSERVATIONS`. A second sighting promotes it to a
+learnings file.** One run's lone friction is noise; a learning is what every later design
+dispatch reads whole, so the bar to enter that context is being seen twice.
+
+This applies to both learnings streams — `$LEARNINGS` and `$WF_LEARNINGS` alike. The
+routing rule in Phase 2 still decides *which* stream a promotion lands in; admission
+decides *whether* it lands in one at all.
+
+Two things are exempt, because neither is a repeated-sighting judgment:
+
+- an observation you are **reinforcing on an entry already in a learnings file** — it is
+  past the gate; append the source there as before, and touch the buffer not at all;
+- a **cross-task pattern** from Phase 3 — it is already evidence from several tasks in one
+  run, which is what the second sighting is a proxy for. It goes straight to a learnings
+  file.
 
 ## Process
 
@@ -55,8 +84,9 @@ You only ever **create and reinforce** entries — never remove one.
 2. Read `$PIPELINE_STATE` if it exists — the finished run's `task_states`, `design_issues`,
    and per-stage summaries. If absent, work the run patterns from the driver events
    alone.
-3. Read `$LEARNINGS` and `$WF_LEARNINGS` (each may not exist yet). For each, collect the
-   union of every entry's `sources`: that union is what has already been compiled.
+3. Read `$LEARNINGS`, `$WF_LEARNINGS` and `$OBSERVATIONS` (each may not exist yet). For
+   each, collect the union of every entry's `sources`: that union is what has already
+   been compiled.
 
 ### Phase 2 — Select what's new
 
@@ -123,11 +153,20 @@ Turn each surviving observation and each cross-task pattern into a learning, hol
 
 - **Actionable and concrete.** Names a real artifact, field, or step and implies an action.
   Drop the vague — "could be cleaner" is noise, not a learning, and produces no entry.
-- **Dedup against the entries present in the file.** If an observation or pattern restates an
-  existing learning, reinforce it: append its source (the session `ended_at`, or
-  `sprint:<sprint_id>` for a run pattern) to that entry's `sources` and add no duplicate.
-- Mint each new `L-NNN` id from `max(<lane counter in $REPO_STATE>, highest id in
-  the file) + 1` — `id_counters.learning` for `$LEARNINGS`, `id_counters.wf_learning`
+- **Dedup against the learnings files AND `$OBSERVATIONS`, in that order.** Match on what
+  the statement is *about* — one fix resolving both is the test, not shared wording. Then:
+  - it restates an entry **already in a learnings file** → reinforce there: append the
+    source (the session `ended_at`, or `sprint:<sprint_id>` for a run pattern) to that
+    entry's `sources`, add no duplicate, and write nothing to the buffer;
+  - it restates an entry **in `$OBSERVATIONS`** → **promote it**: mint its id, write it to
+    the learnings file its subject routes to (Phase 2) carrying **both** sources — the
+    buffered one and this run's — and delete it from the buffer. This is the second
+    sighting the gate waits for;
+  - it restates **nothing** → append it to `$OBSERVATIONS` with this run's source, and
+    mint no id. Phase 3 cross-task patterns skip this arm and go straight to a learnings
+    file.
+- Mint each promoted entry's `L-NNN` id from `max(<lane counter in $REPO_STATE>, highest
+  id in the file) + 1` — `id_counters.learning` for `$LEARNINGS`, `id_counters.wf_learning`
   for `$WF_LEARNINGS`; never renumber, never reuse a retired number.
 
 ### Phase 5 — Gotchas and searches → the AGENTS.md files
@@ -161,7 +200,7 @@ the next run, not a reason to invent content.
 
 ### Phase 6 — Write, summarize & commit
 
-1. Append the new and reinforced entries to `$LEARNINGS` and `$WF_LEARNINGS`, creating either
+1. Append the promoted and reinforced entries to `$LEARNINGS` and `$WF_LEARNINGS`, creating either
    from its template (`<role_dir>/assets/learnings.yaml.tmpl`, `<role_dir>/assets/wf-learnings.yaml.tmpl`) if absent.
    If you minted any id, bump its lane's counter in `$REPO_STATE`
    (`id_counters.learning` / `id_counters.wf_learning`) to the highest id minted.
@@ -170,7 +209,15 @@ the next run, not a reason to invent content.
    off the slice's `serves:` header and the merge record, and it snapshots to the archive
    as it goes. A drain note you write is believed by the next reader, who then skips a
    drain that never happened.
-2. **Write the run's digest to `$RETRO_REPORT`**, overwriting it — it holds one run. This
+2. **Write `$OBSERVATIONS`** — the first sightings you appended, minus every entry you
+   promoted in Phase 4 — creating it from `<role_dir>/assets/observations.yaml.tmpl` if
+   absent. Then bound it:
+   ```sh
+   python3 <paths.tools>/cli/wf observations age
+   ```
+   Skip this and the buffer grows every run and drains only by promotion, which makes it
+   the accumulator the admission gate exists to prevent. It archives what it drops.
+3. **Write the run's digest to `$RETRO_REPORT`**, overwriting it — it holds one run. This
    file is the deliverable that reaches the maintainer; a return value alone reaches no
    one. Include: the new and reinforced entries per stream; the count dropped as
    non-actionable; every `AGENTS.md` file Phase 5 edited, with the lines added and any
@@ -186,15 +233,15 @@ the next run, not a reason to invent content.
    by `fix_kind`, per-stage durations, and the rebuild count as tasks that took more than
    one `wf-build` dispatch event. Do not commit `$RETRO_REPORT` — it is transient. In your
    return, name `$RETRO_REPORT` and the headline counts; the file carries the detail.
-3. **Archive and drain `$TELEMETRY`** — after step 2 has read the log for the roles report.
+4. **Archive and drain `$TELEMETRY`** — after step 3 has read the log for the roles report.
    Snapshot the cycle's telemetry into the maintainer archive and empty the live log, so it
    holds only the next cycle and this role's own read stays bounded as history grows. Run
    only when `$TELEMETRY` exists:
    ```sh
    python3 <paths.tools>/cli/wf archive add $TELEMETRY --label <sprint-id> --move
    ```
-4. Commit the durable outputs — the learnings, the AGENTS.md edits, and the archived
-   telemetry snapshot —
+5. Commit the durable outputs — the learnings, the observations buffer, the AGENTS.md
+   edits, and the archived telemetry snapshot —
    leaving them uncommitted is one `git clean` from gone. Stage explicit paths, never
    `git add .` (include `$REPO_STATE` only when you bumped a counter). **Do not stage
    `$TELEMETRY` or its directory**: the live log is gitignored, and `git add` refuses an
@@ -202,7 +249,7 @@ the next run, not a reason to invent content.
    staged *nothing*, so the archive snapshot in the same command is lost too. The drain
    needs no staging; the snapshot is the record:
    ```sh
-   git add $LEARNINGS $WF_LEARNINGS $REPO_STATE
+   git add $LEARNINGS $WF_LEARNINGS $OBSERVATIONS $REPO_STATE
    git add <every AGENTS.md Phase 5 edited>
    git add -A -- <paths.archive>          # the snapshot step 3 just wrote
    git commit -m "learnings + AGENTS.md + telemetry drain: <sprint-id or session range>"

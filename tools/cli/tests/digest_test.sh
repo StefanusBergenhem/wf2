@@ -27,6 +27,7 @@ good() {  # good <path> [verdict] [residuals] [residual-lines]
 # Adequacy: CAP-015 — $verdict
 **Question:** full-promise
 **Residuals:** $n
+**Breaks:** $n
 **Date:** 20260810T101500Z   **Confidence:** high — read every call site
 
 ## Promise, quantified
@@ -34,7 +35,7 @@ Every entity whose verdict could be affected is re-validated.
 
 ## Falsifying paths → coverage
 - store/rules.go:12 → SYS-TC-4 — covered
-${4-- store/rules.go:212 → RESIDUAL: "every entity" · a rule edit leaves siblings stale}
+${4-- store/rules.go:212 → RESIDUAL(breaks): "every entity" · a rule edit leaves siblings stale}
 
 ## Prune-worthy scenarios
 - none
@@ -96,11 +97,12 @@ cat > "$W/reworded.md" <<'EOF'
 # Adequacy: CAP-015 — inadequate
 **Question:** full-promise
 **Residuals:** 2
+**Breaks:** 2
 **Date:** 20260810T101500Z   **Confidence:** medium — partial read
 
 ## RESIDUALS
-- store/a.go:1 → RESIDUAL: "clause a" · sketch a
-- store/b.go:2 → RESIDUAL: "clause b" · sketch b
+- store/a.go:1 → RESIDUAL(breaks): "clause a" · sketch a
+- store/b.go:2 → RESIDUAL(breaks): "clause b" · sketch b
 EOF
 wf adequacy check "$W/reworded.md" >/dev/null 2>&1 \
     && ok "residuals are counted by line form, not by section heading" || bad "reworded" ""
@@ -142,6 +144,77 @@ case "$ERRS" in
     *Residuals*4*|*4*Residuals*) ok "the failure names the offending header and count" ;;
     *) bad "failure message" "$ERRS" ;;
 esac
+
+# ── the two residual classes, and which one gates ────────────────────────────
+# A residual is one of two species with opposite mathematics. `breaks` — a user gets a
+# wrong answer today — is bounded by what is actually wrong, so it can gate a drain and
+# still terminate. `unproven` — the code is right, nothing pins it — is bounded by CODE
+# SIZE, which grows every time a residual is fixed, so gating on it has no fixed point.
+# The verdict tracks breaks alone; unproven lines are reported and routed, never blocking.
+
+two_class() {  # path, verdict, residuals-header, breaks-header, lines
+    cat > "$1" <<EOF
+# Adequacy: CAP-015 — $2
+**Question:** full-promise
+**Residuals:** $3
+**Breaks:** $4
+**Date:** 20260810T101500Z   **Confidence:** high — read every call site
+
+## Promise, quantified
+Every entity whose verdict could be affected is re-validated.
+
+## Falsifying paths → coverage
+$5
+
+## Prune-worthy scenarios
+- none
+EOF
+}
+
+two_class "$W/mixed.md" inadequate 2 1 '- handlers/attach.go:77 → RESIDUAL(breaks): "can carry" · unserved pairing accepted
+- engine/fold.go:151 → RESIDUAL(unproven): "held open" · arm exists, unpinned'
+OUT="$(wf adequacy check "$W/mixed.md" --format json)"; RC=$?
+[ "$RC" -eq 0 ] && ok "a digest carrying both classes passes the form gate" || bad "2c mixed" "rc=$RC $OUT"
+[ "$(jget "$OUT" "d['breaks']")" = "1" ] \
+    && ok "the breaks count is reported separately from the total" || bad "2c breaks field" "$OUT"
+
+# THE RULE: adequate with unproven residuals is legal — this is the whole fix
+two_class "$W/unproven-only.md" adequate 3 0 '- engine/fold.go:151 → RESIDUAL(unproven): "held open" · unpinned
+- main.go:970 → RESIDUAL(unproven): "reported against that zone" · bound, unpinned
+- agg.go:150 → RESIDUAL(unproven): "at least a given number" · unpinned'
+OUT="$(wf adequacy check "$W/unproven-only.md" --format json)"; RC=$?
+[ "$RC" -eq 0 ] && [ "$(jget "$OUT" "d['errors']")" = "[]" ] \
+    && ok "adequate WITH unproven residuals is legal — they never gate" || bad "2c adequate unproven" "rc=$RC $OUT"
+
+# ...and adequate with a breaks residual is not
+two_class "$W/adequate-breaks.md" adequate 1 1 '- handlers/attach.go:77 → RESIDUAL(breaks): "can carry" · unserved pairing'
+OUT="$(wf adequacy check "$W/adequate-breaks.md" --format json)"; RC=$?
+[ "$RC" -ne 0 ] && ok "adequate with a breaks residual is refused" || bad "2c adequate breaks" "rc=$RC $OUT"
+
+# an inadequate verdict has to name a break, not just test debt
+two_class "$W/inadequate-nobreak.md" inadequate 1 0 '- engine/fold.go:151 → RESIDUAL(unproven): "held open" · unpinned'
+OUT="$(wf adequacy check "$W/inadequate-nobreak.md" --format json)"; RC=$?
+[ "$RC" -ne 0 ] && ok "inadequate with no breaks residual is refused" || bad "2c inadequate nobreak" "rc=$RC $OUT"
+
+# the Breaks header must match the enumeration, like the Residuals header does
+two_class "$W/breaks-mismatch.md" inadequate 2 2 '- handlers/attach.go:77 → RESIDUAL(breaks): "can carry" · x
+- engine/fold.go:151 → RESIDUAL(unproven): "held open" · y'
+OUT="$(wf adequacy check "$W/breaks-mismatch.md" --format json)"; RC=$?
+[ "$RC" -ne 0 ] && ok "a Breaks header the enumeration contradicts is refused" || bad "2c breaks mismatch" "rc=$RC $OUT"
+
+# an unclassified residual is refused: the routing and the verdict both key on the class,
+# so a bare `RESIDUAL:` line leaves both undecided
+two_class "$W/unclassified.md" inadequate 1 1 '- handlers/attach.go:77 → RESIDUAL: "can carry" · no class'
+OUT="$(wf adequacy check "$W/unclassified.md" --format json)"; RC=$?
+[ "$RC" -ne 0 ] && ok "an unclassified residual is refused" || bad "2c unclassified" "rc=$RC $OUT"
+case "$OUT" in *breaks*unproven*|*unproven*breaks*)
+    ok "the refusal names the two classes to choose between" ;;
+  *) bad "2c unclassified msg" "$OUT" ;; esac
+
+# a digest with no residuals at all still needs no Breaks header to be adequate
+good "$W/clean.md" adequate 0 ""
+wf adequacy check "$W/clean.md" >/dev/null 2>&1 \
+    && ok "a clean adequate digest needs no Breaks header" || bad "2c clean" ""
 
 echo ""
 echo "  adequacy digest: $pass passed, $fail failed"

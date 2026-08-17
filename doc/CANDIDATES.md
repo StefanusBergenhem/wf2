@@ -607,6 +607,75 @@ hard for the *strongest* option above being wrong as a first move: fix the stop 
 adding a no-stage-cut counter, because a counter that parks a converging capability trades
 a halt for a different halt.
 
+**2026-08-17 — RECURRENCE 2, an order of magnitude worse, and the diagnosis was wrong.**
+dems spent **16 stages and ~a week** on CAP-015, ~$1,411 in sprint s13 alone (3 stages, 6
+tasks, zero capability progress). The *strongest* option above — a PO-session split — was
+taken **twice**: an SA session split the capability by quantifier form at ~stage 2, and a
+PO session re-worded it at ~stage 12. Each bought exactly one round; the residual count ran
+`(7) → 4 → 3 → [re-word] → 1 → 2 → 2 → 7 → 5` and the capability re-parked. **22 adequacy
+digests for CAP-015, every one `inadequate`; not one `adequate` verdict in its life.**
+
+The cause is not capability width and not the design rounds. `wf-adequacy` step 2
+enumerates falsifying paths **from the source tree**, so the residual set is indexed on
+code size, which grows every time a residual is fixed. Every residual in CAP-015's notes is
+a mutation-survival argument ("hard-code `Incomplete: false` and all 51 stay green"). The
+gate is a mutation-coverage oracle wired to a drain gate, and it has no fixed point by
+construction — which is why re-wording the promise, the only lever that reaches the
+reviewer, could never hold.
+
+**What shipped 2026-08-17:** the residue exit (`drain-capability --with-residue`, driven by
+`adequacy.should_drain_with_residue` — non-convergence or `ROUND_CAP` rounds), which wires
+the previously **dead** `is_converging` and demotes `should_park` to the unreadable-trend
+fallback; `stage check` A20, which rejects a learnings-only cut while a capability is open
+(dems stages 14/15/16 all served zero CAPs); and the parked-capability leak in
+`pipeline capability-complete`, which had been re-reviewing parked CAP-015 at every stage
+close and appending residuals to notes the design role may not act on.
+
+**2026-08-17, second pass — the real fix shipped, and it is NOT freezing the enumeration.**
+A frozen obligation list authored at `proposed-set` time was proposed and rejected: it is
+design-up-front under another name, and it reproduces wf1's *other* failure mode — a
+decomposition written when knowledge is lowest, false-closing the capability and reopening
+it three times. Both designs pick a proxy that is not the promise. wf1's proxy is a stale
+plan; wf2's is the code.
+
+The structural error was **wiring an undecidable question to a scheduling decision**.
+"Is the promise fully proven?" is open-world and has no terminating answer — `wf-adequacy`
+answers it *correctly*, which is exactly why it never stopped. What shipped instead splits
+the residual set by consequence and gates on the bounded half:
+
+- **`RESIDUAL(breaks)`** — a user gets a wrong answer today, or the reviewer cannot show
+  the code is correct. Bounded by what is *wrong*, so it shrinks as defects are fixed.
+  **This alone decides the verdict**, and it alone can hold a capability open.
+- **`RESIDUAL(unproven)`** — the code is right, nothing pins it. Bounded by *code size*,
+  so it grows every time a residual is closed. Reported, routed to `paths.observations`,
+  **never blocking**.
+
+`adequate` now means "no breaks", not "no findings" — an adequate digest listing unproven
+residuals is the normal shape. The digest carries a second parsed header, `**Breaks:** <n>`,
+and every convergence read (`blocking_of`, `residual_trend`, `is_converging`,
+`should_drain_with_residue`) keys on it; a digest predating the split counts every residual
+as blocking, since nothing in it was classified.
+
+**The evidence this is the right cut**, from the 20260817T005029Z round: of its 7 residuals,
+**6 described code that was already correct** and only 1 (`handlers/attachments.go:77`,
+18 unserved target/selector pairings accepted and served empty) described a wrong answer.
+The gate blocked on all 7.
+
+**Reopening is now cheap rather than forbidden.** wf1's pain was not that it reopened — it
+was that it reopened *the same wide capability*, so the same wide design got re-litigated.
+A `breaks` residual that outlives its capability now mints a **new narrow capability**
+(`status: proposed`, machine-written words, skipped by the designer and by
+`stoprules.open_work` until a PO session owns them). The drained capability stays drained.
+Narrow promises converge; a 59 kB one never could.
+
+**Deliberate asymmetry:** bias toward closing. A wrongly-closed capability is caught by the
+drill/learning machinery that already exists; a wrongly-open one burned a week and ~$1,411
+with no mechanism to stop it. The residue exit stays as the backstop for a `breaks` count
+that will not shrink.
+
+**Still open:** the mutation-survival findings need somewhere to be worked systematically —
+see **C50**. Recurrence: **2** (2026-08-09, 2026-08-17).
+
 ---
 
 ## C44 — the retrospective mints learnings it cannot check are already fixed
@@ -641,6 +710,21 @@ entries** on 2026-08-10, so no reader can tell a live defect from a fixed one wi
 re-deriving all 52 against this tree. A drain audit now costs more than the dispatch-sha
 stamp would have. Recurrence: **1** (2026-08-10, 2 of 7 entries) plus the standing
 52-entry backlog.
+
+**2026-08-17 — the volume half is addressed; the staleness half is NOT.** The
+second-sighting admission gate shipped: `paths.observations` is a buffer in front of both
+learnings files, wf-retrospective files a first sighting there and promotes on the second,
+and `wf observations age` bounds the buffer at `hygiene.observations_max`. Measured on dems
+the day it shipped: **113 of 172 open learnings (66% of entries, 57% of the file's bytes)
+carried a single `sources` timestamp** — every one of them would have waited in the buffer
+instead of being read whole by every design dispatch.
+
+That reduces how much unverified material reaches the file. It does **not** detect a
+learning already fixed between the observation and the retrospective that harvested it,
+which is this entry's actual claim — a fix landing twice still promotes on the second
+sighting. The dispatch-sha stamp remains the fix. If anything the gate makes the staleness
+case slightly likelier per surviving entry, since a promoted entry is by construction older
+than one sighting. Recurrence: **1**, unchanged.
 
 ---
 
@@ -868,3 +952,45 @@ is parked rather than fixed.
 `unjoined_subagents` becomes a large enough share of a run's usage rows that a role's
 measurement cannot be read. Recurrence so far: **1** (s3, 4 of 5 drills).
 
+
+---
+
+## C50 — `wf-mutation`: the mutation-survivor findings need a home that is not a drain gate
+
+**Date:** 2026-08-17
+**Context:** dems ran 22 `wf-adequacy` reviews against CAP-015 over ~a week, every one
+`inadequate`. The findings themselves were **high quality** — "hard-code `Incomplete: false`
+on the at-least arm and all 51 system tests stay green", "delete `Quantifier`/`Threshold`
+from both completeness construction sites and all 51 stay green", "unbind `main.go:970` and
+every zone-kind requirement vanishes from every zone's answer". Each names a real hole in
+what the suite pins.
+
+They were also the reason nothing converged. `wf-adequacy` step 2 enumerates falsifying
+paths **from the source tree**, so its finding set is indexed on code size — every stage
+that closes a residual writes code that generates the next one. Mutation survivors are a
+property of the *implementation*, and the implementation grows; a capability drain gate
+must terminate. Wiring one to the other has no fixed point.
+
+**The proposal:** a separate reviewer, differing from `wf-adequacy` on all four axes that
+matter:
+
+| | inside `wf-adequacy` today | as `wf-mutation` |
+|---|---|---|
+| when | every stage close, per capability | sprint close, once |
+| scope | the whole subsystem, re-swept each round | **the sprint's diff only** |
+| output | residuals appended to a capability's `notes:` | findings → `paths.observations` |
+| consequence | **blocks the drain** | never blocks; ranked work for the next cut |
+
+Diff-scoping is the load-bearing one: it makes cost proportional to *new* code, which is
+precisely the property the drain gate cannot have. CAP-015 re-read the same compliance
+subsystem eight times to re-derive overlapping findings.
+
+**Route its output to `paths.observations`, not `paths.learnings`.** A reviewer that mints
+a learning per survivor refills the 172-entry backlog inside two sprints — it would move the
+generator rather than remove it. The second-sighting admission gate is what keeps it bounded.
+
+**Trigger to act:** the capability gate stops emitting mutation-shaped findings (i.e. the
+adequacy split lands and the test-debt signal has nowhere to go), or a sprint ships a
+regression that a surviving mutant would have named. Not before: the findings are only worth
+paying for once something can act on them without blocking a drain. Recurrence: **1**
+(2026-08-17).

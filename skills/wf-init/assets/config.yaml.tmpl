@@ -73,7 +73,8 @@ paths:
 
   # Learnings — distilled from telemetry by wf-retrospective. First-class design
   # inputs (peer of capabilities); each entry is one actionable observation.
-  learnings: ".wf/LEARNINGS.yaml"             # Project-code learnings (wf-retrospective appends; complete-sprint drains one when every task covering it merged). A learning needs no SYS-TC scenario set — its proof is its tasks' acceptance criteria and the merge record — but may carry one, in the same shape as a capability's, when its observation is genuinely end-to-end; that set never gates its drain. Committed.
+  observations: ".wf/observations.yaml"       # The admission buffer in front of paths.learnings. wf-retrospective files a FIRST sighting here and promotes it to a learning on its SECOND — one run's lone friction is noise, and a learning is what every later design dispatch reads. No design role ever reads this file. `wf observations age` bounds it at hygiene.observations_max. Committed.
+  learnings: ".wf/LEARNINGS.yaml"           # Project-code learnings (wf-retrospective appends; complete-sprint drains one when every task covering it merged). A learning needs no SYS-TC scenario set — its proof is its tasks' acceptance criteria and the merge record — but may carry one, in the same shape as a capability's, when its observation is genuinely end-to-end; that set never gates its drain. Committed.
   wf_learnings: ".wf/wf-learnings.yaml"       # wf-toolkit friction, for the wf maintainer. Committed.
   retro_report: ".wf/transient/retro-report.md"  # wf-retrospective's human-facing digest of ONE run: proposed AGENTS.md edits (gotchas), this run's new/reinforced learnings, and the execution summary. The maintainer's inbox — read after a run, then acted on. Overwritten each run; derived from telemetry + the learnings files, so transient.
 
@@ -213,6 +214,7 @@ hygiene:
   charter_max: 120        # paths.charter line cap — the design role reads it whole, every sprint
   plan_max: 60            # paths.plan line cap — milestone altitude only, no component detail
   architecture_max: 150   # paths.architecture line cap — the design role reads the whole component map every sprint
+  observations_max: 200   # paths.observations entry cap — `wf observations age` keeps the most recently sighted and archives the rest. The buffer holds what has been seen ONCE, so it grows with every run and drains only by promotion; unbounded, it becomes the accumulator the admission gate exists to prevent.
 
 impact:
   # Companion fan-out rules for `wf impact files`: when a changed or consumer file

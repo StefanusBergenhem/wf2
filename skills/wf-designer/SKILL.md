@@ -104,8 +104,10 @@ costs, what it forecloses. Every option gets its honest best case.>
 1. Read `paths.charter`, `paths.architecture`, `paths.plan`, `paths.capabilities`,
    `paths.learnings`, `paths.discover_brief`, and every **open** entry in
    `paths.design_issues`. **HALT if the brief is absent** unless the repo is greenfield.
-2. **Skip every capability its entry marks parked** — it is waiting on a PO session to
-   re-word a promise nobody could prove, and designing against it burns the stage.
+2. **Skip every capability its entry marks `parked` or `proposed`** — parked is waiting on
+   a PO session to re-word a promise nobody could prove; proposed was minted from a defect
+   residual and carries machine-written words no human has agreed to yet. Designing against
+   either burns the stage.
 3. **Derive the system-test register** — the end-to-end behaviour already provably shipped:
 
    ```sh
@@ -124,8 +126,16 @@ costs, what it forecloses. Every option gets its honest best case.>
 ## Phase 2 — Choose this stage's work
 
 Decide what makes sense next given the charter's direction, the plan, the open
-capabilities and learnings, the open design issues, and the repo as it stands. There is no
-priority encoding to read; the judgment is yours.
+capabilities and learnings, the open design issues, and the repo as it stands.
+
+**Capability work outranks learnings.** Cut from the open, unparked capabilities. A
+learning rides along when it touches the same files as that capability's work, and a
+learning that makes a capability's proof impossible or a gate unreliable is taken up
+ahead of it. A stage serving **only** learnings is correct just once: when no open
+capability can be advanced at all. Write that reason into the stage's
+`no_capability_reason:` — `wf stage check` (A20) rejects a learnings-only cut without
+one. Refactor work always has another seam to take, so nothing else stops a run from
+spending stage after stage without advancing a promise.
 
 **Cut for width.** A stage is the tasks with **no dependency between them**, so take the
 widest independent set the work offers — it may span more than one capability or learning,

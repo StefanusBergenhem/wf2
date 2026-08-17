@@ -41,16 +41,24 @@ def _entries(path, field):
     return [e for e in (items or []) if isinstance(e, dict)]
 
 
+# Intent the loop cannot act on without a human first. `parked` is waiting on a PO session
+# to re-word a promise nobody could prove; `proposed` was minted by the residue exit from a
+# defect residual and carries machine-written words, which a PO session has to own before
+# anything is designed against them. With only these left, work exhaustion is the right
+# stop: it says the loop is out of work a human has agreed to, which is true.
+NEEDS_A_HUMAN = ("parked", "proposed")
+
+
 def open_work(cfg) -> dict:
-    """The ids still in play: every capability and learning entry not marked parked.
-    Parked intent is waiting on a PO session, so it is not work this loop can do."""
-    def unparked(path, field):
+    """The ids still in play: every capability and learning entry the loop could act on."""
+    def actionable(path, field):
         return [str(e["id"]) for e in _entries(path, field)
-                if e.get("id") and str(e.get("status") or "").strip() != "parked"]
+                if e.get("id")
+                and str(e.get("status") or "").strip() not in NEEDS_A_HUMAN]
 
     return {
-        "capabilities": unparked(cfg.path_opt("capabilities"), "capabilities"),
-        "learnings": unparked(cfg.path_opt("learnings"), "learnings"),
+        "capabilities": actionable(cfg.path_opt("capabilities"), "capabilities"),
+        "learnings": actionable(cfg.path_opt("learnings"), "learnings"),
     }
 
 

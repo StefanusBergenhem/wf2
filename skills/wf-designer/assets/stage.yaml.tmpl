@@ -10,6 +10,8 @@
 
 stage: 0                        # from id_counters.stage + 1; monotonic over the repo's lifetime
 serves: [CAP-NNN, L-NNN]        # every capability and learning this stage advances, in full
+# no_capability_reason: "<why no open capability could be cut this stage>"
+#                       # REQUIRED only when `serves:` names no CAP — omit it otherwise
 goal: "<one line: what this stage delivers>"
 grounded_in:                    # the brief and the drill digests this cut stands on
   - "<paths.discover_brief>"

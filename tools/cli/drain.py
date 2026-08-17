@@ -22,10 +22,13 @@ import re
 import sys
 from pathlib import Path
 
+import yaml
+
 import archive
 import common
 import mdread
 import runstate
+import workset
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "reconcile"))
 from reconcile import DEFAULT_TEST_GLOBS, harvest  # noqa: E402
@@ -87,15 +90,25 @@ def _capability_complete(rest):
     Every row carries its ``kind``, and the caller must honour it: only a capability is
     an adequacy candidate. A learning may carry a set and is reported here on the same
     footing, but that set never gates its drain — that happens at sprint close off the
-    merge record."""
+    merge record.
+
+    A **parked** entry is no candidate either, whatever its set has shipped. It is waiting
+    on a PO session to re-word a promise nobody could prove, and the design role is told to
+    skip it — so a review of it can change nothing. Left in, every stage close spends an
+    adversarial re-review on it and appends the residuals to notes the design role may not
+    act on, which grows the file every later dispatch reads whole. The skipped ids are
+    emitted rather than dropped, so the omission is visible."""
     args = common.base_parser("pipeline capability-complete").parse_args(rest)
     paths = common.config_doc(args.config).get("paths") or {}
     shipped = _shipped_ids(args)
 
-    complete, pending = [], []
+    complete, pending, parked = [], [], []
     for kind, entry in _workset_entries(args, paths):
         wanted = _scenario_ids(entry)
         if not wanted:
+            continue
+        if str(entry.get("status") or "").strip() == "parked":
+            parked.append(str(entry["id"]))
             continue
         missing = [sid for sid in wanted if sid not in shipped]
         row = {"id": str(entry["id"]), "kind": kind, "system_tests": wanted,
@@ -106,6 +119,7 @@ def _capability_complete(rest):
         "shipped": sorted(shipped),
         "complete": sorted(complete, key=lambda r: r["id"]),
         "pending": sorted(pending, key=lambda r: r["id"]),
+        "parked": sorted(parked),
     }, args.format)
     return 0
 
@@ -274,12 +288,22 @@ def _drain_capability(rest):
 
     Only a FULL-PROMISE digest can drain. The proposed-set review judges a scenario set at
     authoring time, months before anything ships, so it can never answer whether the whole
-    promise is proven; consuming one here would drain on a question nobody asked."""
+    promise is proven; consuming one here would drain on a question nobody asked.
+
+    ``--with-residue`` drains on an inadequate verdict too, re-homing every surviving
+    residual as its own work-set entry. It is the exit from a gate that has stopped
+    converging: each round's fix adds code and the added code is the next round's
+    residual, so holding the capability open loops without end. The caller decides when
+    that has happened — this verb only carries it out."""
     p = common.base_parser("pipeline drain-capability")
     p.add_argument("capability")
     p.add_argument("--verdict", help="path to the adequacy digest (default: the newest "
                                      "adequacy-<cap>-full-promise-*.md under "
                                      "paths.drill_cache)")
+    p.add_argument("--with-residue", action="store_true",
+                   help="drain on an inadequate verdict, re-homing each residual as a "
+                        "learning (or a proposed capability when the review marked it "
+                        "user-visible)")
     args = p.parse_args(rest)
 
     path = Path(args.verdict) if args.verdict else _newest_adequacy_digest(args)
@@ -307,7 +331,7 @@ def _drain_capability(rest):
         common.die(f"{path} reviews {reviewed}, not {args.capability}")
 
     result = {"capability": args.capability, "verdict": verdict, "digest": str(path)}
-    if verdict != "adequate":
+    if verdict != "adequate" and not args.with_residue:
         result["drained"] = False
         common.emit(result, args.format)
         return 1
@@ -323,6 +347,12 @@ def _drain_capability(rest):
     if not dropped:
         common.die(f"{args.capability} is not open in {cap_path}")
     result["drained"] = True
+    # Routing runs on EVERY drain, not only under the flag: an adequate digest listing
+    # unproven residuals is the normal shape, and its test debt would otherwise be lost
+    # with the capability. The flag decides whether an inadequate verdict may drain at
+    # all — it does not decide where the findings go. Routed after the drop, so a minted
+    # CAP id cannot land inside the block being removed.
+    result["residue"] = _route_residue(args, args.capability, _digest_residuals(text))
     common.emit(result, args.format)
     return 0
 
@@ -424,6 +454,117 @@ def _entry_blocks(lines):
         out.append((i, j, indent))
         i = j
     return out
+
+
+# The class the reviewer put on each residual, and where each one goes when it outlives
+# the review. `breaks` — a user gets a wrong answer today — is an unmet promise, so it
+# becomes its own NARROW capability rather than reopening the wide one it came from: dems
+# re-litigated a 59 kB capability three times because a late finding reopened the whole
+# promise instead of minting a small one. `unproven` — the code is right, no scenario pins
+# it — is test debt, and it goes to the observations buffer, where the second-sighting gate
+# keeps it from refilling the learnings backlog it would otherwise grow without bound.
+_BREAKS_RE = re.compile(r"\bRESIDUAL\s*\(\s*breaks\s*\)", re.IGNORECASE)
+
+
+def _residual_statement(line) -> str:
+    """One residual line reduced to the sentence a work-set entry carries: the clause it
+    falsifies, without the digest's `path → RESIDUAL:` scaffolding or scenario sketch."""
+    text = re.sub(r"^.*?\bRESIDUAL\b\s*(\([^)]*\))?\s*:?\s*", "", line, count=1).strip()
+    text = text.split(" · ")[0].strip()
+    return " ".join(text.split()) or " ".join(line.split())
+
+
+def append_entry(path, key, entry) -> bool:
+    """Append one entry to a YAML list file as TEXT. The durable files carry header
+    comments and hand-written ordering that a YAML round-trip destroys (L-106), so the
+    write is line-level like every other write to them."""
+    lines = path.read_text().splitlines(keepends=True)
+    blocks = _entry_blocks(lines)
+    indent = " " * (blocks[-1][2] if blocks else 0)
+    body = yaml.safe_dump([entry], sort_keys=False, allow_unicode=True,
+                          default_flow_style=False, width=10 ** 6)
+    block = [f"{indent}{ln}\n" if indent else f"{ln}\n" for ln in body.splitlines()]
+    if blocks:
+        at = blocks[-1][1]
+        path.write_text("".join(lines[:at] + block + lines[at:]))
+        return True
+    # No entry yet: the list key is present but empty (`learnings: []`) or bare.
+    for i, line in enumerate(lines):
+        if re.match(rf"^{re.escape(key)}:\s*(\[\s*\])?\s*$", line):
+            lines[i] = f"{key}:\n"
+            path.write_text("".join(lines[:i + 1] + block + lines[i + 1:]))
+            return True
+    return False
+
+
+def _id_width(path, prefix) -> int:
+    """How wide this file writes its ids — the most common digit count already in it, so
+    a minted id looks like its neighbours. Repos differ (``CAP-3`` vs ``CAP-015``) and
+    both are valid; picking one here would make every mint the odd row out in the other."""
+    widths = [len(m) for m in
+              re.findall(rf"^\s*-?\s*id:\s*[\"']?{prefix}-(\d+)", path.read_text(),
+                         re.MULTILINE)]
+    return max(set(widths), key=widths.count) if widths else 3
+
+
+def _buffer_unproven(args, capability, lines) -> int:
+    """File every unproven residual in the observations buffer. Returns how many landed.
+
+    It goes to the buffer rather than straight to learnings on purpose: this class grows
+    with the codebase, so promoting each one on sight would rebuild the accumulator the
+    admission gate exists to prevent. Test debt nothing else ever notices was not worth
+    the context it would cost every design dispatch."""
+    if not lines:
+        return 0
+    rel = (common.config_doc(args.config).get("paths") or {}).get("observations")
+    if not rel:
+        return 0
+    path = common.resolve_path(args.config, "observations", None)
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        common.write_yaml(path, {"version": 1, "observations": []})
+    stamp = common.now()
+    for line in lines:
+        append_entry(path, "observations",
+                     {"statement": _residual_statement(line),
+                      "sources": [f"adequacy:{capability}", stamp]})
+    return len(lines)
+
+
+def _route_residue(args, capability, residuals) -> dict:
+    """Re-home every surviving residual as its own work-set entry, and move the id
+    high-water marks so the next mint cannot collide.
+
+    A machine may not author a product promise, so a minted capability lands
+    `status: proposed` — open to a PO session's wording, not to a design cut."""
+    routed = {"capabilities": [], "observations": 0}
+    if not residuals:
+        return routed
+    breaks = [r for r in residuals if _BREAKS_RE.search(r)]
+    unproven = [r for r in residuals if not _BREAKS_RE.search(r)]
+    routed["observations"] = _buffer_unproven(args, capability, unproven)
+    for path_key, list_key, counter_key, prefix, lane in (
+            ("capabilities", "capabilities", "cap", "CAP", breaks),):
+        if not lane:
+            continue
+        path = common.resolve_path(args.config, path_key, None)
+        if not path or not path.exists():
+            common.die(f"paths.{path_key} does not exist — {len(lane)} residual(s) of "
+                       f"{capability} have nowhere to go")
+        nxt = workset.counter(args.config, counter_key)
+        width = _id_width(path, prefix)
+        for line in lane:
+            nxt += 1
+            ident = f"{prefix}-{nxt:0{width}d}"
+            entry = {"id": ident, "statement": _residual_statement(line),
+                     "sources": [capability]}
+            if prefix == "CAP":
+                entry["status"] = "proposed"
+            if not append_entry(path, list_key, entry):
+                common.die(f"could not append {ident} to {path} — no '{list_key}:' list")
+            routed[path_key].append(ident)
+        workset.bump_counter(args.config, counter_key, nxt)
+    return routed
 
 
 def _append_notes(text, entry_id, block, marker):

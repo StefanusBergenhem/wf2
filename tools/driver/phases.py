@@ -399,16 +399,35 @@ def adequacy_pass(rt, candidates) -> None:
                                            "(paths.tests) — derive them yourself",
         }, mode=adequacy.FULL_PROMISE, task_id=cap))
 
-        result = rt.cli.mutate("pipeline", "drain-capability", cap)
+        # The residue exit is decided BEFORE the drain call, off the digests on disk: an
+        # inadequate verdict whose residual set has stopped shrinking (or has had its
+        # rounds) leaves as re-homed work rather than looping. Each round's fix adds code
+        # and the added code is the next round's residual, so the plain gate has no fixed
+        # point — dems held one capability open for eight rounds and drained nothing.
+        with_residue = adequacy.should_drain_with_residue(rt.cfg, cap)
+        verb = ["pipeline", "drain-capability", cap]
+        if with_residue:
+            verb.append("--with-residue")
+        result = rt.cli.mutate(*verb)
         drained = bool(result.ok and result.data.get("drained"))
+        residue = result.data.get("residue") or {}
+        minted = sorted(residue.get("capabilities") or [])
+        buffered = int(residue.get("observations") or 0)
         rt.tele.event("adequacy", capability=cap, sprint=rt.state.sprint_id,
                       stage=rt.state.stage, verdict=result.data.get("verdict"),
-                      drained=drained)
+                      drained=drained, with_residue=with_residue,
+                      minted=minted, buffered=buffered)
+        rehomed = ([f"{', '.join(minted)} (defects)"] if minted else []) \
+            + ([f"{buffered} test-debt observation(s)"] if buffered else [])
         rt.report.line(
             f"{cap} · verdict {result.data.get('verdict') or 'unreadable'} · "
-            f"{'drained' if drained else 'stays open'}",
+            + ("drained" if drained else "stays open")
+            + (f" · residue → {'; '.join(rehomed)}" if rehomed else ""),
             symbol=progress.OK if drained else progress.BAD, indent=2)
         if drained:
+            if minted:
+                rt.log(f"{cap} drained leaving {len(minted)} defect(s) — re-homed as "
+                       f"narrow capabilities {', '.join(minted)}, not as a reopening")
             rt.state.close_step_done(step)
             continue
         # inadequate: the residuals are the next cut's input, so they go back onto the
